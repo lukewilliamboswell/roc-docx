@@ -1,0 +1,19 @@
+= roc-docx 0.1.0
+
+The first release. These notes grow with the slices that land before it and
+are completed when the release is cut.
+
+== Use this release
+
+[source,roc]
+----
+app [main!] {
+	docx: "{package-url}",
+}
+----
+
+== What it does
+
+Opens a `.docx` package within explicit resource limits and reports its
+parts, their content types and their relationships: `Opc.open`,
+`Opc.part`, `Opc.relationships` and `Opc.main_document`.

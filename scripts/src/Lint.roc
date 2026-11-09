@@ -156,10 +156,13 @@ Lint :: [].{
 			[]
 		}
 
-	## Every manual chapter opens with a title and is included by the index.
+	## Every manual chapter opens with a title and is included by the index;
+	## every release note under docs/releases/ is included by the releases chapter.
 	chapters_included : List(Source) -> List(Violation)
 	chapters_included = |sources| {
-		index_text = (sources.find_first(|source| source.path == "docs/index.adoc") ?? { path: "", text: "" }).text
+		text_of = |path| (sources.find_first(|source| source.path == path) ?? { path: "", text: "" }).text
+		index_text = text_of("docs/index.adoc")
+		releases_text = text_of("docs/releases.adoc")
 		sources.fold(
 			[],
 			|found, source|
@@ -170,10 +173,15 @@ Lint :: [].{
 					} else {
 						[{ path: source.path, line: 1, message: "a chapter opens with a single = Title" }]
 					}
-					if index_text.contains("include::${file}[") {
+					{ includer, included } = if file.starts_with("releases/") {
+						{ includer: "docs/releases.adoc", included: releases_text.contains("include::${file}[") }
+					} else {
+						{ includer: "docs/index.adoc", included: index_text.contains("include::${file}[") }
+					}
+					if included {
 						List.concat(found, titled)
 					} else {
-						List.append(List.concat(found, titled), { path: source.path, line: 1, message: "docs/index.adoc includes every chapter" })
+						List.append(List.concat(found, titled), { path: source.path, line: 1, message: "${includer} includes every chapter" })
 					}
 				} else {
 					found
@@ -302,16 +310,20 @@ expect {
 	Lint.expect_doc(source).map(|violation| violation.line) == [4]
 }
 
-## Chapters open with a title and are included by the index.
+## Chapters open with a title and are included by the index; release notes by the releases chapter.
 expect {
 	sources = [
-		{ path: "docs/index.adoc", text: "= Manual\n\ninclude::overview.adoc[leveloffset=+1]\n" },
+		{ path: "docs/index.adoc", text: "= Manual\n\ninclude::overview.adoc[leveloffset=+1]\ninclude::releases.adoc[leveloffset=+1]\n" },
 		{ path: "docs/overview.adoc", text: "= Overview\n" },
 		{ path: "docs/orphan.adoc", text: "Untitled\n" },
+		{ path: "docs/releases.adoc", text: "= Release notes\n\ninclude::releases/0.1.0.adoc[leveloffset=+1]\n" },
+		{ path: "docs/releases/0.1.0.adoc", text: "= roc-docx 0.1.0\n" },
+		{ path: "docs/releases/0.2.0.adoc", text: "= roc-docx 0.2.0\n" },
 	]
 	Lint.chapters_included(sources).map(|violation| "${violation.path}: ${violation.message}") == [
 		"docs/orphan.adoc: a chapter opens with a single = Title",
 		"docs/orphan.adoc: docs/index.adoc includes every chapter",
+		"docs/releases/0.2.0.adoc: docs/releases.adoc includes every chapter",
 	]
 }
 

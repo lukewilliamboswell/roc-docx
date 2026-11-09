@@ -23,6 +23,8 @@ Understanding the design:: <<architecture>> is the enduring design: the
 pipeline, the document model, fidelity rules, the oracles and the tests.
 Changing the package:: <<contribute-to-roc-docx>> covers the checks, the
 style, the performance ratchets and how documentation is kept.
+Upgrading:: <<release-notes>> record each release's changes, package URL and
+tested compiler.
 ****
 
 include::overview.adoc[leveloffset=+1]
@@ -32,3 +34,5 @@ include::getting-started.adoc[leveloffset=+1]
 include::architecture.adoc[leveloffset=+1]
 
 include::contributing.adoc[leveloffset=+1]
+
+include::releases.adoc[leveloffset=+1]

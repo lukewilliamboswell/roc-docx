@@ -52,3 +52,5 @@ jobs:
           name: manual
           path: .docs-out/
           if-no-files-found: error
+          # The renderer writes to a dot-directory, which the action skips by default.
+          include-hidden-files: true
