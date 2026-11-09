@@ -2,7 +2,7 @@
   "schema": "roc-docx-snapshot/1",
   "producer": {"name": "roc-docx", "version": "working tree"},
   "document": "tests/fixtures/libreoffice/revisions.docx",
-  "keys": ["blocks.text"],
+  "keys": ["blocks.text", "blocks.rows"],
   "blocks": [
     {"kind": "paragraph", "level": 0, "list": "", "text": "Lease Amendment", "runs": [], "rows": []},
     {"kind": "paragraph", "level": 0, "list": "", "text": "Lease Amendment", "runs": [], "rows": []},

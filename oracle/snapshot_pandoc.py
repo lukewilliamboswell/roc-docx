@@ -13,6 +13,9 @@ Rules this adapter applies, each because of how pandoc represents a document:
 - pandoc lifts paragraphs styled Title, Subtitle, Author, Date and Abstract
   into metadata. They are restored as leading paragraphs in that order, which
   is where they stand in every document whose metadata pandoc reads this way.
+- pandoc gives a vertically merged cell a row span and leaves the cells it
+  covers out of the rows below; in the text grid each covered column is an
+  empty cell, as a column a cell spans is.
 - A horizontal rule is the paragraph that holds it; with no text it is an
   empty paragraph and so not a block.
 - pandoc does not say whether a note is a footnote or an endnote, whether a
@@ -202,12 +205,26 @@ class Reducer:
             rows += body[2] + body[3]
         rows += foot[1]
         grid = []
+        covered = {}  # column -> (rows still covered, columns covered) by a cell spanning rows above
         for row in rows:
             cells = []
+
+            def cover():
+                while len(cells) in covered:
+                    column = len(cells)
+                    remaining, width = covered.pop(column)
+                    cells.extend([""] * width)
+                    if remaining > 1:
+                        covered[column] = (remaining - 1, width)
+
             for cell in row[1]:
-                _cell_attr, _align, _rowspan, colspan, cell_blocks = cell
+                _cell_attr, _align, rowspan, colspan, cell_blocks = cell
+                cover()
+                if rowspan > 1:
+                    covered[len(cells)] = (rowspan - 1, colspan)
                 cells.append(self.cell_text(cell_blocks))
                 cells += [""] * (colspan - 1)
+            cover()
             grid.append(cells)
         self.blocks.append({"kind": "table", "level": 0, "list": "", "text": "", "runs": [], "rows": grid})
 

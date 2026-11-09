@@ -19,13 +19,14 @@ import XmlTree
 
 Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.Node) }.{
 
-	## A block of the body, in reading order: a paragraph; an element the
-	## model does not represent whose content is still read as blocks, kept
-	## without its children in `element` (a table, its rows and cells, a
-	## content control and its content, custom XML); or any other element,
-	## kept whole as it was read.
+	## A block of the body, in reading order: a paragraph; a table; an
+	## element the model does not represent whose content is still read as
+	## blocks, kept without its children in `element` (a content control and
+	## its content, custom XML); or any other element, kept whole as it was
+	## read.
 	Block := [
 		Paragraph(Paragraph),
+		Table(Table),
 		Container({ element : XmlTree.Node, content : List(Block) }),
 		Preserved(XmlTree.Node),
 	].{
@@ -80,6 +81,105 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 		Preserved(XmlTree.Node),
 	]
 
+	## A table: its properties, its grid of columns, and its content in
+	## order.
+	Table : { properties : TableProperties, grid : List(GridColumn), content : List(TableContent) }
+
+	## A table's properties as the table states them, without what its style
+	## contributes: the identifier of its table style in the document's
+	## styles, its preferred width, its borders and its shading. Every other
+	## property element is kept as it was read, in order, and so is a
+	## property element whose attributes the model cannot hold.
+	TableProperties : { style : [Unset, Style(Str)], width : Width, borders : List(Border), shading : Shading, preserved : List(XmlTree.Node) }
+
+	## A column of a table's grid, its width in twips; any other element of
+	## the grid, such as a column without a width or a revision of the grid,
+	## is kept in its place as it was read.
+	GridColumn : [Column(U64), Preserved(XmlTree.Node)]
+
+	## A table's content, in order: a row; an element the model does not
+	## represent whose content is still read as rows, kept without its
+	## children in `element` (a content control and its content, custom XML);
+	## or any other element, such as a bookmark boundary, kept whole in its
+	## place.
+	TableContent := [
+		Row(Row),
+		Container({ element : XmlTree.Node, content : List(TableContent) }),
+		Preserved(XmlTree.Node),
+	].{
+
+		## Compare two pieces of table content structurally.
+		is_eq : _
+	}
+
+	## A row: its properties and its content in order.
+	Row : { properties : RowProperties, content : List(RowContent) }
+
+	## A row's properties: whether it is a header row, repeated at the top of
+	## each page the table spans, and how many grid columns come before its
+	## first cell and after its last. Every other property element is kept as
+	## it was read, in order.
+	RowProperties : { header : [Unset, On, Off], grid_before : [Unset, Columns(U64)], grid_after : [Unset, Columns(U64)], preserved : List(XmlTree.Node) }
+
+	## A row's content, in order: a cell; an element the model does not
+	## represent whose content is still read as cells, kept without its
+	## children in `element` (a content control and its content, custom XML);
+	## or any other element, such as the table property exceptions of the row
+	## or a bookmark boundary, kept whole in its place.
+	RowContent := [
+		Cell(Cell),
+		Container({ element : XmlTree.Node, content : List(RowContent) }),
+		Preserved(XmlTree.Node),
+	].{
+
+		## Compare two pieces of row content structurally.
+		is_eq : _
+	}
+
+	## A cell: its properties and its blocks, which may hold further tables.
+	Cell : { properties : CellProperties, content : List(Block) }
+
+	## A cell's properties: its preferred width, how many grid columns it
+	## spans, whether it starts or continues a vertical merge with the cell
+	## above, its borders, its shading and the vertical alignment of its
+	## content. Every other property element is kept as it was read, in
+	## order, and so is a property element whose attributes the model cannot
+	## hold.
+	CellProperties : {
+		width : Width,
+		span : [Unset, Columns(U64)],
+		merge : [Unset, Restart, Continue],
+		borders : List(Border),
+		shading : Shading,
+		alignment : [Unset, Top, Center, Bottom, Both],
+		preserved : List(XmlTree.Node),
+	}
+
+	## A preferred width: automatic, zero, in twips, or a share of the
+	## available width in fiftieths of a per cent.
+	Width : [Unset, Auto, Nil, Twips(I64), Fiftieths(I64)]
+
+	## One edge of a table's or cell's borders: the line, by its name in the
+	## schema (`single`, `double`, `dotted`, `nil` and so on), its width in
+	## eighths of a point, its distance from the content in points, and its
+	## colour. `Left` and `Start`, `Right` and `End` are the two spellings
+	## the schema has for the same edges.
+	Border : {
+		edge : [Top, Left, Start, Bottom, Right, End, InsideHorizontal, InsideVertical, DiagonalDown, DiagonalUp],
+		line : Str,
+		size : [Unset, Eighths(U64)],
+		space : [Unset, Points(U64)],
+		color : Color,
+	}
+
+	## A shading: its pattern, by its name in the schema (`clear`, `solid`,
+	## `pct25` and so on), the pattern's colour and the fill behind it.
+	Shading : [Unset, Shading({ pattern : Str, color : Color, fill : Color })]
+
+	## A colour: automatic, or red, green and blue as six hexadecimal digits
+	## as the document writes them.
+	Color : [Unset, Auto, Rgb(Str)]
+
 	## A paragraph's text as a reader sees it, revisions shown: every run's
 	## text, inserted text included, and nothing from the content the model
 	## keeps without reading, so deleted text, field instructions and note
@@ -94,6 +194,16 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 		}
 		Str.from_utf8($text) ?? ""
 	}
+
+	## A table's rows in order, through the content controls and custom XML
+	## that hold them.
+	table_rows : Table -> List(Row)
+	table_rows = |table| table.content.fold(List.with_capacity(table.content.len()), rows_of)
+
+	## A row's cells in order, through the content controls and custom XML
+	## that hold them.
+	row_cells : Row -> List(Cell)
+	row_cells = |row| row.content.fold(List.with_capacity(row.content.len()), cells_of)
 
 	## The tree of the main document part, the target of the package's
 	## `officeDocument` relationship, as reading left it.
@@ -256,6 +366,22 @@ inline_text = |text, inline|
 		Run(run) => run.content.fold(text, run_content_text)
 		Container({ element: _, content }) => content.fold(text, inline_text)
 		Preserved(_) => text
+	}
+
+rows_of : List(Document.Row), Document.TableContent -> List(Document.Row)
+rows_of = |rows, content|
+	match content {
+		Row(row) => List.append(rows, row)
+		Container({ element: _, content: inner }) => inner.fold(rows, rows_of)
+		Preserved(_) => rows
+	}
+
+cells_of : List(Document.Cell), Document.RowContent -> List(Document.Cell)
+cells_of = |cells, content|
+	match content {
+		Cell(cell) => List.append(cells, cell)
+		Container({ element: _, content: inner }) => inner.fold(cells, cells_of)
+		Preserved(_) => cells
 	}
 
 run_content_text : List(U8), Document.RunContent -> List(U8)

@@ -74,7 +74,7 @@
         "list": { "description": "A list item's list kind, otherwise empty.", "enum": ["", "bullet", "number"] },
         "text": { "description": "The paragraph's current text: inserted text is included, deleted text, note references and comment content are not. A line break is LF and a tab is TAB. Empty for a table.", "type": "string" },
         "runs": { "description": "The text split where direct formatting changes; formatting a paragraph or character style contributes is not run formatting. Concatenated, the runs' text is the block's text. Empty for a table.", "type": "array", "items": { "$ref": "#/$defs/run" } },
-        "rows": { "description": "A table as a text grid: one list of cell texts per row, a cell's paragraphs joined by LF, a cell spanning columns followed by empty cells for the columns it covers. Empty unless the block is a table.", "type": "array", "items": { "type": "array", "items": { "type": "string" } } }
+        "rows": { "description": "A table as a text grid: one list of cell texts per row, a cell's paragraphs joined by LF, a cell spanning columns followed by empty cells for the columns it covers, a cell covered by a vertical merge from the row above and a grid column a row skips before its first cell or after its last each an empty cell. Empty unless the block is a table.", "type": "array", "items": { "type": "array", "items": { "type": "string" } } }
       }
     },
     "run": {

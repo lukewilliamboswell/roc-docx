@@ -48,6 +48,7 @@ paragraphs = Docx.body(document).keep_oks(
     |block|
         match block {
             Paragraph(paragraph) => Ok(Document.paragraph_text(paragraph))
+            Table(_) => Err(NotAParagraph)
             Container(_) => Err(NotAParagraph)
             Preserved(_) => Err(NotAParagraph)
         },
@@ -55,7 +56,7 @@ paragraphs = Docx.body(document).keep_oks(
 ----
 
 That lists the text of the paragraphs directly in the body; the paragraphs in
-a table are inside a `Container`.
+a table are inside its cells.
 
 A `Paragraph` has `properties` and `content`, a list of `Document.Inline`
 values. A `Run` inline has `properties` and `content`, a list of
@@ -71,15 +72,67 @@ was read as, in its place among the modelled ones: a `Preserved` block,
 inline or run content. Paragraph and run properties are such nodes for now,
 in `properties.preserved`. An element whose content is blocks or paragraph
 content is a `Container`: the element itself, without its children, and its
-content read as blocks or inlines. Tables, their rows and cells, content
-controls and custom XML are containers of blocks; hyperlinks, inserted,
+content read as blocks or inlines. Content controls and custom XML are
+containers of blocks, and of rows and cells inside a table; hyperlinks, inserted,
 deleted and moved text, simple fields, content controls, smart tags and
 bidirectional embeddings are containers of inlines. That is how the text in
-a table cell or a hyperlink is still text.
+a content control or a hyperlink is still text.
 
 A break of a type the schema does not define, a symbol without a character
 code and text holding markup are kept as `Preserved` run content rather than
 guessed at.
+
+== Tables
+
+A `Table` block has `properties`, a `grid` of columns and `content`, its
+rows in order. `Document.table_rows` gives a table's rows and
+`Document.row_cells` a row's cells, reading through the content controls
+and custom XML that can hold them; a cell's `content` is blocks, so a
+nested table is a `Table` block inside a cell:
+
+[source,roc]
+----
+grid = Document.table_rows(table).map(
+    |row| Document.row_cells(row).map(|cell| cell.content.len()),
+)
+----
+
+The properties are those the document states on the table, row or cell
+itself. A table's style contributes more, and `style` names it by its
+identifier in the document's styles:
+
+* a table has its `style`, its preferred `width`, its `borders` and its
+  `shading`;
+* each grid column is `Column(width)` in twips;
+* a row says whether it is a `header` row, repeated at the top of each page,
+  and how many grid columns it skips before its first cell (`grid_before`)
+  and after its last (`grid_after`);
+* a cell has its preferred `width`, the grid columns it `span`s, its
+  vertical `merge` with the cell above (`Restart` starts a merged cell,
+  `Continue` is covered by the one above), its `borders`, its `shading` and
+  the vertical `alignment` of its content.
+
+A width is `Auto`, `Nil`, `Twips(n)` or `Fiftieths(n)`, a share of the
+available width in fiftieths of a per cent. A border names its `edge`, its
+`line` as the schema spells it (`single`, `double`, `nil` and so on), its
+`size` in eighths of a point, its `space` in points and its `color`, which
+is `Auto` or `Rgb` six hexadecimal digits. Every property that is not given
+is `Unset`, so a property a document states can be told from one it leaves
+to the style.
+
+Each property element the model does not hold stays in the `preserved` list
+of its table, row or cell properties, in order, as paragraph properties do.
+So does a property element with attributes the model cannot hold, such as a
+border or shading in a theme colour: it is kept whole rather than read in
+part. A grid column without a width is kept as `Preserved` in the grid.
+
+Some producers write a fraction where the schema wants a whole number:
+Google Docs exports write widths such as `w:w="10470.0"`. The reader accepts
+them and rounds to the nearest whole number, halves away from zero, and
+`Docx.read_body` returns a `Rounded({ element, attribute, value })`
+diagnostic for each beside the blocks, naming the value as the document
+wrote it. A percentage width finer than a fiftieth of a per cent is rounded
+the same way. `Docx.body` gives the same blocks without the diagnostics.
 
 Reading the body is a query: it reads the main document's tree each time it
 is asked, and a document still writes the trees it was read with, so

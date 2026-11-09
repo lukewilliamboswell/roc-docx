@@ -2,7 +2,7 @@
   "schema": "roc-docx-snapshot/1",
   "producer": {"name": "roc-docx", "version": "working tree"},
   "document": "tests/fixtures/libreoffice/lists.docx",
-  "keys": ["blocks.text"],
+  "keys": ["blocks.text", "blocks.rows"],
   "blocks": [
     {"kind": "paragraph", "level": 0, "list": "", "text": "Board Meeting Agenda", "runs": [], "rows": []},
     {"kind": "paragraph", "level": 0, "list": "", "text": "Agenda", "runs": [], "rows": []},

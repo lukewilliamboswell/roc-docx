@@ -24,46 +24,677 @@ WmlRead :: [].{
 	## `w:noBreakHyphen` hyphens. An element whose attributes are not ones
 	## the model can hold, such as a break of an unknown type or a symbol
 	## without a character code, is kept as it was read.
+	##
+	## A table's first `w:tblPr` holds its properties and its first
+	## `w:tblGrid` its grid, a row's first `w:trPr` and a cell's first
+	## `w:tcPr` theirs. Each property the model holds is read from the first
+	## element that gives it in a form the model can hold; every other
+	## property element stays in `preserved`, in order.
 	body : XmlTree.Node -> List(Document.Block)
-	body = |tree|
+	body = |tree| WmlRead.read_body(tree).blocks
+
+	## The body as [WmlRead.body] reads it, with what reading it noticed, in
+	## document order.
+	read_body : XmlTree.Node -> { blocks : List(Document.Block), diagnostics : List(WmlRead.Diagnostic) }
+	read_body = |tree|
 		match Mce.process(tree).interpreted {
 			Element(root) if is_w(root.name, "document") =>
 				match root.children.find_first(|child| is_element(child, "body")) {
-					Ok(Element(element)) => blocks(element.children)
-					_ => []
+					Ok(Element(element)) => blocks(element.children, [])
+					_ => { blocks: [], diagnostics: [] }
 				}
 
-			_ => []
+			_ => { blocks: [], diagnostics: [] }
 		}
+
+	## Something the reader accepted that the schema does not allow: a number
+	## the schema wants whole written with a fraction, such as the width
+	## `w:w="10470.0"` that Google Docs exports write, or a percentage finer
+	## than the fiftieths of a per cent the model holds, read rounded to the
+	## nearest, halves away from zero. `element` and `attribute` are the local
+	## names of the WordprocessingML element and attribute, and `value` is the
+	## value as the document wrote it.
+	Diagnostic : [Rounded({ element : Str, attribute : Str, value : Str })]
 }
 
 # Elements whose content is blocks, read as containers in a block's place.
 block_containers : List(Str)
-block_containers = ["tbl", "tr", "tc", "sdt", "sdtContent", "customXml"]
+block_containers = ["sdt", "sdtContent", "customXml"]
 
 # Elements whose content is paragraph content, read as containers in an
 # inline's place.
 inline_containers : List(Str)
 inline_containers = ["hyperlink", "ins", "del", "moveFrom", "moveTo", "fldSimple", "sdt", "sdtContent", "smartTag", "customXml", "dir", "bdo"]
 
-blocks : List(XmlTree.Node) -> List(Document.Block)
-blocks = |nodes| {
+# Block reading carries what it has noticed so far and gives it back with
+# what it read.
+blocks : List(XmlTree.Node), List(WmlRead.Diagnostic) -> { blocks : List(Document.Block), diagnostics : List(WmlRead.Diagnostic) }
+blocks = |nodes, diagnostics| {
 	var $out = List.with_capacity(nodes.len())
+	var $diagnostics = diagnostics
 	for node in nodes {
 		if is_content(node) {
-			$out = List.append($out, block(node))
+			read = block(node, $diagnostics)
+			$out = List.append($out, read.block)
+			$diagnostics = read.diagnostics
 		}
 	}
-	$out
+	{ blocks: $out, diagnostics: $diagnostics }
 }
 
-block : XmlTree.Node -> Document.Block
-block = |node|
+block : XmlTree.Node, List(WmlRead.Diagnostic) -> { block : Document.Block, diagnostics : List(WmlRead.Diagnostic) }
+block = |node, diagnostics|
 	match node {
-		Element(element) if is_w(element.name, "p") => Paragraph(paragraph(element.children))
-		Element(element) if is_w_in(element.name, block_containers) => Container({ element: without_children(element), content: blocks(element.children) })
-		_ => Preserved(node)
+		Element(element) if is_w(element.name, "p") => { block: Paragraph(paragraph(element.children)), diagnostics: diagnostics }
+		Element(element) if is_w(element.name, "tbl") => {
+			read = table(element.children, diagnostics)
+			{ block: Table(read.table), diagnostics: read.diagnostics }
+		}
+
+		Element(element) if is_w_in(element.name, block_containers) => {
+			read = blocks(element.children, diagnostics)
+			{ block: Container({ element: without_children(element), content: read.blocks }), diagnostics: read.diagnostics }
+		}
+
+		_ => { block: Preserved(node), diagnostics: diagnostics }
 	}
+
+table : List(XmlTree.Node), List(WmlRead.Diagnostic) -> { table : Document.Table, diagnostics : List(WmlRead.Diagnostic) }
+table = |children, diagnostics| {
+	var $properties = Err(Missing)
+	var $grid = Err(Missing)
+	var $content = List.with_capacity(children.len())
+	var $diagnostics = diagnostics
+	for child in children {
+		match ($properties, $grid, child) {
+			(Err(Missing), _, Element(element)) if is_w(element.name, "tblPr") => {
+				read = table_properties(element.children, $diagnostics)
+				$properties = Ok(read.properties)
+				$diagnostics = read.diagnostics
+			}
+
+			(_, Err(Missing), Element(element)) if is_w(element.name, "tblGrid") => {
+				read = grid(element.children, $diagnostics)
+				$grid = Ok(read.grid)
+				$diagnostics = read.diagnostics
+			}
+
+			_ => {
+				if is_content(child) {
+					read = table_content(child, $diagnostics)
+					$content = List.append($content, read.content)
+					$diagnostics = read.diagnostics
+				}
+			}
+		}
+	}
+	properties = $properties ?? { style: Unset, width: Unset, borders: [], shading: Unset, preserved: [] }
+	{ table: { properties, grid: $grid ?? [], content: $content }, diagnostics: $diagnostics }
+}
+
+table_content : XmlTree.Node, List(WmlRead.Diagnostic) -> { content : Document.TableContent, diagnostics : List(WmlRead.Diagnostic) }
+table_content = |node, diagnostics|
+	match node {
+		Element(element) if is_w(element.name, "tr") => {
+			read = row(element.children, diagnostics)
+			{ content: Row(read.row), diagnostics: read.diagnostics }
+		}
+
+		Element(element) if is_w_in(element.name, block_containers) => {
+			var $content = List.with_capacity(element.children.len())
+			var $diagnostics = diagnostics
+			for child in element.children {
+				if is_content(child) {
+					read = table_content(child, $diagnostics)
+					$content = List.append($content, read.content)
+					$diagnostics = read.diagnostics
+				}
+			}
+			{ content: Container({ element: without_children(element), content: $content }), diagnostics: $diagnostics }
+		}
+
+		_ => { content: Preserved(node), diagnostics: diagnostics }
+	}
+
+row : List(XmlTree.Node), List(WmlRead.Diagnostic) -> { row : Document.Row, diagnostics : List(WmlRead.Diagnostic) }
+row = |children, diagnostics| {
+	var $properties = Err(Missing)
+	var $content = List.with_capacity(children.len())
+	var $diagnostics = diagnostics
+	for child in children {
+		match ($properties, child) {
+			(Err(Missing), Element(element)) if is_w(element.name, "trPr") => {
+				read = row_properties(element.children, $diagnostics)
+				$properties = Ok(read.properties)
+				$diagnostics = read.diagnostics
+			}
+
+			_ => {
+				if is_content(child) {
+					read = row_content(child, $diagnostics)
+					$content = List.append($content, read.content)
+					$diagnostics = read.diagnostics
+				}
+			}
+		}
+	}
+	properties = $properties ?? { header: Unset, grid_before: Unset, grid_after: Unset, preserved: [] }
+	{ row: { properties, content: $content }, diagnostics: $diagnostics }
+}
+
+row_content : XmlTree.Node, List(WmlRead.Diagnostic) -> { content : Document.RowContent, diagnostics : List(WmlRead.Diagnostic) }
+row_content = |node, diagnostics|
+	match node {
+		Element(element) if is_w(element.name, "tc") => {
+			read = cell(element.children, diagnostics)
+			{ content: Cell(read.cell), diagnostics: read.diagnostics }
+		}
+
+		Element(element) if is_w_in(element.name, block_containers) => {
+			var $content = List.with_capacity(element.children.len())
+			var $diagnostics = diagnostics
+			for child in element.children {
+				if is_content(child) {
+					read = row_content(child, $diagnostics)
+					$content = List.append($content, read.content)
+					$diagnostics = read.diagnostics
+				}
+			}
+			{ content: Container({ element: without_children(element), content: $content }), diagnostics: $diagnostics }
+		}
+
+		_ => { content: Preserved(node), diagnostics: diagnostics }
+	}
+
+cell : List(XmlTree.Node), List(WmlRead.Diagnostic) -> { cell : Document.Cell, diagnostics : List(WmlRead.Diagnostic) }
+cell = |children, diagnostics| {
+	var $properties = Err(Missing)
+	var $content = List.with_capacity(children.len())
+	var $diagnostics = diagnostics
+	for child in children {
+		match ($properties, child) {
+			(Err(Missing), Element(element)) if is_w(element.name, "tcPr") => {
+				read = cell_properties(element.children, $diagnostics)
+				$properties = Ok(read.properties)
+				$diagnostics = read.diagnostics
+			}
+
+			_ => {
+				if is_content(child) {
+					read = block(child, $diagnostics)
+					$content = List.append($content, read.block)
+					$diagnostics = read.diagnostics
+				}
+			}
+		}
+	}
+	properties = $properties ?? { width: Unset, span: Unset, merge: Unset, borders: [], shading: Unset, alignment: Unset, preserved: [] }
+	{ cell: { properties, content: $content }, diagnostics: $diagnostics }
+}
+
+# A grid column is a `w:gridCol` whose only attribute is its width.
+grid : List(XmlTree.Node), List(WmlRead.Diagnostic) -> { grid : List(Document.GridColumn), diagnostics : List(WmlRead.Diagnostic) }
+grid = |children, diagnostics| {
+	var $columns = List.with_capacity(children.len())
+	var $diagnostics = diagnostics
+	for child in kept(children) {
+		read = match child {
+			Element(element) if is_w(element.name, "gridCol") and holds(element, ["w"]) => unsigned(element, "w")
+			_ => Err(CannotHold)
+		}
+		match read {
+			Ok({ value, noticed }) => {
+				$columns = List.append($columns, Column(value))
+				$diagnostics = List.concat($diagnostics, noticed)
+			}
+
+			Err(CannotHold) => {
+				$columns = List.append($columns, Preserved(child))
+			}
+		}
+	}
+	{ grid: $columns, diagnostics: $diagnostics }
+}
+
+table_properties : List(XmlTree.Node), List(WmlRead.Diagnostic) -> { properties : Document.TableProperties, diagnostics : List(WmlRead.Diagnostic) }
+table_properties = |children, diagnostics| {
+	var $properties = { style: Unset, width: Unset, borders: [], shading: Unset, preserved: List.with_capacity(children.len()) }
+	var $diagnostics = diagnostics
+	for child in kept(children) {
+		match child {
+			Element(element) if is_w(element.name, "tblStyle") and $properties.style == Unset and holds(element, ["val"]) =>
+				match value_of(element, "val") {
+					Ok(id) => {
+						$properties = { ..$properties, style: Style(id) }
+					}
+
+					Err(NotFound) => {
+						$properties = { ..$properties, preserved: List.append($properties.preserved, child) }
+					}
+				}
+
+			Element(element) if is_w(element.name, "tblW") and $properties.width == Unset =>
+				match width(element) {
+					Ok({ value, noticed }) => {
+						$properties = { ..$properties, width: value }
+						$diagnostics = List.concat($diagnostics, noticed)
+					}
+
+					Err(CannotHold) => {
+						$properties = { ..$properties, preserved: List.append($properties.preserved, child) }
+					}
+				}
+
+			Element(element) if is_w(element.name, "tblBorders") and $properties.borders.is_empty() =>
+				match borders(element, table_edges) {
+					Ok({ value, noticed }) => {
+						$properties = { ..$properties, borders: value }
+						$diagnostics = List.concat($diagnostics, noticed)
+					}
+
+					Err(CannotHold) => {
+						$properties = { ..$properties, preserved: List.append($properties.preserved, child) }
+					}
+				}
+
+			Element(element) if is_w(element.name, "shd") and $properties.shading == Unset =>
+				match shading(element) {
+					Ok(value) => {
+						$properties = { ..$properties, shading: value }
+					}
+
+					Err(CannotHold) => {
+						$properties = { ..$properties, preserved: List.append($properties.preserved, child) }
+					}
+				}
+
+			_ => {
+				$properties = { ..$properties, preserved: List.append($properties.preserved, child) }
+			}
+		}
+	}
+	{ properties: $properties, diagnostics: $diagnostics }
+}
+
+row_properties : List(XmlTree.Node), List(WmlRead.Diagnostic) -> { properties : Document.RowProperties, diagnostics : List(WmlRead.Diagnostic) }
+row_properties = |children, diagnostics| {
+	var $properties = { header: Unset, grid_before: Unset, grid_after: Unset, preserved: List.with_capacity(children.len()) }
+	var $diagnostics = diagnostics
+	for child in kept(children) {
+		match child {
+			Element(element) if is_w(element.name, "tblHeader") and $properties.header == Unset =>
+				match on_off(element) {
+					Ok(value) => {
+						$properties = { ..$properties, header: value }
+					}
+
+					Err(CannotHold) => {
+						$properties = { ..$properties, preserved: List.append($properties.preserved, child) }
+					}
+				}
+
+			Element(element) if is_w(element.name, "gridBefore") and $properties.grid_before == Unset =>
+				match columns(element) {
+					Ok({ value, noticed }) => {
+						$properties = { ..$properties, grid_before: value }
+						$diagnostics = List.concat($diagnostics, noticed)
+					}
+
+					Err(CannotHold) => {
+						$properties = { ..$properties, preserved: List.append($properties.preserved, child) }
+					}
+				}
+
+			Element(element) if is_w(element.name, "gridAfter") and $properties.grid_after == Unset =>
+				match columns(element) {
+					Ok({ value, noticed }) => {
+						$properties = { ..$properties, grid_after: value }
+						$diagnostics = List.concat($diagnostics, noticed)
+					}
+
+					Err(CannotHold) => {
+						$properties = { ..$properties, preserved: List.append($properties.preserved, child) }
+					}
+				}
+
+			_ => {
+				$properties = { ..$properties, preserved: List.append($properties.preserved, child) }
+			}
+		}
+	}
+	{ properties: $properties, diagnostics: $diagnostics }
+}
+
+cell_properties : List(XmlTree.Node), List(WmlRead.Diagnostic) -> { properties : Document.CellProperties, diagnostics : List(WmlRead.Diagnostic) }
+cell_properties = |children, diagnostics| {
+	var $properties = { width: Unset, span: Unset, merge: Unset, borders: [], shading: Unset, alignment: Unset, preserved: List.with_capacity(children.len()) }
+	var $diagnostics = diagnostics
+	for child in kept(children) {
+		match child {
+			Element(element) if is_w(element.name, "tcW") and $properties.width == Unset =>
+				match width(element) {
+					Ok({ value, noticed }) => {
+						$properties = { ..$properties, width: value }
+						$diagnostics = List.concat($diagnostics, noticed)
+					}
+
+					Err(CannotHold) => {
+						$properties = { ..$properties, preserved: List.append($properties.preserved, child) }
+					}
+				}
+
+			Element(element) if is_w(element.name, "gridSpan") and $properties.span == Unset =>
+				match columns(element) {
+					Ok({ value, noticed }) => {
+						$properties = { ..$properties, span: value }
+						$diagnostics = List.concat($diagnostics, noticed)
+					}
+
+					Err(CannotHold) => {
+						$properties = { ..$properties, preserved: List.append($properties.preserved, child) }
+					}
+				}
+
+			Element(element) if is_w(element.name, "vMerge") and $properties.merge == Unset =>
+				match merge(element) {
+					Ok(value) => {
+						$properties = { ..$properties, merge: value }
+					}
+
+					Err(CannotHold) => {
+						$properties = { ..$properties, preserved: List.append($properties.preserved, child) }
+					}
+				}
+
+			Element(element) if is_w(element.name, "tcBorders") and $properties.borders.is_empty() =>
+				match borders(element, cell_edges) {
+					Ok({ value, noticed }) => {
+						$properties = { ..$properties, borders: value }
+						$diagnostics = List.concat($diagnostics, noticed)
+					}
+
+					Err(CannotHold) => {
+						$properties = { ..$properties, preserved: List.append($properties.preserved, child) }
+					}
+				}
+
+			Element(element) if is_w(element.name, "shd") and $properties.shading == Unset =>
+				match shading(element) {
+					Ok(value) => {
+						$properties = { ..$properties, shading: value }
+					}
+
+					Err(CannotHold) => {
+						$properties = { ..$properties, preserved: List.append($properties.preserved, child) }
+					}
+				}
+
+			Element(element) if is_w(element.name, "vAlign") and $properties.alignment == Unset =>
+				match alignment(element) {
+					Ok(value) => {
+						$properties = { ..$properties, alignment: value }
+					}
+
+					Err(CannotHold) => {
+						$properties = { ..$properties, preserved: List.append($properties.preserved, child) }
+					}
+				}
+
+			_ => {
+				$properties = { ..$properties, preserved: List.append($properties.preserved, child) }
+			}
+		}
+	}
+	{ properties: $properties, diagnostics: $diagnostics }
+}
+
+# A value read from a property element, with what reading it noticed.
+Read(a) : { value : a, noticed : List(WmlRead.Diagnostic) }
+
+# A preferred width: `w:type` is `auto`, `nil`, `dxa` (twips, the default)
+# or `pct`, fiftieths of a per cent or a percentage written with `%`. An
+# automatic or zero width with a non-zero `w:w` cannot be held.
+width : Element -> Try(Read(Document.Width), [CannotHold])
+width = |element| {
+	if !holds(element, ["w", "type"]) {
+		return Err(CannotHold)
+	}
+	match value_of(element, "type") {
+		Ok("auto") => if (zero_or_absent(element)) Ok({ value: Auto, noticed: [] }) else Err(CannotHold)
+		Ok("nil") => if (zero_or_absent(element)) Ok({ value: Nil, noticed: [] }) else Err(CannotHold)
+		Ok("pct") => {
+			text = value_of(element, "w") ? |_| CannotHold
+			if text.ends_with("%") {
+				read = decimal(Str.drop_suffix(text, "%"), 50) ? |_| CannotHold
+				Ok({ value: Fiftieths(read.value), noticed: if (read.exact) [] else [rounded(element, "w", text)] })
+			} else {
+				read = whole(element, "w")?
+				Ok({ value: Fiftieths(read.value), noticed: read.noticed })
+			}
+		}
+
+		Ok("dxa") | Err(NotFound) => {
+			read = whole(element, "w")?
+			Ok({ value: Twips(read.value), noticed: read.noticed })
+		}
+
+		Ok(_) => Err(CannotHold)
+	}
+}
+
+zero_or_absent : Element -> Bool
+zero_or_absent = |element|
+	match value_of(element, "w") {
+		Ok(text) => decimal(text, 1).map_ok(|read| read.value) == Ok(0)
+		Err(NotFound) => Bool.True
+	}
+
+# A count of grid columns in `w:val`.
+columns : Element -> Try(Read([Unset, Columns(U64)]), [CannotHold])
+columns = |element| {
+	if !holds(element, ["val"]) {
+		return Err(CannotHold)
+	}
+	read = unsigned(element, "val")?
+	Ok({ value: Columns(read.value), noticed: read.noticed })
+}
+
+# An on or off property: no `w:val` is on.
+on_off : Element -> Try([Unset, On, Off], [CannotHold])
+on_off = |element| {
+	if !holds(element, ["val"]) {
+		return Err(CannotHold)
+	}
+	match value_of(element, "val") {
+		Err(NotFound) | Ok("true") | Ok("1") | Ok("on") => Ok(On)
+		Ok("false") | Ok("0") | Ok("off") => Ok(Off)
+		Ok(_) => Err(CannotHold)
+	}
+}
+
+# A vertical merge: no `w:val` continues the merge above.
+merge : Element -> Try([Unset, Restart, Continue], [CannotHold])
+merge = |element| {
+	if !holds(element, ["val"]) {
+		return Err(CannotHold)
+	}
+	match value_of(element, "val") {
+		Ok("restart") => Ok(Restart)
+		Err(NotFound) | Ok("continue") => Ok(Continue)
+		Ok(_) => Err(CannotHold)
+	}
+}
+
+alignment : Element -> Try([Unset, Top, Center, Bottom, Both], [CannotHold])
+alignment = |element| {
+	if !holds(element, ["val"]) {
+		return Err(CannotHold)
+	}
+	match value_of(element, "val") {
+		Ok("top") => Ok(Top)
+		Ok("center") => Ok(Center)
+		Ok("bottom") => Ok(Bottom)
+		Ok("both") => Ok(Both)
+		_ => Err(CannotHold)
+	}
+}
+
+table_edges : List(Str)
+table_edges = ["top", "left", "start", "bottom", "right", "end", "insideH", "insideV"]
+
+cell_edges : List(Str)
+cell_edges = ["top", "left", "start", "bottom", "right", "end", "insideH", "insideV", "tl2br", "tr2bl"]
+
+# Borders the model holds only whole: an element with no edges, an edge it
+# does not allow, or an edge with attributes beyond its line, width, space
+# and colour, such as a theme colour, is kept as it was read.
+borders : Element, List(Str) -> Try(Read(List(Document.Border)), [CannotHold])
+borders = |element, allowed| {
+	if !element.attributes.is_empty() {
+		return Err(CannotHold)
+	}
+	var $borders = List.with_capacity(element.children.len())
+	var $noticed = List.with_capacity(0)
+	for child in kept(element.children) {
+		match child {
+			Element(edge_element) if is_w_in(edge_element.name, allowed) and holds(edge_element, ["val", "sz", "space", "color"]) => {
+				line = value_of(edge_element, "val") ? |_| CannotHold
+				size = match value_of(edge_element, "sz") {
+					Ok(_) => {
+						read = unsigned(edge_element, "sz")?
+						$noticed = List.concat($noticed, read.noticed)
+						Eighths(read.value)
+					}
+
+					Err(NotFound) => Unset
+				}
+				space = match value_of(edge_element, "space") {
+					Ok(_) => {
+						read = unsigned(edge_element, "space")?
+						$noticed = List.concat($noticed, read.noticed)
+						Points(read.value)
+					}
+
+					Err(NotFound) => Unset
+				}
+				$borders = List.append($borders, { edge: edge(edge_element.name.local), line, size, space, color: color(edge_element, "color")? })
+			}
+
+			_ => {
+				return Err(CannotHold)
+			}
+		}
+	}
+	if $borders.is_empty() {
+		Err(CannotHold)
+	} else {
+		Ok({ value: $borders, noticed: $noticed })
+	}
+}
+
+edge : Str -> [Top, Left, Start, Bottom, Right, End, InsideHorizontal, InsideVertical, DiagonalDown, DiagonalUp]
+edge = |local|
+	match local {
+		"left" => Left
+		"start" => Start
+		"bottom" => Bottom
+		"right" => Right
+		"end" => End
+		"insideH" => InsideHorizontal
+		"insideV" => InsideVertical
+		"tl2br" => DiagonalDown
+		"tr2bl" => DiagonalUp
+		_ => Top
+	}
+
+# A shading with its pattern and, if it gives them, its colour and fill;
+# theme colours cannot be held.
+shading : Element -> Try(Document.Shading, [CannotHold])
+shading = |element| {
+	if !holds(element, ["val", "color", "fill"]) {
+		return Err(CannotHold)
+	}
+	pattern = value_of(element, "val") ? |_| CannotHold
+	Ok(Shading({ pattern, color: color(element, "color")?, fill: color(element, "fill")? }))
+}
+
+# A colour attribute: `auto` or six hexadecimal digits.
+color : Element, Str -> Try(Document.Color, [CannotHold])
+color = |element, local|
+	match value_of(element, local) {
+		Err(NotFound) => Ok(Unset)
+		Ok("auto") => Ok(Auto)
+		Ok(text) =>
+			if text.to_utf8().len() == 6 and text.to_utf8().all(|byte| hex_digit(byte).is_ok()) {
+				Ok(Rgb(text))
+			} else {
+				Err(CannotHold)
+			}
+	}
+
+# Whether every attribute of an element is a WordprocessingML one of these.
+holds : Element, List(Str) -> Bool
+holds = |element, locals| element.attributes.all(|attribute| is_w_in(attribute.name, locals))
+
+# A whole number in an attribute, read leniently: a value written with a
+# fraction is rounded, and noticed.
+whole : Element, Str -> Try(Read(I64), [CannotHold])
+whole = |element, local| {
+	text = value_of(element, local) ? |_| CannotHold
+	read = decimal(text, 1) ? |_| CannotHold
+	Ok({ value: read.value, noticed: if (text.contains(".")) [rounded(element, local, text)] else [] })
+}
+
+unsigned : Element, Str -> Try(Read(U64), [CannotHold])
+unsigned = |element, local| {
+	read = whole(element, local)?
+	if read.value < 0 {
+		Err(CannotHold)
+	} else {
+		Ok({ value: read.value.to_u64_wrap(), noticed: read.noticed })
+	}
+}
+
+rounded : Element, Str, Str -> WmlRead.Diagnostic
+rounded = |element, local, text| Rounded({ element: element.name.local, attribute: local, value: text })
+
+# A decimal number, an optional sign, digits and an optional fraction,
+# multiplied by `factor` and rounded to the nearest whole number, halves away
+# from zero; `exact` says nothing was rounded away. At most fifteen digits
+# are read, so the value cannot overflow.
+decimal : Str, U64 -> Try({ value : I64, exact : Bool }, [NotNumber])
+decimal = |text, factor| {
+	bytes = text.to_utf8()
+	negative = bytes.first() == Ok('-')
+	start = if (negative or bytes.first() == Ok('+')) 1 else 0
+	var $mantissa = 0.U64
+	var $scale = 1.U64
+	var $digits = 0.U64
+	var $point = Bool.False
+	var $index = start
+	while $index < bytes.len() {
+		byte = bytes.get($index) ?? 0
+		if byte == '.' and !$point {
+			$point = Bool.True
+		} else if byte >= '0' and byte <= '9' and $digits < 15 {
+			$mantissa = $mantissa * 10 + (byte - '0').to_u64()
+			$digits = $digits + 1
+			if $point {
+				$scale = $scale * 10
+			}
+		} else {
+			return Err(NotNumber)
+		}
+		$index = $index + 1
+	}
+	if $digits == 0 or factor > 1_000 {
+		return Err(NotNumber)
+	}
+	scaled = $mantissa * factor
+	magnitude = scaled // $scale + (if (2 * (scaled % $scale) >= $scale) 1 else 0)
+	value = magnitude.to_i64_wrap()
+	Ok({ value: if (negative) -value else value, exact: scaled % $scale == 0 })
+}
 
 paragraph : List(XmlTree.Node) -> Document.Paragraph
 paragraph = |children| {
@@ -347,16 +978,137 @@ expect {
 	}
 }
 
-## A table is a container of rows, cells and their paragraphs, and the
-## section properties are kept as they were read.
+## A table holds its properties, grid, rows and cells, a cell holds its
+## paragraphs, and the section properties after it are kept as they were
+## read.
 expect {
-	table = "<w:tbl><w:tblPr/><w:tr><w:tc><w:tcPr/><w:p><w:r><w:t>cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"
-	match read("<w:p/>\n  ${table}\n  <w:sectPr/>") {
-		[Paragraph(empty), Container({ element: _, content: [Preserved(_), Container({ element: _, content: [Container({ element: _, content: [Preserved(_), Paragraph(cell)] })] })] }), Preserved(_)] =>
-			empty == { properties: { preserved: [] }, content: [] } and cell.content.len() == 1
+	table_xml = "<w:tbl><w:tblPr/><w:tr><w:tc><w:tcPr/><w:p><w:r><w:t>cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"
+	match read("<w:p/>\n  ${table_xml}\n  <w:sectPr/>") {
+		[Paragraph(empty), Table({ properties, grid: [], content: [Row({ properties: row_properties_read, content: [Cell({ properties: cell_properties_read, content: [Paragraph(in_cell)] })] })] }), Preserved(_)] =>
+			empty == { properties: { preserved: [] }, content: [] }
+				and properties == { style: Unset, width: Unset, borders: [], shading: Unset, preserved: [] }
+				and row_properties_read == { header: Unset, grid_before: Unset, grid_after: Unset, preserved: [] }
+				and cell_properties_read == { width: Unset, span: Unset, merge: Unset, borders: [], shading: Unset, alignment: Unset, preserved: [] }
+				and in_cell.content.len() == 1
 
 		_ => Bool.False
 	}
+}
+
+## Table, row and cell properties the model holds are read and the rest are
+## kept in order: a style, widths, borders, shading, a header row, grid
+## columns skipped, a span, a merge and a vertical alignment.
+expect {
+	border = "w:val='single' w:sz='4' w:space='0' w:color='auto'"
+	table_xml = "<w:tblPr><w:tblStyle w:val='Grid'/><w:tblW w:w='5000' w:type='pct'/><w:jc w:val='center'/><w:tblBorders><w:top ${border}/><w:insideV w:val='nil'/></w:tblBorders><w:shd w:val='clear' w:color='auto' w:fill='D9E2F3'/></w:tblPr>"
+	grid_xml = "<w:tblGrid><w:gridCol w:w='2000'/><w:gridCol/></w:tblGrid>"
+	row_xml = "<w:trPr><w:cantSplit/><w:gridBefore w:val='1'/><w:tblHeader/><w:gridAfter w:val='2'/></w:trPr>"
+	cell_xml = "<w:tcPr><w:tcW w:w='0' w:type='auto'/><w:gridSpan w:val='2'/><w:vMerge w:val='restart'/><w:tcBorders><w:tl2br w:val='double' w:color='FF0000'/></w:tcBorders><w:shd w:val='pct25' w:fill='auto'/><w:noWrap/><w:vAlign w:val='center'/></w:tcPr>"
+	match read("<w:tbl>${table_xml}${grid_xml}<w:tr>${row_xml}<w:tc>${cell_xml}<w:p/></w:tc></w:tr></w:tbl>") {
+		[Table({ properties, grid: [Column(2000), Preserved(_)], content: [Row({ properties: row_read, content: [Cell({ properties: cell_read, content: [Paragraph(_)] })] })] })] =>
+			properties.style == Style("Grid")
+				and properties.width == Fiftieths(5000)
+				and properties.borders == [
+					{ edge: Top, line: "single", size: Eighths(4), space: Points(0), color: Auto },
+					{ edge: InsideVertical, line: "nil", size: Unset, space: Unset, color: Unset },
+				]
+				and properties.shading == Shading({ pattern: "clear", color: Auto, fill: Rgb("D9E2F3") })
+				and properties.preserved.len() == 1
+				and row_read.header == On
+				and row_read.grid_before == Columns(1)
+				and row_read.grid_after == Columns(2)
+				and row_read.preserved.len() == 1
+				and cell_read.width == Auto
+				and cell_read.span == Columns(2)
+				and cell_read.merge == Restart
+				and cell_read.borders == [{ edge: DiagonalDown, line: "double", size: Unset, space: Unset, color: Rgb("FF0000") }]
+				and cell_read.shading == Shading({ pattern: "pct25", color: Unset, fill: Auto })
+				and cell_read.alignment == Center
+				and cell_read.preserved.len() == 1
+
+		_ => Bool.False
+	}
+}
+
+## A property element whose attributes the model cannot hold is kept as it
+## was read, and the first one the model can hold gives the property: an
+## automatic width with a size, an unknown merge and theme colours are kept.
+expect {
+	cell_xml = "<w:tcPr><w:tcW w:w='100' w:type='auto'/><w:tcW w:w='100' w:type='dxa'/><w:tcW w:w='200' w:type='dxa'/><w:vMerge w:val='sideways'/><w:shd w:val='clear' w:themeFill='accent1'/><w:tcBorders><w:top w:val='single' w:themeColor='text1'/></w:tcBorders></w:tcPr>"
+	match read("<w:tbl><w:tr><w:tc>${cell_xml}<w:p/></w:tc></w:tr></w:tbl>") {
+		[Table({ properties: _, grid: _, content: [Row({ properties: _, content: [Cell({ properties, content: _ })] })] })] =>
+			properties.width == Twips(100)
+				and properties.merge == Unset
+				and properties.shading == Unset
+				and properties.borders == []
+				and properties.preserved.len() == 5
+
+		_ => Bool.False
+	}
+}
+
+## Widths written with a fraction, as Google Docs exports write them, are
+## rounded with a diagnostic, and so is a percentage finer than the model
+## holds; a whole percentage and a vertical merge without a value are read
+## as they are.
+expect {
+	xml = "<w:tbl><w:tblPr><w:tblW w:w='33.3333%' w:type='pct'/></w:tblPr><w:tblGrid><w:gridCol w:w='10470.0'/><w:gridCol w:w='99.5'/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w='50%' w:type='pct'/><w:vMerge/></w:tcPr><w:p/></w:tc></w:tr></w:tbl>"
+	tree = XmlTree.parse("<w:document xmlns:w='${wordprocessingml}'><w:body>${xml}</w:body></w:document>".to_utf8(), {}) ?? Text("")
+	result = WmlRead.read_body(tree)
+	match result.blocks {
+		[Table({ properties, grid: columns_read, content: [Row({ properties: _, content: [Cell(cell_read)] })] })] =>
+			properties.width == Fiftieths(1667)
+				and columns_read == [Column(10470), Column(100)]
+				and cell_read.properties.width == Fiftieths(2500)
+				and cell_read.properties.merge == Continue
+				and result.diagnostics == [
+					Rounded({ element: "tblW", attribute: "w", value: "33.3333%" }),
+					Rounded({ element: "gridCol", attribute: "w", value: "10470.0" }),
+					Rounded({ element: "gridCol", attribute: "w", value: "99.5" }),
+				]
+
+		_ => Bool.False
+	}
+}
+
+## Tables nest in cells, and rows and cells in content controls are read
+## through them, with bookmarks and row property exceptions in their place.
+expect {
+	inner = "<w:tbl><w:tr><w:tc><w:p><w:r><w:t>inner</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"
+	cell_control = "<w:sdt><w:sdtPr/><w:sdtContent><w:tc><w:p/></w:tc></w:sdtContent></w:sdt>"
+	row_control = "<w:sdt><w:sdtContent><w:tr><w:tblPrEx/><w:tc>${inner}<w:p/></w:tc>${cell_control}</w:tr></w:sdtContent></w:sdt>"
+	match read("<w:tbl><w:bookmarkStart w:id='1' w:name='b'/>${row_control}</w:tbl>") {
+		[Table(outer)] =>
+			match (outer.content, Document.table_rows(outer)) {
+				([Preserved(_), Container(_)], [only_row]) =>
+					match (only_row.content, Document.row_cells(only_row)) {
+						([Preserved(_), Cell(_), Container(_)], [first, second]) =>
+							second.content.len() == 1 and match first.content {
+								[Table(nested), Paragraph(_)] => Document.table_rows(nested).len() == 1
+								_ => Bool.False
+							}
+
+						_ => Bool.False
+					}
+
+				_ => Bool.False
+			}
+
+		_ => Bool.False
+	}
+}
+
+## Numbers are read leniently and rounded halves away from zero, and what is
+## not a number, or has more digits than are read, is not one.
+expect {
+	decimal("12", 1) == Ok({ value: 12, exact: Bool.True })
+		and decimal("-2.5", 1) == Ok({ value: -3, exact: Bool.False })
+		and decimal("+.25", 50) == Ok({ value: 13, exact: Bool.False })
+		and decimal("1.5", 50) == Ok({ value: 75, exact: Bool.True })
+		and decimal("", 1) == Err(NotNumber)
+		and decimal("1.2.3", 1) == Err(NotNumber)
+		and decimal("1e3", 1) == Err(NotNumber)
+		and decimal("1234567890123456", 1) == Err(NotNumber)
 }
 
 ## Markup compatibility is applied first: an alternative is read as the

@@ -2,7 +2,7 @@
   "schema": "roc-docx-snapshot/1",
   "producer": {"name": "roc-docx", "version": "working tree"},
   "document": "tests/fixtures/libreoffice/comments.docx",
-  "keys": ["blocks.text"],
+  "keys": ["blocks.text", "blocks.rows"],
   "blocks": [
     {"kind": "paragraph", "level": 0, "list": "", "text": "Draft Services Agreement", "runs": [], "rows": []},
     {"kind": "paragraph", "level": 0, "list": "", "text": "Services Agreement", "runs": [], "rows": []},

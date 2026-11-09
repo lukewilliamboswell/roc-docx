@@ -49,10 +49,15 @@ Docx :: [].{
 	## in reading order, as [WmlRead.body] reads it. A document without a main
 	## document part has no blocks.
 	body : Document -> List(Document.Block)
-	body = |document|
+	body = |document| Docx.read_body(document).blocks
+
+	## The body as [Docx.body] reads it, with what the reader accepted that
+	## the schema does not allow, as [WmlRead.read_body] gives it.
+	read_body : Document -> { blocks : List(Document.Block), diagnostics : List(WmlRead.Diagnostic) }
+	read_body = |document|
 		match Document.main_document(document) {
-			Ok(tree) => WmlRead.body(tree)
-			Err(NoMainDocument) => []
+			Ok(tree) => WmlRead.read_body(tree)
+			Err(NoMainDocument) => { blocks: [], diagnostics: [] }
 		}
 
 	## The text of a document's body: every paragraph's text, as
@@ -72,6 +77,12 @@ block_text : List(U8), Document.Block -> List(U8)
 block_text = |text, block|
 	match block {
 		Paragraph(paragraph) => List.append(List.concat(text, Document.paragraph_text(paragraph).to_utf8()), 10)
+		Table(table) =>
+			Document.table_rows(table).fold(
+				text,
+				|row_text, row| Document.row_cells(row).fold(row_text, |cell_text, cell| cell.content.fold(cell_text, block_text)),
+			)
+
 		Container({ element: _, content }) => content.fold(text, block_text)
 		Preserved(_) => text
 	}

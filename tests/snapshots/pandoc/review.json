@@ -2,7 +2,7 @@
   "schema": "roc-docx-snapshot/1",
   "producer": {"name": "roc-docx", "version": "working tree"},
   "document": "tests/fixtures/pandoc/review.docx",
-  "keys": ["blocks.text"],
+  "keys": ["blocks.text", "blocks.rows"],
   "blocks": [
     {"kind": "paragraph", "level": 0, "list": "", "text": "Consulting Agreement (Reviewed)", "runs": [], "rows": []},
     {"kind": "paragraph", "level": 0, "list": "", "text": "Grace Author", "runs": [], "rows": []},
@@ -10,7 +10,7 @@
     {"kind": "paragraph", "level": 0, "list": "", "text": "1. Engagement", "runs": [], "rows": []},
     {"kind": "paragraph", "level": 0, "list": "", "text": "Contoso engages the Consultant to provide the services described in Schedule 1 for a term of nine months.", "runs": [], "rows": []},
     {"kind": "paragraph", "level": 0, "list": "", "text": "2. Fees and expenses", "runs": [], "rows": []},
-    {"kind": "table", "level": 0, "list": "", "text": "", "runs": [], "rows": []},
+    {"kind": "table", "level": 0, "list": "", "text": "", "runs": [], "rows": [["Item", "Rate"], ["Daily rate", "1,200"], ["Travel", "at cost"]]},
     {"kind": "paragraph", "level": 0, "list": "", "text": "Expenses are reimbursed monthly against receipts. Receipts must be itemised.", "runs": [], "rows": []},
     {"kind": "paragraph", "level": 0, "list": "", "text": "3. Confidentiality", "runs": [], "rows": []},
     {"kind": "paragraph", "level": 0, "list": "", "text": "The Consultant keeps Contoso’s information confidential.", "runs": [], "rows": []},
