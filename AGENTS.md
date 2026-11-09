@@ -27,7 +27,7 @@ plan is deleted.
    accepts what real producers write and records a diagnostic for every
    deviation. The writer emits schema-valid Transitional markup only. Every
    input construct is modelled, preserved or dropped by an explicit rule in
-   `architecture.md`; there is no fourth category.
+   `docs/architecture.adoc`; there is no fourth category.
 5. **Deterministic.** No clock, no randomness, no host state in the package.
    Dates and authors come from the caller. The same model writes the same
    bytes everywhere.

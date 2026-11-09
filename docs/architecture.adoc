@@ -119,7 +119,7 @@ Unknown parts, including media, embedded fonts, custom XML and anything from an 
 
 === XML and namespaces
 
-XML parsing comes from the pinned `roc-parser` package, which checks well-formedness for documents without a document type declaration and keeps names as written. roc-docx adds namespace processing on top: a scoped prefix map per element, resolution of every element and attribute name to a `{ namespace, local }` pair, and detection of undeclared prefixes.
+XML reading, namespace processing and serialization come from the pinned `roc-parser` package. Its pull reader checks well-formedness for documents without a document type declaration and enforces depth, element and attribute limits before building anything; its namespace layer follows Namespaces in XML 1.0, names every element and attribute by namespace and local name, keeps each element's prefix declarations and reports undeclared prefixes as located problems; its renderer writes a tree with the prefixes it was read with or with a prefix table. roc-docx supplies the limits from `Limits`, the canonical prefix table, and everything that understands OOXML above this layer.
 
 Document type declarations and external entities are rejected, as the XML parser already does. OOXML parts never need them, and accepting them would open the parser to entity expansion attacks.
 
@@ -394,14 +394,15 @@ Dependencies point downward only: the facade depends on the model and the reader
 [cols="1,2,2",options="header"]
 |===
 |Package |Role |Policy
-|`roc-zip` (with `roc-deflate`, `roc-crc32`) |ZIP container and DEFLATE |Pinned immutable release URL
-|`roc-parser` |XML 1.0 well-formedness parser |Pinned immutable release URL
-|`roc-xml` |XML rendering with well-formedness checks |Pinned immutable release URL
+|`roc-zip` (with `roc-deflate` and `roc-crc32` beneath it) |ZIP container: the central-directory index, single-entry inflation within a byte bound, stored-byte copying and a part-at-a-time writer; DEFLATE with bounded output |Pinned immutable release URL from the maintainer's forks of niclas-ahden/roc-zip and niclas-ahden/roc-deflate
+|`roc-parser` |XML 1.0 well-formedness, a pull reader with limits, namespace processing and rendering |Pinned immutable release URL
 |===
 
 Each is pinned by content-addressed URL in `package/main.roc`. Upgrading a dependency is a reviewed change with evidence that the new release compiles and passes the full check on the current nightly. The package carries no compiler pin; the repository tests it with the latest nightly as the roc-automation model prescribes, and scripts alone pin their tooling compiler.
 
 If a dependency's API or behaviour becomes a limitation, the choice is to contribute upstream or to replace the dependency with an in-package module; forking is a last resort recorded here with its exit condition.
+
+The ZIP and DEFLATE packages are pinned from the maintainer's forks because the bounded and part-at-a-time operations the invariants need were added there first, as changes offered upstream. The exit condition is an upstream release that carries those operations, at which point the pins return to it; until then the forks are released and tested like the package itself.
 
 == Repository and release model
 
@@ -412,7 +413,7 @@ Work lands on an integration branch through small reviewed pull requests and rea
 == Rejected alternatives
 
 * *Own ZIP, DEFLATE or XML implementations.* Pure Roc implementations exist, are maintained and are fuzzed; roc-docx contributes upstream instead.
-* *roc-xml as the XML reader.* It is a generator and checks well-formedness of trees it builds; it has no parser.
+* *roc-xml for XML output.* It is a generator with well-formedness checks and no parser. One dependency now reads, resolves and renders namespaced XML, and a second XML vocabulary at the boundary would be mapped for nothing.
 * *Whole-document event streaming as the reader.* The model is whole-document by design: identifiers, comment threads, moves and the accept and reject algebra need the whole document. Memory is bounded instead by per-entry ZIP access, part-at-a-time writing and a pull reader under per-part and per-block trees.
 * *Incremental DEFLATE.* The DEFLATE dependency decodes against its whole output, so a part is the unit of compression and decompression.
 * *Data descriptors in written archives.* Part-at-a-time writing compresses each part before writing its header, so sizes and checksums are known and descriptors are unnecessary.

@@ -53,14 +53,14 @@ that keep that safe:
   this plan, names it in the title, and does nothing else. Refactors that a
   slice needs are part of that slice; refactors it does not need are a
   separate slice proposed here first.
-- **Read before writing.** `AGENTS.md`, `architecture.md`, the gate the slice
+- **Read before writing.** `AGENTS.md`, `docs/architecture.adoc`, the gate the slice
   belongs to, and the roc-automation manual chapters the slice touches.
 - **Evidence in the description.** The pull request body has four parts:
   *Slice* (the identifier and deliverable), *Change* (what was built, in
   prose), *Evidence* (commands and their results, including oracle lane
   summaries and fuzz `check` output), *Follow-ups* (anything discovered and
   deliberately not done, each as an issue).
-- **Stop and ask** before: changing `architecture.md`; adding or upgrading a
+- **Stop and ask** before: changing `docs/architecture.adoc`; adding or upgrading a
   dependency; adding an accepted oracle deviation; adding a dropped-class
   rule; skipping a test; adding a tool to `Blueprint.roc`; or when a slice
   turns out to need more than one pull request. Open a draft pull request or
@@ -89,10 +89,12 @@ exist.
 | Item | Observation |
 | --- | --- |
 | Roc compiler | Latest nightly `nightly-2026-11-07-ad3a5d2` builds and runs everything below; CI uses the latest nightly through `roc-lang/setup-roc` |
-| `roc-zip` 0.2.2, `roc-xml` 2.0.5, `roc-parser` 4.0.0 | Compile together as package dependencies on that nightly; a combined render → zip → unzip → parse probe passes `roc test` |
+| `roc-zip` 0.2.2, `roc-parser` 4.0.0 | The pins of the first kernel; they compile together on that nightly. `roc-xml` 2.0.5 was pinned beside them but never imported, and was removed once roc-parser gained a renderer |
+| Release candidates | `roc-zip` 0.3.0-rc1 (bundle `3vvx2cPVp1vjjVgrXcugJqqfrp55ZrURYQUcSArAUHdr`, 21,277 bytes), `roc-deflate` 0.6.0-rc1 (`2VEuxTntQvoRYzwwhGU22yHUiiC3cAgR1XyKajLw2Gpy`, 68,370 bytes) and `roc-parser` 6.0.0-rc.1 (`73WRCGdN4doPdfzqKAHBkwKQksAxmtoAr4Fu3dzDMvTC`, 412,899 bytes) were built by the maintainer with the same nightly; roc-zip pins roc-deflate itself. A probe package depending on all three passes ten `roc test` expectations on that nightly: `Zip.entries` indexes an archive without inflating; `Zip.extract_entry` returns `EntryTooLarge` for a bound below the declared size and the content within it; the writer's chunks equal `Zip.create`; entries copied with `Zip.compressed` rebuild a byte-identical archive; `XmlNs.parse_str` resolves a `w:` document and `XmlNs.render` reproduces its source; `Xml.reader` reports one start per element; `Xml.parse` fails a two-element budget with `LimitExceeded`; `Deflate.decompress` stops at `max_output` and pre-sizes from `Declared` |
+| Kernel against the candidates | `package/` fails to compile against them only because `Zip.extract` and `Zip.create` now return `DuplicatePath`, `EntryTooLarge` and `SizeMismatch`, which `OpenError` and `sample_archive` do not list; G1.1a adds the arms |
 | `basic-cli` | 0.26.0 fails on that nightly (16 type errors in the platform); 0.27.0 (released 2026-11-07, requires nightly ≥ 2026-11-06) passes. Examples and scripts use 0.27.0 |
 | `roc-fuzz` 0.5.0 | Bundle `9WT86CuwM7ZJBSs8iTd1jLyrUFTTiGp5hcJE63TwswGE.tar.zst`, SHA-256 `aed4032105af1cc910604949f43636b7bff6aec4a82184631213153b8e2dd23f`, 2,242,328 bytes; `roc build --fuzz` and `check`/`run` work on the nightly |
-| Error vocabulary | `roc-xml` and `roc-parser` both export an `InvalidXml` tag with different payloads; the package must map errors at its boundaries |
+| Error vocabulary | In the candidates, roc-zip's `ExtractError` and `CreateError` share `DuplicatePath(Str)`, and roc-parser's `Xml.ReadError` and `XmlNs.ReadError` share `InvalidXml` and `LimitExceeded`; the package maps every dependency error to its own vocabulary at the boundary, as the architecture requires |
 | ECMA-376 schemas | Part 4 Transitional XSDs compile in `xmllint` once a wrapper schema imports the W3C `xml.xsd`; validating a part takes about 40 ms. Digests are in the ledger |
 | pandoc 3.9.0.2 | Writes `w:ins`, `w:del`, `w:delText`, comment ranges and `comments.xml`; reads them back with `--track-changes=all`; its parts validate against the schema; output is byte-identical under `SOURCE_DATE_EPOCH` |
 | LibreOffice 26.2.3 | Headless conversion to Flat ODT preserves tracked changes and annotations with creators; `.docx` round trip keeps `w:ins`, `w:del` and comments; its parts validate only after MCE preprocessing (`mc:Ignorable`) |
@@ -102,7 +104,7 @@ exist.
 | Repository | `lukewilliamboswell/roc-docx` exists on GitHub, public, empty, no licence, no rulesets |
 | Check task | `blueprint run check` completes locally in about half a minute; the fuzz target build takes 22 s and schema validation of 180 parts takes 5 s |
 | First ratchet | `Opc.open` on the minimal package: 60 allocations, 7 reallocations, 14,395 bytes peak live, 44,291 bytes requested, mostly the ZIP layer's decode tables; ceiling set at 67 allocations and reallocations |
-| Streaming analysis | roc-deflate is a whole-buffer port (no incremental inflate or compress); `roc-zip` has no entry index or single-entry extraction and `Zip.create` needs every entry at once; roc-parser's tree parser is already an explicit-stack event loop, so a pull reader is a refactor; every LibreOffice fixture entry uses a data descriptor, pandoc's none; corpus parts decompress 5.5 to 7.9 times |
+| Streaming analysis | Against the first kernel's pins: roc-deflate is a whole-buffer port (no incremental inflate or compress); `roc-zip` had no entry index or single-entry extraction and `Zip.create` needed every entry at once; roc-parser's tree parser was already an explicit-stack event loop. The release candidates close every gap except incremental DEFLATE, which the architecture rejects. Every LibreOffice fixture entry uses a data descriptor, pandoc's none; corpus parts decompress 5.5 to 7.9 times |
 
 ## Gate 0: scaffold, oracles and test infrastructure
 
@@ -135,9 +137,10 @@ with everything preserved, and prove both with fuzzing and the oracles.
 | Slice | Deliverable | Evidence |
 | --- | --- | --- |
 | `[x]` G1.1 OPC reader | `Limits` and `Opc.open`/`open_with`: entries within limits, content types (defaults and overrides), relationships per source part with target resolution, main document by relationship type, unknown parts as bytes; `examples/inspect` lists a document's parts and main-part relationships; `fuzz/opc_open` is the OPC-stage form of the `parse_never_crashes` property (any bytes open to `Ok` or `Err`, deterministically, with labelled parts). The error vocabulary module arrives with the dependency error mapping in G1.3 | 19 `expect`s pass; the example's output is recorded in `tests/spec.json`; the target's `check` passes with examples for empty bytes, a bare ZIP signature and a minimal package, and a 500-input exploration accepts 405. Open: an example per fixture needs `Fuzz.saved` witnesses, which the smoke budget does not yet cover |
-| `[ ]` G1.1b Bounded open | Index parts by name (today lookups are linear and content-type resolution is parts times overrides) and check the ZIP central directory against the limits before any entry is inflated, inflate each part into a buffer sized from its checked declared size, and stop at the part limit. Needs either upstream additions to `roc-zip` (an entry index, single-entry extraction with a byte bound) and `roc-deflate` (`decompress_into` with an output bound) or an in-package central-directory reader, which is a stop-and-ask dependency decision. Reject duplicate part names, which OPC compares without regard to ASCII case. `fuzz/opc_open` gains declared examples for a compression bomb (with lowered limits) and a highly compressible legitimate package, and its memory ceiling becomes a function of the archive and `[Content_Types].xml` sizes rather than the whole input | The bomb example fails with `PartTooLarge` while peak live bytes stay within the part limit; the compressible example passes; `Opc.open` documents the order of checks truthfully (today it does not: limits are checked after `Zip.extract` has inflated everything) |
-| `[ ]` G1.2 OPC writer | `Opc.Writer`: one part at a time (`writer`, `add`, `finish`) emitting chunks, with `Opc.to_bytes` defined as a loop over it; fixed part order; DEFLATE at a fixed level for generated parts; parts read from an archive written with their stored bytes, method and CRC unchanged; no data descriptors; content types and relationships generated from the part graph; `fuzz/zip_opc_roundtrip` | Written `[Content_Types].xml` and `.rels` parts validate against the OPC schemas; concatenated chunks equal `to_bytes` and both equal `Zip.create` for generated parts; writing twice gives identical bytes; the round-trip target's ceilings bound the peak by the largest part |
-| `[ ]` G1.3 Namespaced XML | `XmlNs`: scoped prefix resolution to `{ namespace, local }`, undeclared-prefix diagnostics, the canonical prefix table and writer; dependency error mapping; `fuzz/xml_namespace_roundtrip`. Decide here whether a pull reader (`Xml.reader`, `next`, `element`) is contributed to `roc-parser` so the namespaced tree is built in one pass without a raw tree beside it; the agent's streaming analysis recommends it and estimates it halves the per-part peak. The analysis also noted three places where roc-parser's text decoding issues one `concat` per character or per run (CDATA, non-ASCII attribute characters, text after its first reference); `List.concat` has grown geometrically since the compiler fix of 2026-09-29, so measure before assuming a defect, and fix upstream only if a ceiling shows super-linear growth | Every XML part of every fixture resolves without error; generated trees round-trip under the architecture's equivalence; the `xml-tree` ceiling is a stated multiple of the part's bytes with a two-size pair |
+| `[ ]` G1.1a Adopt the release candidates | Pin `roc-zip` 0.3.0-rc1 (which pins `roc-deflate` 0.6.0-rc1 itself) and `roc-parser` 6.0.0-rc.1 in `package/main.roc` and `fuzz/opc_open`; give the new `Zip.extract` and `Zip.create` tags their arms in `OpenError` and `sample_archive`, in the package's words: `DuplicatePart(Str)`, the existing `PartTooLarge` and `PartSizeMismatch({ name, declared })`; nothing else changes | `blueprint run check` green on the current nightly; `tests/spec.json` unchanged; the `opc_open` ceilings hold or move down, with the measured figures in the pull request. The upgrade is a stop-and-ask item that the maintainer has already decided by publishing the candidates for this purpose |
+| `[ ]` G1.1b Bounded open | `Opc.open` reads the central directory with `Zip.entries`, checks the entry count, each declared size and the declared total against `Limits` before inflating anything, rejects part names that differ only in ASCII case (roc-zip already rejects byte-equal duplicates), and keeps the archive bytes with an index of parts by name instead of their inflated contents (today lookups are linear and content-type resolution is parts times overrides). `[Content_Types].xml` and the relationship parts are inflated at open with `Zip.extract_entry` under the part limit; every other part is inflated on demand by `Opc.part_bytes`, into a buffer sized from its checked declared size and stopping there; `Opc.stored` gives a part's stored bytes with method, CRC and sizes in the package's own record, for the writer. `fuzz/opc_open` gains declared examples, with lowered limits, for a compression bomb that declares its true size, one that lies about its size, and a highly compressible legitimate package; its memory ceiling becomes a constant plus multiples of the archive size and the `[Content_Types].xml` size rather than of the inflated total | The truthful bomb fails with `PartTooLarge` before anything is allocated for it and the lying one with `PartSizeMismatch` at its declared size, and in both the measured peak live bytes stay within the archive size plus the part limit; the compressible example passes; `Opc.open` documents its order of checks, and the docstring's admission that limits are checked after inflation is gone |
+| `[ ]` G1.2 OPC writer | `Opc.Writer` over `Zip.writer`, `Zip.add` and `Zip.finish`: one part at a time (`writer`, `add`, `finish`) emitting chunks, with `Opc.to_bytes` defined as a loop over it; fixed part order; generated parts compressed at one fixed level; parts read from an archive written from their stored bytes with `Copied`, so method, CRC and sizes are unchanged and nothing is recompressed; no data descriptors and zeroed timestamps, which roc-zip guarantees; content types and relationships generated from the part graph; `fuzz/zip_opc_roundtrip` | Written `[Content_Types].xml` and `.rels` parts validate against the OPC schemas; concatenated chunks equal `to_bytes`; a package opened and written unchanged is byte-identical in its preserved parts; writing twice gives identical bytes; the round-trip target's ceilings bound the peak by the largest part, not by the archive |
+| `[ ]` G1.3 Namespaced XML | The XML boundary on roc-parser's `XmlNs`: `Limits` gains the XML depth, element and attribute bounds and passes them as `Xml.ReaderProps`; a part parses to an `XmlNs` tree or to the package's located error, mapped from `InvalidXml`, `LimitExceeded` and `InvalidNamespace`; the canonical prefix table is the `Table` given to `XmlNs.render`, with `SortedBy` fixing attribute order where the architecture's canonical form needs it; `fuzz/xml_namespace_roundtrip` round-trips generated namespaced trees through the renderer and the reader. The pull-reader question is settled: `XmlNs.reader`, `element` and `element_with` exist, so Gate 2 reads the body one block at a time with no raw tree beside the namespaced one. roc-parser holds its text decoding linear with its own `xml-ceilings` target; this slice measures the `xml-tree` region on OOXML parts rather than assuming it | Every XML part of every fixture resolves without error; generated trees round-trip under the architecture's equivalence; the ceiling is a stated multiple of the part's bytes with a two-size pair, and the pull request records `XmlNs.parse_str` against `Xml.parse_str` on the largest fixture part |
 | `[ ]` G1.4 MCE processing | `Mce`: understood-namespace constant, `Ignorable`, `AlternateContent`, `ProcessContent`, `PreserveElements`, `PreserveAttributes`; interpreted and preserved trees; `fuzz/mce_processing` against a small reference implementation inside the target | LibreOffice and Word fixtures process to trees free of extension content while preserving it; the fuzz target passes |
 | `[ ]` G1.5 Pass-through fidelity | `Document.equivalent` for XML parts as the architecture defines; a `parse` then `write` pass-through that preserves every part and tree without a WordprocessingML model yet; the test driver's first data-driven case family: pass-through of every fixture | Every fixture passes through equivalently; LibreOffice's snapshot of the written file equals its snapshot of the input; the schema oracle accepts every written part |
 
@@ -153,7 +156,7 @@ XML with canonical form, agreeing with both oracles on every fixture.
 
 | Slice | Deliverable | Evidence |
 | --- | --- | --- |
-| `[ ]` G2.1 Body, paragraphs, runs | Model core; `WmlRead` for body, paragraphs, runs, text, tabs, breaks, symbols, hyphens; `Snapshot` text keys; `Docx.text` | Snapshot text agreement with LibreOffice and pandoc on every fixture |
+| `[ ]` G2.1 Body, paragraphs, runs | Model core; `WmlRead` for body, paragraphs, runs, text, tabs, breaks, symbols, hyphens, reading the body one block at a time through the namespaced pull reader and building each block with `element_with`, so no XML tree of the whole body is held beside the model; `Snapshot` text keys; `Docx.text` | Snapshot text agreement with LibreOffice and pandoc on every fixture |
 | `[ ]` G2.2 Styles and effective properties | Style table, inheritance, toggle semantics, `Styles.effective_paragraph` and `effective_run`; formatting keys in the snapshot; headings recognised through styles | Agreement on formatting and heading keys; `fuzz/style_resolution` passes |
 | `[ ]` G2.3 Numbering | Abstract definitions, instances, overrides, list membership and level | Agreement on list keys |
 | `[ ]` G2.4 Tables | Tables, rows, cells, grid, spans, merges, properties, nested tables | Agreement on table keys; the pandoc table fixtures and a Word table fixture |
@@ -222,31 +225,26 @@ README.
 | `[ ]` G6.2 Release dry run | Shared release workflow dry run green, examples archive tested against the bundle, release notes with bundle URL and compiler | A `0.1.0-rc1` candidate consumed from its bundle URL by a fresh application |
 | `[ ]` G6.3 Publication | `0.1.0` published; nightly compatibility reporting adopted; downstream status registered in roc-automation; this plan deleted and `AGENTS.md` reduced to what outlives the release | The release is immutable; the nightly report runs; nothing in the tree links to the plan |
 
-## Preliminary upstream changes
+## Upstream changes
 
 The streaming and bounded-memory analysis of 2026-11-09 found that the
-dependency APIs as released cannot honour the architecture's resource bounds.
-The features roc-docx needs are tracked upstream, or in forks that stage work
-to be offered upstream. roc-docx keeps pinning the upstream releases until a
-release includes each feature; a fork becomes a pinned dependency only as the
-architecture's dependency section allows, with its exit condition recorded.
+dependency APIs as released could not honour the architecture's resource
+bounds. The maintainer implemented the missing operations the same day, in
+the forks and in roc-parser, and published them as release candidates for
+roc-docx to build on. Gate 1 is designed against these APIs and G1.1a pins
+them.
 
-| Dependency | Where | Features | Unblocks |
+| Dependency | Requested | Delivered | Candidate |
 | --- | --- | --- | --- |
-| roc-parser | [lukewilliamboswell/roc-parser#112](https://github.com/lukewilliamboswell/roc-parser/issues/112) (the maintainer's own package) | A pull reader under `parse_str`; namespace processing; depth and element budgets as defaulted props; linear text decoding confirmed by a measured ceiling; optionally an XML serializer so roc-xml can be dropped | G1.3, G1.4, per-block reading in Gate 2 |
-| roc-deflate | [lukewilliamboswell/roc-deflate#6](https://github.com/lukewilliamboswell/roc-deflate/issues/6), a staging issue in the existing fork of niclas-ahden/roc-deflate | `decompress_into` with an output bound that fails before the copy that would exceed it; pre-sizing the output from a declared size; optionally reusable coder state | G1.1b |
-| roc-zip | [lukewilliamboswell/roc-zip#1](https://github.com/lukewilliamboswell/roc-zip/issues/1), a staging issue in a new fork of niclas-ahden/roc-zip | An entry index read from the central directory; bounded single-entry extraction; access to stored bytes; a part-at-a-time writer with `create` as a fold over it; duplicate-name detection | G1.1b, G1.2 |
+| roc-parser | [#112](https://github.com/lukewilliamboswell/roc-parser/issues/112): a pull reader, namespace processing, depth and element budgets as defaulted props, linear text decoding confirmed by a ceiling, and a serializer so roc-xml can be dropped | [PR #113](https://github.com/lukewilliamboswell/roc-parser/pull/113), merged: `Xml.reader` with `next`, `element` and `element_with`; `Xml.parse` and `Xml.ReaderProps` (`max_depth`, `max_elements`, `max_attributes`) failing with `LimitExceeded` before anything is built; `XmlNs` with `parse_str`, `parse`, a resolving reader and `render` with `RenderProps`; text decoding made linear and held there by the `xml-ceilings` target | [6.0.0-rc.1](https://github.com/lukewilliamboswell/roc-parser/releases/tag/6.0.0-rc.1), a hand-built preview without the usual attestations, whose preview APIs may change before the final |
+| roc-deflate | [#6](https://github.com/lukewilliamboswell/roc-deflate/issues/6) and [#7](https://github.com/lukewilliamboswell/roc-deflate/issues/7): bounded output that fails before the copy that would exceed it, pre-sizing from a declared size, reusable coder state, input-sized compressor buffers | [PR #8](https://github.com/lukewilliamboswell/roc-deflate/pull/8), merged: `decompress` and `decompress_into` take `Deflate.Bounds` (`max_output`, `expected_size: Declared(n)`) and add `OutputLimitExceeded`; `Deflate.decoder` with `decompress_with` and `Deflate.compressor` with `compress_with` keep their tables between streams; compressor buffers sized to the input; four fuzz targets with ceilings | [0.6.0-rc1](https://github.com/lukewilliamboswell/roc-deflate/releases/tag/0.6.0-rc1), pinned by roc-zip rather than by roc-docx |
+| roc-zip | [#1](https://github.com/lukewilliamboswell/roc-zip/issues/1): an entry index from the central directory, bounded single-entry extraction, stored-byte access, a part-at-a-time writer with `create` as a fold over it, duplicate-name detection | [PR #2](https://github.com/lukewilliamboswell/roc-zip/pull/2), merged: `Zip.entries`; `Zip.extract_entry` with `EntryLimits`, failing with `EntryTooLarge` before allocation and `SizeMismatch` when a stream runs long or short; `Zip.compressed` and `Copied` for writing stored bytes unchanged; `Zip.writer`, `add` and `finish`, whose chunks equal `Zip.create`; `DuplicatePath` from reader and writer; `extract` as a loop over the index; four fuzz targets; a ZIP64-locator false positive present since 0.2.2 fixed | [0.3.0-rc1](https://github.com/lukewilliamboswell/roc-zip/releases/tag/0.3.0-rc1) |
 
-The maintainer intends to implement these features, in the forks and in
-roc-parser, so that Gate 1 builds on bounded, part-at-a-time and pull-reader
-APIs rather than on workarounds. The kernel slices are therefore designed
-against the APIs sketched in those issues, and the architecture's pipeline,
-API boundary, determinism and invariant sections already describe the
-resulting behaviour.
-
-The roc-deflate fork's default branch is behind upstream and carries older
-branches; it was not synced. Nothing was changed in either fork beyond
-enabling issues.
+roc-docx pins the candidates rather than waiting for final releases so the
+kernel is built once, on the APIs the architecture describes. Each final
+release is adopted as its own upgrade slice with the full check green. Both
+forks exist to be offered upstream; the architecture's dependency section
+records the exit condition.
 
 ## Later expansions
 
@@ -257,9 +255,9 @@ Each is independently justified and gated; none blocks 0.1.0.
 - Image authoring with PNG and JPEG dimension sniffing.
 - Theme font and colour resolution.
 - Content controls and form fields as modelled constructs.
-- Per-block reading of the document body and a `Docx.blocks` fold for extraction, search and indexing, once the pull reader exists.
+- A `Docx.blocks` fold over the body for extraction, search and indexing, on the per-block reading Gate 2 establishes.
 - `Docx.to_chunks` and `next_chunk`: writing one part per step for callers that stream to a file or socket, byte-identical to `to_bytes`.
-- Reusable inflate and compress state upstream, to remove the per-part decode-table and matchfinder allocations.
+- One decoder and one compressor across the parts of an archive: roc-deflate 0.6.0-rc1 keeps their tables between streams, and roc-zip does not yet thread them through `extract_entry` and `add`, so the per-part table allocations remain the constant term in the ceilings.
 - Microsoft's Open XML SDK validator as an additional lane (see open decisions).
 - Windows CI for the examples.
 - Dedicated fuzz campaigns or benchmarks in CI, as separate scheduled work.
@@ -269,14 +267,14 @@ Each is independently justified and gated; none blocks 0.1.0.
 | Risk | Mitigation |
 | --- | --- |
 | Nightly compiler churn breaks the package or a dependency between releases | Dependencies' own nightly CI; the package floats on the latest nightly as the roc-automation model prescribes; upgrades land as small slices with compat evidence |
-| Dependency lag: `roc-zip`, `roc-xml`, `roc-parser` are maintained by others | Contribute fixes upstream; the architecture names in-package replacement as the fallback and forking as a last resort |
+| Release-candidate pins: the candidates are previews whose APIs may change before their final releases, and the ZIP and DEFLATE pins are forks | Every dependency type stays behind the `Opc` and XML boundaries, so an API change is a local edit; finals are adopted as upgrade slices; the forks' changes are offered upstream and the architecture records the exit condition |
 | LibreOffice version variance produces spurious snapshot differences | Pin the installed version in the lane, record it in reports, compare only declared keys, and use accepted deviations with causes |
 | Schema validity does not imply Word acceptance | Maintainer Word acceptance recorded on examples; the first schema-pass-Word-fail case triggers the Open XML SDK decision |
 | No XSDs for Microsoft extension parts | Structural checks in `fuzz/structure_oracle`, LibreOffice reading, Word acceptance; revisit when a reviewed schema source is available |
 | Agents widen scope or weaken checks to go green | `AGENTS.md` rules, one slice per pull request, required checks on `integration`, review of every accepted deviation and baseline |
 | Fixture content licensing | Self-authored or generated content only; provenance for every file |
-| Tree-per-part memory on very large documents | Limits with named errors; per-gate ceilings; the streaming analysis (2026-11-09) recommends a pull reader under per-part trees and per-block reading of the body in Gate 2, which it estimates cuts the peak for a 5 MB body from roughly 14–22× to 2–4× of the part's bytes; a whole-document event stream is not pursued because the model is whole-document by design |
-| Compression bombs | `Opc.open` today inflates every entry before checking decompressed limits; G1.1b moves the checks before inflation and adds bomb examples to the fuzz target |
+| Tree-per-part memory on very large documents | Limits with named errors; per-gate ceilings; roc-parser's pull reader under per-part trees and per-block reading of the body in Gate 2, which the streaming analysis (2026-11-09) estimates cuts the peak for a 5 MB body from roughly 14–22× to 2–4× of the part's bytes; `XmlNs` holds about twice the memory of `Xml` for the same part, which the G1.3 ceiling records; a whole-document event stream is not pursued because the model is whole-document by design |
+| Compression bombs | `Opc.open` today inflates every entry before checking decompressed limits; G1.1b checks the central directory against the limits first and inflates each part within its bound with `Zip.extract_entry`, with bomb examples in the fuzz target |
 
 ## Open decisions for the maintainer
 
@@ -296,3 +294,7 @@ Each is independently justified and gated; none blocks 0.1.0.
 5. **ECMA schema distribution.** Fetched by digest at provisioning, not
    committed, to avoid redistributing ECMA text; revisit if provisioning
    proves unreliable.
+6. **Candidate pins.** Build Gate 1 on the release candidates (G1.1a) and
+   adopt each final release as its own slice. If a candidate's API changes
+   before its final, the change is confined to the dependency boundary and
+   lands with that slice.
