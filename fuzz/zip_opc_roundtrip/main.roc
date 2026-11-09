@@ -26,12 +26,14 @@ import zip.Zip
 ##
 ## Writing chunk by chunk holds at most a constant plus multiples of the
 ## largest part and of the number of parts beyond what was live before; the
-## archive itself is never held. Allocation counts are linear in the number
-## of parts.
+## archive itself is never held. `to_bytes` holds the archive as well.
+## Allocation counts are linear in the number of parts.
 ##
 ## Allocation ratchets, which only ever move down: the declared examples
-## allocate no more than they did when their ceilings were set. Raising a
-## ceiling needs a cause recorded in the pull request.
+## allocate no more than they did when their ceilings were set, and the large
+## package, with twelve parts more than the small one, allocates at most a
+## copied part's share more for each of them than the small one does in the
+## same run. Raising a ceiling needs a cause recorded in the pull request.
 test! : List(U8) => Fuzz.Outcome
 test! = |bytes| {
 	example = declared_example(bytes)
@@ -64,8 +66,17 @@ check_write! = |example, graph, content_for, source| {
 	if buffered_stats.allocs + buffered_stats.reallocs > allocation_ceiling(ToBytes, example, parts) {
 		crash "to_bytes allocated more than its ceiling"
 	}
-	if stats.peak_live_bytes - stats.entry_live_bytes > writer_memory_ceiling(largest_part(graph, content_for), parts) {
+	largest = largest_part(graph, content_for)
+	if stats.peak_live_bytes - stats.entry_live_bytes > writer_memory_ceiling(largest, parts) {
 		crash "writing chunk by chunk held more than the largest part allows"
+	}
+	if example == Large {
+		small = Opc.open(small_package(), limits) ?? crash "the small package does not open"
+		small_graph = Opc.graph(small) ?? crash "the small package has no part graph"
+		{ value: _, stats: small_stats } = Fuzz.measure!("opc-writer", || stream_length(small_graph, |_| Copied(small)))
+		if stats.allocs + stats.reallocs > small_stats.allocs + small_stats.reallocs + 12 * copied_part_allocations {
+			crash "the large package cost more than the small one and its further parts"
+		}
 	}
 	match first {
 		Err(_) =>
@@ -75,6 +86,9 @@ check_write! = |example, graph, content_for, source| {
 				crash "a declared package did not write"
 			}
 		Ok(written) => {
+			if buffered_stats.peak_live_bytes - buffered_stats.entry_live_bytes > writer_memory_ceiling(largest, parts) + 2 * written.len() {
+				crash "to_bytes held more than the largest part and the archive allow"
+			}
 			if streamed != Ok(written.len()) or chunks(graph, content_for) != Ok(written) {
 				crash "the chunks are not the bytes of to_bytes"
 			}
@@ -186,9 +200,11 @@ largest_part = |graph, content_for|
 
 # Beyond what was live: one DEFLATE compressor's state, which is the
 # constant, a part's chunk beside its content, and the central directory and
-# the generated parts, which grow with the number of parts.
+# the generated parts, which grow with the number of parts. Writing copies of
+# the small package with 6, 12 and 24 further parts holds about 750 bytes
+# more for each part, in lists that double as they grow.
 writer_memory_ceiling : U64, U64 -> U64
-writer_memory_ceiling = |largest, parts| 296_960 + 2 * largest + 256 * parts
+writer_memory_ceiling = |largest, parts| 296_960 + 2 * largest + 1_024 * parts
 
 # Exact ceilings for the declared examples, as allocations plus
 # reallocations measured on nightly-2026-11-07 with roc-zip 0.3.0-rc1, and a
@@ -206,6 +222,12 @@ allocation_ceiling = |region, example, parts|
 		(_, Generated) => 96 * (parts + 3)
 	}
 
+# The large package's further allocations for each of its twelve further
+# parts: 483 for the chunked writer, 40.25 a part, the copied parts and the
+# growth of the generated ones.
+copied_part_allocations : U64
+copied_part_allocations = 41
+
 declared_example : List(U8) -> [Small, Large, Generated]
 declared_example = |bytes|
 	if bytes == small_package() {
@@ -219,13 +241,13 @@ declared_example = |bytes|
 officedocument : Str
 officedocument = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument"
 
-# A part set from bytes: up to eight parts, the main document last, the
+# A part set from bytes: up to thirty-two parts, the main document last, the
 # others XML parts and images the document links to unless a byte says
 # otherwise, and an external hyperlink from the document. Each part's
 # content is a slice of the bytes.
 generated_graph : List(U8) -> Opc.Graph
 generated_graph = |bytes| {
-	count = 1 + byte_at(bytes, 0) % 8
+	count = 1 + byte_at(bytes, 0) % 32
 	var $parts = List.with_capacity(count)
 	var $links = List.with_capacity(count)
 	var $index = 1.U64

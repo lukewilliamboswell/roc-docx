@@ -32,7 +32,9 @@ import "../../tests/fixtures/libreoffice/tables.docx" as libreoffice_tables : Li
 ## Allocation ratchets, which only ever move down: reading and writing a
 ## part each allocate at most linearly in its written bytes and keep at most
 ## linearly many bytes live, and each declared example allocates no more
-## than it did when its ceiling was set. Raising a ceiling needs a cause
+## than it did when its ceiling was set. The large declared tree, sixteen
+## times the small one, allocates and requests at most sixteen times what
+## the small one does in the same run. Raising a ceiling needs a cause
 ## recorded in the pull request.
 test! : Input => Fuzz.Outcome
 test! = |input| {
@@ -52,6 +54,12 @@ test! = |input| {
 
 				Err(_) => {}
 			}
+			if program == large_program {
+				small = round_trip!(build(small_program))
+				if trip.allocations > 16 * small.allocations or trip.requested_bytes > 16 * small.requested_bytes {
+					crash "the large tree cost more than sixteen times the small one"
+				}
+			}
 			Fuzz.keep
 		}
 
@@ -62,7 +70,7 @@ test! = |input| {
 					var $allocations = 0.U64
 					for entry in entries {
 						if entry.path.ends_with(".xml") or entry.path.ends_with(".rels") {
-							{ value: read, stats } = Fuzz.measure!("xml-read", || XmlTree.parse(entry.content, {}))
+							{ value: read, stats } = Fuzz.measure!("xml-tree-parse", || XmlTree.parse(entry.content, {}))
 							check_linear(stats, entry.content.len(), "reading a fixture part")
 							tree = read ?? crash "a fixture part does not read as namespaced XML"
 							trip = round_trip!(tree)
@@ -91,18 +99,22 @@ generator = Fuzz.map(Fuzz.bytes, |program| Generated(program))
 
 # Write a tree and read it back, measuring both, then check that writing
 # what was read gives the same bytes.
-round_trip! : XmlTree.Node => { read : XmlTree.Node, allocations : U64 }
+round_trip! : XmlTree.Node => { read : XmlTree.Node, allocations : U64, requested_bytes : U64 }
 round_trip! = |tree| {
-	{ value: rendered, stats: render_stats } = Fuzz.measure!("xml-render", || XmlTree.render(tree))
+	{ value: rendered, stats: render_stats } = Fuzz.measure!("xml-tree-render", || XmlTree.render(tree))
 	bytes = rendered ?? crash "a tree in the prefix table's namespaces could not be written"
 	check_linear(render_stats, bytes.len(), "writing a part")
-	{ value: parsed, stats: read_stats } = Fuzz.measure!("xml-read", || XmlTree.parse(bytes, {}))
+	{ value: parsed, stats: read_stats } = Fuzz.measure!("xml-tree-parse", || XmlTree.parse(bytes, {}))
 	check_linear(read_stats, bytes.len(), "reading a written part")
 	read = parsed ?? crash "a written part does not read back"
 	if XmlTree.render(read) != Ok(bytes) {
 		crash "writing a tree read from written bytes gave different bytes"
 	}
-	{ read, allocations: render_stats.allocs + render_stats.reallocs + read_stats.allocs + read_stats.reallocs }
+	{
+		read,
+		allocations: render_stats.allocs + render_stats.reallocs + read_stats.allocs + read_stats.reallocs,
+		requested_bytes: render_stats.requested_bytes + read_stats.requested_bytes,
+	}
 }
 
 # A measured operation allocates at most linearly in the part's bytes, and
@@ -129,8 +141,9 @@ linear_memory_ceiling : U64 -> U64
 linear_memory_ceiling = |part_bytes| 16_384 + 320 * part_bytes
 
 # The small and large generated examples repeat one program, the large one
-# sixteen times as often; their ceilings, 223 and 2,704 allocations for
-# writing and reading, keep the growth linear.
+# sixteen times as often. Writing and reading them takes 223 and 2,704
+# allocations and requests 40,896 and 434,728 bytes, ratios of 12.1 and 10.6
+# against the sixteen the test allows.
 small_program : List(U8)
 small_program = List.join(List.repeat(program_unit, 4))
 

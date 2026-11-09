@@ -18,7 +18,8 @@ import zip.Zip
 ## holds at most a constant plus multiples of the archive and of the parts it
 ## inflates, `[Content_Types].xml` and the relationship parts; reading a part
 ## holds at most a constant plus the part's declared size beyond what was live
-## before. Allocation counts are linear in the input.
+## before. Allocation counts, of opening and of each part read, are linear in
+## the input.
 ##
 ## Allocation ratchets, which only ever move down: the declared examples
 ## allocate no more than they did when their ceilings were set. Raising a
@@ -47,6 +48,7 @@ test! = |bytes| {
 	}
 	match first {
 		Ok(pkg) => {
+			var $read_allocations = 0.U64
 			for part in Opc.parts(pkg) {
 				if !part.name.starts_with("/") or part.content_type.is_empty() {
 					crash "an opened part lacks an absolute name or a content type"
@@ -55,6 +57,10 @@ test! = |bytes| {
 				if read_stats.peak_live_bytes - read_stats.entry_live_bytes > read_memory_ceiling(part.size) {
 					crash "Opc.part_bytes held more than the part's declared size"
 				}
+				if read_stats.allocs + read_stats.reallocs > allocation_ceiling(Generated, bytes.len()) {
+					crash "Opc.part_bytes allocated more than linearly in the archive"
+				}
+				$read_allocations = $read_allocations + read_stats.allocs + read_stats.reallocs
 				match read {
 					Ok(content) =>
 						if content.len() != part.size {
@@ -70,6 +76,14 @@ test! = |bytes| {
 						crash "the lying bomb was not stopped at its declared size within the archive and the part limit"
 					}
 				}
+			}
+			match read_allocation_ceiling(example) {
+				Ok(ceiling) =>
+					if $read_allocations > ceiling {
+						crash "reading a declared package's parts allocated more than its ceiling"
+					}
+
+				Err(NotDeclared) => {}
 			}
 			Fuzz.keep
 		}
@@ -117,6 +131,17 @@ allocation_ceiling = |example, input_bytes|
 		LyingBomb => 63
 		CompressiblePackage => 63
 		Generated => 16 + input_bytes
+	}
+
+# Exact ceilings on reading every part of a declared package that opens,
+# measured with the ceilings above: the document part takes 12 allocations
+# and reallocations, its inflater's tables and output, and the relationship
+# part, kept inflated from opening, 1.
+read_allocation_ceiling : [MinimalPackage, TruthfulBomb, LyingBomb, CompressiblePackage, Generated] -> Try(U64, [NotDeclared])
+read_allocation_ceiling = |example|
+	match example {
+		MinimalPackage | LyingBomb | CompressiblePackage => Ok(13)
+		TruthfulBomb | Generated => Err(NotDeclared)
 	}
 
 declared_example : List(U8) -> [MinimalPackage, TruthfulBomb, LyingBomb, CompressiblePackage, Generated]

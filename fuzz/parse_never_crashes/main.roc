@@ -31,7 +31,11 @@ test! = |input| {
 	bytes = match input {
 		Bytes(raw) => raw
 		Generated(program) => generated_package(program)
-		Fixture(index) => (fixtures.get(index) ?? { name: "", bytes: [], allocations: 0 }).bytes
+		Fixture(index) =>
+			match fixtures.get(index) {
+				Ok(fixture) => fixture.bytes
+				Err(_) => return Fuzz.reject
+			}
 	}
 	size = bytes.len() + inflated(bytes)
 	measured = Fuzz.measure!("docx-parse", || Docx.parse(bytes))

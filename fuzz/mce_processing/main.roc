@@ -37,22 +37,30 @@ import "../../tests/fixtures/libreoffice/tables.docx" as libreoffice_tables : Li
 ## Allocation ratchets, which only ever move down: processing allocates at
 ## most linearly in the tree's nodes and attributes and keeps at most
 ## linearly many bytes live, and each declared example allocates no more than
-## it did when its ceiling was set. Raising a ceiling needs a cause recorded
-## in the pull request.
+## it did when its ceiling was set. The large declared tree, sixteen times the
+## small one, allocates and requests at most sixteen times what the small one
+## does in the same run. Raising a ceiling needs a cause recorded in the pull
+## request.
 test! : Input => Fuzz.Outcome
 test! = |input| {
 	match input {
 		Generated(program) => {
 			tree = build(program)
-			allocations = agree!(tree, generated_understood)
+			cost = agree!(tree, generated_understood)
 			match examples_by_program.find_first(|example| example.program == program) {
 				Ok(example) => {
-					if allocations > example.allocations {
+					if cost.allocations > example.allocations {
 						crash "a declared tree allocated more than its ceiling"
 					}
 				}
 
 				Err(_) => {}
+			}
+			if program == large_program {
+				small = agree!(build(small_program), generated_understood)
+				if cost.allocations > 16 * small.allocations or cost.requested_bytes > 16 * small.requested_bytes {
+					crash "the large tree cost more than sixteen times the small one"
+				}
 			}
 			Fuzz.keep
 		}
@@ -102,8 +110,9 @@ generator : Fuzz.Generator(Input)
 generator = Fuzz.map(Fuzz.bytes, |program| Generated(program))
 
 # Process a tree, measuring it, and check it against the reference. Returns
-# the allocations processing made.
-agree! : XmlTree.Node, List(Str) => U64
+# the allocations and reallocations processing made and the bytes it
+# requested.
+agree! : XmlTree.Node, List(Str) => { allocations : U64, requested_bytes : U64 }
 agree! = |tree, known| {
 	{ value: processed, stats } = Fuzz.measure!("mce-process", || Mce.process(tree))
 	check_linear(stats, size(tree))
@@ -133,7 +142,7 @@ agree! = |tree, known| {
 			crash "a diagnostic names an element that is not at its position"
 		}
 	}
-	stats.allocs + stats.reallocs
+	{ allocations: stats.allocs + stats.reallocs, requested_bytes: stats.requested_bytes }
 }
 
 # The names of a tree's elements in document order, as the part writes them.
@@ -179,8 +188,9 @@ linear_memory_ceiling : U64 -> U64
 linear_memory_ceiling = |nodes| 16_384 + 1_024 * nodes
 
 # The small and large generated examples repeat one program, the large one
-# sixteen times as often; their ceilings, 104 and 1,550 allocations, keep the
-# growth linear.
+# sixteen times as often. Processing them takes 104 and 1,550 allocations and
+# requests 34,292 and 431,680 bytes, ratios of 14.9 and 12.6 against the
+# sixteen the test allows.
 small_program : List(U8)
 small_program = List.join(List.repeat(program_unit, 4))
 

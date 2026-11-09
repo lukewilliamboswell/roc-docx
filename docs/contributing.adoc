@@ -143,10 +143,16 @@ deterministic. The written documents go to `.roc-docx/passthrough/`, where
 
 == Performance ratchets
 
-There are no speed targets. Each fuzz target wraps the operation it tests in a
-`Fuzz.measure!` region and asserts ceilings on its allocation count and peak
-live bytes: linear ceilings for every generated input and exact ceilings for
-its declared examples. To set or revise one:
+There are no speed targets. Each fuzz target wraps every public entry point it
+tests in a `Fuzz.measure!` region named after it, such as `opc-open` or
+`xml-tree-parse`, and asserts ceilings on its allocation count and peak live
+bytes: linear ceilings for every generated input and exact ceilings for its
+declared examples. An operation that iterates a document also declares a small
+and a large example, and when the large one runs it measures the small one
+again and fails if it costs more than the linear ratio the target states for
+the pair. That check holds even when both exact ceilings are
+raised, so growth beyond linear cannot be ratcheted in. To set or revise a
+ceiling:
 
 [source,sh]
 ----
