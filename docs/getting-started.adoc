@@ -1,0 +1,54 @@
+= Read the parts of a document
+
+This chapter opens a `.docx` and lists the parts inside it. It needs a Roc
+nightly on your `PATH` as `roc`. Until the first release, an application
+depends on the package by relative path from a checkout of the repository.
+
+== What a document is made of
+
+A `.docx` is a ZIP archive of XML parts: the body in one part, styles,
+numbering, comments, footnotes, headers and footers in others, with images as
+binary parts. `[Content_Types].xml` labels every part, and relationship parts
+link a source part to its targets, so the body is found by following the
+package's `officeDocument` relationship rather than by its file name.
+
+`Opc.open` reads the archive within resource limits and labels every part.
+`Opc.main_document` follows the relationship to the body, and
+`Opc.relationships` lists what a part links to.
+
+== The example
+
+The repository's `examples/inspect` does exactly that for the document beside
+it, or for a path you pass:
+
+[source,roc]
+----
+include::../examples/inspect/main.roc[]
+----
+
+Run it from its directory:
+
+[source,sh]
+----
+cd examples/inspect && roc main.roc
+----
+
+The output names each part with its content type and size, then the
+relationships of the main document: its styles, numbering, settings,
+footnotes and comments parts.
+
+== Limits
+
+Documents are untrusted input. `Opc.open` takes a props record of limits
+beside the bytes; `{}` keeps every default, and naming one field lowers it:
+
+[source,roc]
+----
+Opc.open(bytes, { max_entries: 64 })
+----
+
+The defaults allow 4096 entries, 64 MiB per part and 256 MiB in total. A
+document over a limit fails with the limit's own error, such as
+`TooManyEntries(count)` or `PartTooLarge({ name, bytes })`, before anything
+is decompressed beyond it. The other errors say what is wrong with the archive
+or with `[Content_Types].xml`; none of them is a crash.

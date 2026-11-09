@@ -1,0 +1,34 @@
+= The roc-docx manual
+:doctype: book
+:toc: left
+:toclevels: 3
+:sectanchors:
+
+[.lead]
+roc-docx reads and writes Word documents (`.docx`) in pure Roc, including
+their comments and tracked changes. This manual is for application authors
+who use the package and for contributors who change it.
+
+ifdef::backend-html5[]
+https://github.com/lukewilliamboswell/roc-docx[View roc-docx on GitHub].
+endif::[]
+
+.How to use this manual
+****
+Deciding whether to use roc-docx:: <<what-roc-docx-is>> says what the package
+does, who it is for and what it leaves out.
+Using it for the first time:: <<read-the-parts-of-a-document>> opens a
+document and lists what is inside it.
+Understanding the design:: <<architecture>> is the enduring design: the
+pipeline, the document model, fidelity rules, the oracles and the tests.
+Changing the package:: <<contribute-to-roc-docx>> covers the checks, the
+style, the performance ratchets and how documentation is kept.
+****
+
+include::overview.adoc[leveloffset=+1]
+
+include::getting-started.adoc[leveloffset=+1]
+
+include::architecture.adoc[leveloffset=+1]
+
+include::contributing.adoc[leveloffset=+1]

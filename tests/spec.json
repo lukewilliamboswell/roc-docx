@@ -1,0 +1,20 @@
+{
+  "apps": [
+    {
+      "cases": [
+        {
+          "args": [],
+          "exit_code": 0,
+          "name": "default",
+          "stderr": "",
+          "stdin": "",
+          "stdout": "Parts of review.docx:\n  /_rels/.rels  (application/vnd.openxmlformats-package.relationships+xml, 722 bytes)\n  /word/document.xml  (application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml, 5627 bytes)\n  /word/_rels/document.xml.rels  (application/vnd.openxmlformats-package.relationships+xml, 1203 bytes)\n  /word/_rels/footnotes.xml.rels  (application/vnd.openxmlformats-package.relationships+xml, 124 bytes)\n  /word/numbering.xml  (application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml, 4178 bytes)\n  /word/styles.xml  (application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml, 27124 bytes)\n  /word/footnotes.xml  (application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml, 843 bytes)\n  /word/comments.xml  (application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml, 1088 bytes)\n  /docProps/core.xml  (application/vnd.openxmlformats-package.core-properties+xml, 626 bytes)\n  /docProps/custom.xml  (application/vnd.openxmlformats-officedocument.custom-properties+xml, 212 bytes)\n  /word/settings.xml  (application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml, 1320 bytes)\n  /docProps/app.xml  (application/vnd.openxmlformats-officedocument.extended-properties+xml, 724 bytes)\n  /word/theme/theme1.xml  (application/vnd.openxmlformats-officedocument.theme+xml, 11370 bytes)\n  /word/fontTable.xml  (application/vnd.openxmlformats-officedocument.wordprocessingml.fontTable+xml, 2324 bytes)\n  /word/webSettings.xml  (application/vnd.openxmlformats-officedocument.wordprocessingml.webSettings+xml, 199 bytes)\n\nMain document: /word/document.xml\n  rId8  http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering  /word/numbering.xml\n  rId7  http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles  /word/styles.xml\n  rId6  http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings  /word/settings.xml\n  rId5  http://schemas.openxmlformats.org/officeDocument/2006/relationships/webSettings  /word/webSettings.xml\n  rId4  http://schemas.openxmlformats.org/officeDocument/2006/relationships/fontTable  /word/fontTable.xml\n  rId3  http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme  /word/theme/theme1.xml\n  rId2  http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes  /word/footnotes.xml\n  rId1  http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments  /word/comments.xml\n"
+        }
+      ],
+      "path": "examples/inspect/main.roc"
+    }
+  ],
+  "dependencies": [],
+  "release": "working-tree",
+  "schema_version": 1
+}

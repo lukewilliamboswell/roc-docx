@@ -1,0 +1,23 @@
+{
+  "schema": "roc-docx-fixture-provenance/1",
+  "notes": [
+    "Every .docx under tests/fixtures/ has an entry naming its producer, version, how it was produced and what it exercises. Only self-authored or generated content is admitted; authors inside fixtures are fictional.",
+    "pandoc fixtures are regenerated from tests/fixtures/sources by oracle/make_fixtures.py and checked byte-for-byte in CI. LibreOffice fixtures are the pandoc fixtures round-tripped by `make_fixtures.py --libreoffice` on the version recorded, and are committed because LibreOffice output depends on its version."
+  ],
+  "fixtures": {
+    "pandoc/basics.docx": { "producer": "pandoc", "version": "3.9.0.2", "produced_on": "2026-11-09", "source": "sources/basics.md", "purpose": "headings, inline formatting (bold, italic, strikethrough, superscript, subscript, code), hyperlink, block quote, horizontal rule, title and author metadata" },
+    "pandoc/lists.docx": { "producer": "pandoc", "version": "3.9.0.2", "produced_on": "2026-11-09", "source": "sources/lists.md", "purpose": "numbered and bulleted lists, nesting, mixed list kinds" },
+    "pandoc/tables.docx": { "producer": "pandoc", "version": "3.9.0.2", "produced_on": "2026-11-09", "source": "sources/tables.md", "purpose": "tables with header rows, column alignment, a single-cell table, paragraphs between tables" },
+    "pandoc/notes.docx": { "producer": "pandoc", "version": "3.9.0.2", "produced_on": "2026-11-09", "source": "sources/notes.md", "purpose": "footnotes and footnote references" },
+    "pandoc/comments.docx": { "producer": "pandoc", "version": "3.9.0.2", "produced_on": "2026-11-09", "source": "sources/comments.md", "purpose": "three comments by two authors with dates, anchored to a whole paragraph, a phrase and a sentence; comments.xml without the Microsoft extension parts" },
+    "pandoc/revisions.docx": { "producer": "pandoc", "version": "3.9.0.2", "produced_on": "2026-11-09", "source": "sources/revisions.md", "purpose": "tracked insertions and deletions by two authors inside paragraphs and as whole paragraphs" },
+    "pandoc/review.docx": { "producer": "pandoc", "version": "3.9.0.2", "produced_on": "2026-11-09", "source": "sources/review.md", "purpose": "comments and tracked changes together, a comment spanning a revision, a table, list items inserted and deleted" },
+    "libreoffice/basics.docx": { "producer": "LibreOffice", "version": "26.2.3.2 70e089b17412e4cb7773e41413306b17a2328c34 (macOS)", "produced_on": "2026-11-09", "source": "pandoc/basics.docx", "purpose": "LibreOffice's serialization of the same content: mc:Ignorable declarations, its style set and settings" },
+    "libreoffice/lists.docx": { "producer": "LibreOffice", "version": "26.2.3.2 70e089b17412e4cb7773e41413306b17a2328c34 (macOS)", "produced_on": "2026-11-09", "source": "pandoc/lists.docx", "purpose": "LibreOffice numbering definitions and list paragraphs" },
+    "libreoffice/tables.docx": { "producer": "LibreOffice", "version": "26.2.3.2 70e089b17412e4cb7773e41413306b17a2328c34 (macOS)", "produced_on": "2026-11-09", "source": "pandoc/tables.docx", "purpose": "LibreOffice table grid, widths and cell properties" },
+    "libreoffice/notes.docx": { "producer": "LibreOffice", "version": "26.2.3.2 70e089b17412e4cb7773e41413306b17a2328c34 (macOS)", "produced_on": "2026-11-09", "source": "pandoc/notes.docx", "purpose": "LibreOffice footnotes with separator footnotes" },
+    "libreoffice/comments.docx": { "producer": "LibreOffice", "version": "26.2.3.2 70e089b17412e4cb7773e41413306b17a2328c34 (macOS)", "produced_on": "2026-11-09", "source": "pandoc/comments.docx", "purpose": "LibreOffice comment serialization, including the extension parts it writes" },
+    "libreoffice/revisions.docx": { "producer": "LibreOffice", "version": "26.2.3.2 70e089b17412e4cb7773e41413306b17a2328c34 (macOS)", "produced_on": "2026-11-09", "source": "pandoc/revisions.docx", "purpose": "LibreOffice tracked-change serialization and revision identifiers" },
+    "libreoffice/review.docx": { "producer": "LibreOffice", "version": "26.2.3.2 70e089b17412e4cb7773e41413306b17a2328c34 (macOS)", "produced_on": "2026-11-09", "source": "pandoc/review.docx", "purpose": "comments and tracked changes together as LibreOffice writes them" }
+  }
+}

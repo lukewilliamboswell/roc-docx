@@ -1,0 +1,422 @@
+= Architecture
+
+== Purpose
+
+This document defines the enduring architecture of roc-docx, a pure Roc package that reads and writes Office Open XML WordprocessingML documents (`.docx`). It fixes the boundaries, data ownership, invariants, fidelity rules, oracle strategy and test architecture that every change must satisfy. It does not schedule work: delivery order and status are tracked outside the manual and are not recorded here.
+
+An enduring document changes only when a requirement changes. A pull request that alters a decision recorded here states the new requirement and changes this document in the same change. Nothing here is a status report: a decision is recorded once the maintainers have made it, whether or not code exists yet.
+
+== Product destination
+
+The users of roc-docx are Roc applications that handle business documents: contracts, agreements, letters, reports, meeting minutes, policy drafts and the review cycles around them. Three jobs matter most, in this order:
+
+. *Read* a document produced by Microsoft Word, LibreOffice, Google Docs or another tool and recover its content faithfully: text, structure, basic formatting, tables, and above all its *comments* and *tracked changes*, with authors and dates.
+. *Modify* such a document and write it back without losing anything the application did not touch, so a document can pass through a Roc program and back to a human reviewer unharmed: add or resolve comments, accept or reject revisions, record new edits as tracked changes, fill in content.
+. *Generate* new documents from application data: letters, agreements and reports with headings, lists, tables, headers and footers, page numbers, comments and tracked changes, that open cleanly in Word and LibreOffice.
+
+Layout and rendering are not products of this package. roc-docx understands the document as its author structured it, not as a page image. Nothing here measures text, paginates or draws.
+
+Correctness and fidelity come before breadth. A narrow capability that is exact, deterministic and verified against independent implementations is worth more than a wide one that sometimes loses a comment.
+
+== Standards basis
+
+The implementation is defined against a pinned standards corpus, recorded with digests in https://github.com/lukewilliamboswell/roc-docx/blob/main/conformance/ledger.json[`conformance/ledger.json`]:
+
+* *ECMA-376, 5th edition.* Part 1 (Fundamentals and Markup Language Reference, 2016) defines WordprocessingML, DrawingML and the shared types. Part 2 (Open Packaging Conventions, 2021) defines the ZIP-based package, content types, relationships and core properties. Part 3 (Markup Compatibility and Extensibility, 2015) defines how a consumer treats namespaces it does not understand. Part 4 (Transitional Migration Features, 2016) defines the Transitional schemas that every mainstream producer, including Word, actually writes. ECMA-376 5th edition is technically aligned with ISO/IEC 29500:2016; the ECMA text is used because it is freely available and carries the schemas.
+* *MS-DOCX*, Microsoft's Word Extensions to the Office Open XML File Format, for the extension namespaces modern Word writes: `w14` paragraph identities, `w15` extended comments and people, `w16cid` durable comment identifiers, `w16cex` comment extensibility and `w16du` UTC dates on revisions. These extensions are the difference between a comment and a _threaded, resolvable_ comment, so they are in scope.
+* *XML 1.0 (Fifth Edition)* and *Namespaces in XML 1.0 (Third Edition)*.
+* *ZIP* as the PKWARE APPNOTE 6.3 describes it, with *DEFLATE* (RFC 1951).
+* *Unicode* as the Roc `Str` type carries it.
+
+Output targets the *Transitional* namespaces and schemas. Strict-namespace documents are accepted on input by namespace mapping once a slice delivers it; they are never produced. Word writes Transitional, LibreOffice and pandoc write Transitional, and a Strict output would be the least interoperable choice available.
+
+Standards and extension-specification updates are reviewed changes to the ledger. An oracle or validator upgrade never silently changes what the package claims to conform to.
+
+== Scope and claims
+
+The package makes four distinct, testable claims. A capability is claimed only when the implementation plan records the evidence for it.
+
+* *Reads.* A document produced by the supported producers parses into the typed model without error, with every supported construct recovered and every unsupported construct either preserved or reported, never dropped silently.
+* *Preserves.* Parsing a document and writing it back loses no part, no modelled fact and no preserved extension. Equivalence is defined in xref:architecture.adoc#fidelity-and-preservation[Fidelity and preservation].
+* *Writes valid.* Every part the package emits validates against the pinned ECMA-376 Part 4 Transitional schemas and the Part 2 OPC schemas, and the package as a whole satisfies the OPC packaging rules. Every write is also readable by the independent consumer oracle without loss on the supported subset.
+* *Deterministic.* The same model written twice with the same options produces identical bytes, on every host and in every process.
+
+=== Supported content
+
+The modelled subset is chosen for business documents:
+
+[cols="1,3",options="header"]
+|===
+|Area |Modelled
+|Structure |Body, paragraphs, runs, text, tabs, line/page/column breaks, symbols, soft/non-breaking hyphens, sections with page size, margins, orientation, columns, page-number settings, headers and footers (default, first, even)
+|Character formatting |Bold, italic, underline (styles), strikethrough, superscript/subscript, caps, small caps, colour, highlight, font size, font names, language, character style, hidden text
+|Paragraph formatting |Paragraph style, alignment, indentation, spacing, keep-with-next, keep-lines, page-break-before, widow control, outline level, borders, shading, tabs, numbering reference
+|Styles |Document defaults, paragraph, character, table and numbering styles with inheritance, and effective-property resolution for the modelled property set
+|Lists |Abstract numbering definitions and numbering instances with level overrides; list membership of paragraphs
+|Tables |Tables, rows, cells, grid, spans, vertical merges, widths, borders, shading, header rows, cell alignment, nested tables
+|References |Hyperlinks (external and internal), bookmarks, footnotes, endnotes, simple and complex fields as code plus cached result (preserved and exposed, never evaluated)
+|Images |Inline pictures as opaque media parts with their extent and relationship; not decoded
+|Comments |Comments with author, initials, date, rich content, anchored ranges, replies, resolved state, durable identifiers, people records
+|Tracked changes |Run insertions and deletions, moves, paragraph-mark insertions and deletions, run/paragraph/section/table/row/cell property changes, table row and cell insertions, deletions and merges, deleted field instructions, revision-tracking settings
+|Properties |Core properties (title, creator, dates, revision), extended application properties, custom properties
+|===
+
+Everything else WordprocessingML and DrawingML can express, including shapes, text boxes, charts, SmartArt, equations, content controls, form fields, mail merge, VBA, embedded objects, custom XML, glossary parts and digital signatures, is *preserved* opaquely when present and never produced. This is a policy boundary, not a judgement that those constructs are unimportant.
+
+=== Out of scope
+
+The package does not open the binary `.doc` format, RTF or OpenDocument; does not encrypt, decrypt or sign; does not evaluate fields; does not lay out, paginate, render or convert to PDF or HTML; does not repair corrupt archives; and never contacts the network.
+
+== Core invariants
+
+These hold for every slice and are enforced by tests, fuzz targets and the oracle lanes:
+
+. *Pure Roc, no native dependencies.* The package and all of its runtime dependencies are pure Roc. External tools are test oracles only; nothing in `package/` invokes or links them.
+. *Never crash on input.* Parsing any byte sequence returns `Ok` or a structured `Err`. Resource use is bounded by explicit limits on archive size, part count, uncompressed size, XML depth and element count, so a hostile document fails fast with a named limit error.
+. *Parse leniently, write strictly.* The reader accepts what real producers write, including missing required attributes, undeclared ignorable namespaces and odd ordering, applying the schema's defaults and recording a diagnostic. The writer emits schema-valid Transitional markup with every required attribute, canonical element order and declared extension namespaces.
+. *No silent loss.* Every construct in an input document is modelled, preserved or dropped by an explicit rule that records a diagnostic. There is no fourth category.
+. *Deterministic.* The package reads no clock, draws no random numbers and depends on no host state. Dates and author identities come from the caller. Identifier allocation is a pure function of the model.
+. *Facts flow forward.* Each pipeline stage consumes facts the previous stage established and never re-derives them from incidental data. The WordprocessingML reader does not re-parse XML text; the writer does not inspect bytes it emitted earlier.
+. *Typed, structured errors.* Errors and diagnostics are tag unions with locations (part name, element path, offset) and never free-text only.
+. *Linear cost.* Parsing and writing are linear in input size for the modelled constructs. Evidence of allocation behaviour is part of a slice's completion, as xref:architecture.adoc#performance-and-storage[Performance and storage] says.
+
+== The package as a pipeline
+
+Reading is a sequence of stages with explicit contracts; writing is the same sequence reversed. Each stage is a module with its own tests and fuzz target.
+
+[mermaid]
+....
+flowchart LR
+    B[Bytes] --> Z[ZIP archive]
+    Z --> O[OPC package: parts, content types, relationships]
+    O --> X[XML trees per part]
+    X --> N[Namespace resolution]
+    N --> M[MCE processing]
+    M --> W[WordprocessingML model]
+    W --> F[Docx facade]
+....
+
+[cols="1,2,2",options="header"]
+|===
+|Stage |Consumes |Establishes
+|ZIP |bytes |entries with names and decompressed contents, within limits
+|OPC |entries |parts with content types; relationships per source; the main document part; unknown parts kept as bytes
+|XML |part bytes |a well-formed tree per XML part, or a located error
+|Namespaces |tree with prefixes |every element and attribute named by namespace URI and local name; prefix declarations retained for round-tripping
+|MCE |namespaced tree |understood and ignorable content separated; `AlternateContent` resolved for interpretation and retained for emission
+|WordprocessingML |processed trees |the typed document model with preserved extensions and diagnostics
+|Facade |model |the application-facing API: queries, edits, authoring, serialization
+|===
+
+The reverse direction establishes: a model with allocated identifiers; one XML tree per part in canonical element and attribute order; serialized parts with the canonical prefix policy; an OPC package with content types and relationships covering every part; a ZIP archive with a fixed entry order and compression method.
+
+=== ZIP and OPC
+
+The ZIP container and DEFLATE codec come from the pinned `roc-zip` and `roc-deflate` packages. The OPC layer owns `[Content_Types].xml`, `_rels` parts and the part graph. It resolves relationship targets against their source part, distinguishes internal and external targets, and exposes the part graph to the WordprocessingML layer by relationship type, never by file name. File names are a serialization detail: `word/document.xml` is conventional, not required, and the reader follows the `officeDocument` relationship from the package root.
+
+Unknown parts, including media, embedded fonts, custom XML and anything from an unrecognised relationship type, are carried as opaque bytes with their content type and relationships, and written back byte-identical.
+
+=== XML and namespaces
+
+XML parsing comes from the pinned `roc-parser` package, which checks well-formedness for documents without a document type declaration and keeps names as written. roc-docx adds namespace processing on top: a scoped prefix map per element, resolution of every element and attribute name to a `{ namespace, local }` pair, and detection of undeclared prefixes.
+
+Document type declarations and external entities are rejected, as the XML parser already does. OOXML parts never need them, and accepting them would open the parser to entity expansion attacks.
+
+XML generation uses the pinned `roc-xml` package for well-formedness checking and escaping. roc-docx owns the prefix policy: a fixed, documented prefix for each namespace it emits, declared once on each part's root element, so that the same model always produces the same text.
+
+The two dependencies both report an `InvalidXml` tag with different payloads. roc-docx maps every dependency error into its own error vocabulary at the stage boundary; dependency types never appear in the public API.
+
+=== Markup Compatibility and Extensibility
+
+MCE processing follows ECMA-376 Part 3. The set of namespaces the package understands is a fixed constant. On reading:
+
+* `mc:Ignorable` prefixes resolve to namespaces; elements and attributes in an ignorable namespace that the package does not understand are removed from the interpreted tree and kept in the preserved tree.
+* `mc:AlternateContent` selects the first `mc:Choice` whose `Requires` namespaces are all understood, otherwise the `mc:Fallback`, for interpretation. The whole `AlternateContent` element is retained in the preserved tree so it is written back unchanged.
+* `mc:ProcessContent`, `mc:PreserveElements` and `mc:PreserveAttributes` are honoured as the specification defines.
+* Producers that use an extension namespace without declaring it ignorable, which Google Docs exports do, are accepted with a diagnostic.
+
+On writing, every extension namespace the package emits is declared with `mc:Ignorable` on the part's root element so that consumers that do not understand it, including the ECMA schemas, can skip it.
+
+== Document model
+
+The model is a tree of typed Roc values. It is the only representation the facade and the application see. Its design rules:
+
+* *Semantic, not syntactic.* The model names what a construct means in the document, not how WordprocessingML spells it. A tracked insertion is a revision wrapping content, not an element named `ins`.
+* *Complete for the modelled subset.* Every modelled property has a typed representation with the schema's default made explicit, so that "unspecified" and "set to the default" are distinguishable where the schema distinguishes them.
+* *Extensible by preservation.* Any node can carry preserved extension content: namespaced XML subtrees that the reader did not model, in their original position relative to the modelled siblings. Writers emit them back in place.
+* *Identifiers are model-level.* Comments, revisions, bookmarks, footnotes, numbering definitions and relationships are referenced by typed identifiers that the model owns. The serialized `w:id`, `r:id` and `w14:paraId` values are allocated at write time by a deterministic function of the model, so that applications never manage them and collisions cannot occur.
+
+=== Blocks and inlines
+
+The body is a list of blocks: paragraphs, tables and section breaks. A paragraph has properties, a list of inlines and an optional paragraph-mark revision. Inlines are runs, hyperlinks, fields, footnote and endnote references, inline drawings, bookmark boundaries, comment range boundaries, comment references and preserved extensions. A run has character properties and a list of run content: text, tabs, breaks, symbols and hyphens.
+
+Revisions wrap inlines and blocks: an insertion or deletion revision contains the inlines it covers; a move pairs a source revision with a destination revision through a shared move identifier. A property-change revision is an attribute of the properties it changed and carries the previous properties.
+
+=== Styles and effective properties
+
+Styles are parsed into a style table keyed by style identifier with type, base style, next style, linked style and property sets. Effective properties for a paragraph or run are resolved in the order ECMA-376 Part 1 §17.7.2 defines: document defaults, then table style, then numbering level, then the paragraph style chain, then direct paragraph properties; for runs, then the character style chain and direct run properties, with toggle properties combined as the specification requires. Resolution is a pure function exposed by the facade; the model stores direct properties only, so a round-trip never bakes resolved values into a document.
+
+Theme-dependent values (theme fonts and colours) are preserved as written and resolved only to their explicit theme reference. Resolving them to concrete fonts requires the theme part and is a later capability.
+
+=== Comments
+
+A comment is a thread node: identifier, author, initials, date, rich content (paragraphs), an optional parent comment, a resolved flag and an optional durable identifier. Its anchor is a range in the body delimited by comment range boundary inlines; a comment may also have no range and attach at a reference position, as Word permits.
+
+The model keeps the thread structure explicit even though WordprocessingML spreads it over five parts: `comments.xml` for content and authorship, `commentsExtended.xml` for parent links and resolved state, `commentsIds.xml` and `commentsExtensible.xml` for durable identifiers and UTC dates, and `people.xml` for author presence. The reader joins them by paragraph identifier; the writer produces all five from the thread model so that Word shows replies as replies. A document with comments but without the extension parts is valid and is what the reader sees from older producers; the model is the same.
+
+Comment identifiers, revision identifiers and bookmark identifiers are allocated from one shared space when writing. The schemas allow separate spaces, but some consumers do not, and nothing is lost by uniqueness.
+
+=== Tracked changes
+
+Revisions are first-class. The reader recovers every revision kind the schema defines for the modelled constructs, including paragraph-mark revisions stored inside paragraph properties and table row and cell revisions stored inside row and cell properties. Deleted text is deleted text whether it came from `w:delText` or `w:delInstrText`.
+
+The facade defines the revision algebra that applications rely on:
+
+* `accept_all` and `reject_all`, and their filtered forms by author, by date range or by identifier, are total functions from a document to a document without the selected revisions. Accepting an insertion keeps its content; accepting a deletion removes it; accepting a deleted paragraph mark merges the paragraph with the following one; accepting a property change discards the previous properties; accepting a move keeps the destination. Rejecting is the inverse in each case.
+* Accepting every revision and then extracting text equals extracting the "final" text; rejecting every revision and extracting text equals the "original" text. Both are exposed directly because reviewers ask for both.
+* Tracked editing: every content edit the facade offers takes a revision context (author, date) and records itself as tracked changes when one is supplied, or applies silently when none is. The same operation never does both.
+
+Revision tracking state (`w:trackRevisions` in settings) is part of the model, because a document handed to a reviewer with tracking on behaves differently in Word from one with tracking off.
+
+== Fidelity and preservation
+
+Every input construct falls into exactly one class, and the class is decided by rule, not by accident:
+
+[cols="1,2,2",options="header"]
+|===
+|Class |Meaning |On write
+|Modelled |A typed representation exists |Re-serialized from the model in canonical form
+|Preserved |Kept as an opaque namespaced XML subtree or opaque part, in position |Emitted unchanged
+|Dropped |Discarded by an explicit, documented rule with a diagnostic |Absent
+|===
+
+The dropped class is small and justified: revision save identifiers (`w:rsid*`), rendered-layout hints (`w:lastRenderedPageBreak`), proofing markers (`w:proofErr`), and the `_GoBack` bookmark. Each is editor state that the producing application regenerates and that carries no document meaning.
+
+*Round-trip equivalence* is defined per part: after `parse` then `write`, each XML part is equivalent to the original under these normalizations, and each non-XML part is byte-identical.
+
+* Namespace prefixes may differ; names compare by namespace and local name.
+* Attribute order is insignificant.
+* Insignificant whitespace between elements is insignificant; text content, including `xml:space="preserve"` text, compares exactly.
+* Attributes explicitly set to the schema default compare equal to absence where the schema defines a default and the package records neither; where a producer's explicit default is meaningful (toggle properties), the model records it and it round-trips.
+* Dropped-class content is removed from the original before comparison.
+
+The package ships this equivalence as a function, because the test harness and the fuzz targets need exactly the equivalence the package promises, and a second definition in a test would drift.
+
+Byte-identical round-tripping of XML parts is explicitly not a goal: producers disagree on prefixes, attribute order and whitespace, and the writer's canonical form is what makes output deterministic.
+
+== Public API boundary
+
+The facade is the primary product and the only module most applications import. Its shape, in order of use:
+
+* *Open and save.* `parse : List(U8) -> Try({ document, diagnostics }, Error)` and `to_bytes : Document -> Try(List(U8), Error)`, with a `to_bytes_with` variant taking options (compression level, which extension parts to emit). Writing fails transactionally: either the whole document serializes or an error names the reason, never partial bytes.
+* *Query.* Plain text (final, original, or as-is), paragraphs with effective properties, tables as cell grids, comments as threads with anchored text, revisions with their text and authorship, sections, properties.
+* *Edit.* Insert, replace and delete text and blocks by stable positions returned from queries; add, reply to, resolve and remove comments; accept and reject revisions; set properties and tracking state. Each edit takes an optional revision context.
+* *Author.* Builders for new documents: paragraphs with styles, runs with formatting, lists, tables, hyperlinks, headers and footers with page-number fields, sections, a minimal style set that Word and LibreOffice render sensibly, and metadata.
+
+The API follows the maintainers' https://gist.github.com/lukewilliamboswell/241a4e8adb7c89c7e0e02f1d303a8fa1[Roc style guide]. Configuration is a props record: a nominal record of defaulted fields passed beside the subject, so `Opc.open(bytes, {})` takes every default and `Opc.open(bytes, { max_entries: 64 })` names only what differs, and a new option is a new defaulted field that changes no caller. Closed sets are tag unions, never booleans or magic values. Fallible operations return `Try` with structured error tags whose payloads carry the facts, and error unions merge through `?` rather than being renamed at each layer. A module's type block is its public surface.
+
+The model modules are public for applications that need more than the facade: the typed document tree, the style table, the numbering table and the properties. The OPC and XML layers are public as an advanced integration boundary for applications that must touch parts the model does not cover. Dependency types never cross any of these boundaries.
+
+Diagnostics are data returned beside a result, never printed. They carry a kind, a location and the rule that produced them, so an application can log, surface or fail on them.
+
+== Determinism and serialization
+
+Determinism is a product property, so its ingredients are fixed here:
+
+* Parts are written in a fixed order: `[Content_Types].xml`, `_rels/.rels`, the main document and its relationships, then remaining parts in a deterministic order derived from the part graph, media last.
+* Each part's root declares the namespaces it uses, in a fixed order, with the fixed prefix table; no unused declarations.
+* Elements within properties follow the schema's sequence; attributes follow a fixed order per element.
+* Identifiers are allocated by a deterministic traversal of the model.
+* ZIP entries use DEFLATE at a fixed level, no data descriptors, zeroed timestamps, and the same entry order as the part order.
+* No value is taken from the environment.
+
+The same `Document` therefore produces the same bytes on every host, which the test harness verifies by hashing outputs across the supported hosts.
+
+== Resource bounds and security
+
+Documents are untrusted input. The reader enforces caps on compressed size, uncompressed size per entry and in total, entry count, part name length, XML nesting depth, element count and attribute count, each returning a named limit error. Defaults are generous for business documents and adjustable through parse options with an explicit upper bound. Relationship targets are resolved within the package; a target that escapes the package root is an error. No content is ever interpreted as a path on the host, a URL to fetch or code to run.
+
+Fuzz targets replay these guarantees continuously; the never-crash target is the first target every slice keeps green.
+
+== Performance and storage
+
+Correctness comes first. Performance evidence exists to catch super-linear behaviour that would make the package unusable on real documents, not to meet a target: there are no numeric speed, memory or size goals, and wall-clock time is not measured in CI.
+
+The instrument is allocation behaviour under roc-fuzz, and the control is a *ratchet*: a ceiling asserted in the fuzz target's source that only ever moves down.
+
+* Every public read or write entry point is wrapped in a `Fuzz.measure!` region named after it, inside its fuzz target. The region's `allocs` and `reallocs` count copies and growth; `requested_bytes` exposes quadratic copying that a linear allocation count hides; `peak_live_bytes` is the memory the operation needed.
+* For every generated input the target asserts two linear ceilings: the allocation count and the peak live bytes are each at most a stated linear function of the input size. These are the mechanical form of the linear-cost invariant.
+* Each declared example also carries an exact ceiling equal to its measured count when the ceiling was set. A compiler or a change that allocates less lowers the ceiling deliberately; one that allocates more fails the target, and raising a ceiling requires its cause in the pull request.
+* An operation that iterates the document declares a small and a large example whose ceilings encode the expected ratio, so growth beyond linear fails rather than being observed.
+
+Ceilings live beside the code they constrain, so there is no baseline file for CI to accept and a changed ceiling is a reviewed diff. The repository's lint requires every fuzz target to carry a measurement or a ceiling.
+
+Each stage keeps its accumulators uniquely owned so Roc updates them in place, avoids re-scanning input, and processes parts in one pass. A change that turns an in-place update into a copy shows up as a failed ceiling.
+
+== Oracle architecture
+
+An oracle is an independent authority the package is compared against. The package's own tests cannot establish that its output is valid or that its reading is right; only something that did not share its assumptions can. roc-docx uses three oracle roles with named, pinned occupants.
+
+[mermaid]
+....
+flowchart TB
+    S[Fixture sources] --> P[Fixture producers: pandoc, LibreOffice, Word, Google Docs]
+    P --> F[Fixtures with provenance]
+    F --> R[roc-docx parse]
+    F --> L[Independent consumer: LibreOffice]
+    F --> Q[Semantic reader: pandoc]
+    R --> SS[Semantic snapshot]
+    L --> SL[Semantic snapshot]
+    Q --> SQ[Semantic snapshot]
+    SS --- SL
+    SS --- SQ
+    R --> W[roc-docx write]
+    W --> V[Normative validator: ECMA-376 schemas via xmllint]
+    W --> L
+....
+
+=== Normative structural oracle: the ECMA-376 schemas
+
+Every XML part the package writes is validated against the ECMA-376 5th edition Part 4 Transitional schemas and Part 2 OPC schemas with libxml2's `xmllint`. The schemas are the standard's own normative grammar; passing them is the strongest statement available in CI that a part is well-formed WordprocessingML, including element order, required attributes and value types, which are exactly the mistakes a hand-written serializer makes.
+
+Two preparation steps make the schemas usable, and both are oracle-side adapters that never touch the ECMA files: a wrapper schema imports the W3C `xml.xsd` that the ECMA schemas reference without a location, and an MCE preprocessor removes `mc:Ignorable` declarations and ignorable-namespace content before validation, because the ECMA schemas predate the extension namespaces. The preprocessor is an independent implementation of the Part 3 rules, in Python, so a defect in the package's MCE module cannot hide itself.
+
+The schemas are fetched by URL and verified against the digests in the ledger at provisioning time; they are not committed. What the schema oracle establishes is schema validity of the parts the package wrote. It does not establish that Word opens the file, that the content is what the author meant, or anything about the extension parts, whose Microsoft schemas it does not cover.
+
+=== Independent consumer oracle: LibreOffice
+
+LibreOffice Writer, run headless, is the most complete independent implementation of WordprocessingML available in CI. It plays two parts:
+
+* *Reading baseline.* For every fixture, LibreOffice's Flat ODT export is reduced to a semantic snapshot. roc-docx's snapshot of the same fixture must agree on the subset LibreOffice is authoritative for: text, paragraph structure, basic formatting, tables, comments with authors, dates, text and resolution, tracked insertions, deletions and format changes with authors and dates, footnotes, headers and footers.
+* *Write acceptance.* Every document the package writes is converted by LibreOffice to Flat ODT without error, and the snapshot of that export agrees with the snapshot of the model that was written. A round trip through LibreOffice back to `.docx` is also parsed by roc-docx to confirm that nothing LibreOffice reads is lost.
+
+What LibreOffice establishes is agreement with a second, widely used reader. It does not establish Word's behaviour. LibreOffice output carries `mc:Ignorable` and is itself only schema-valid after MCE preprocessing, which is one reason the schema oracle has that step.
+
+=== Semantic reader and fixture producer: pandoc
+
+pandoc reads and writes `.docx` with comments and tracked changes, is a single pinned binary, and is byte-deterministic under `SOURCE_DATE_EPOCH`. It produces the regenerable fixture corpus from committed Markdown sources whose annotations state the intended comments and revisions, so the expected snapshot of such a fixture comes from its source, not from any reader. Its JSON reader output also reduces to a snapshot for text, block structure, inline formatting, footnotes, comments and revisions, giving a fast third opinion on every pull request.
+
+pandoc's model is lossy beyond that subset; it is never authoritative for styles, sections, headers, footers, tables beyond shape, or comment threading.
+
+=== Fixture producers and provenance
+
+Fixtures are documents the package reads in tests. Their producers are pandoc and LibreOffice, both regenerable in CI from committed sources, and Word and Google Docs, produced by a maintainer and committed with a provenance record: producer and version, the steps or source used, the date, and the constructs the fixture exists to exercise. Only self-authored content is admitted; no third-party documents and no personal data. Authors in fixtures are fictional.
+
+Word itself is the authority the oracle stack approximates. Where a maintainer has Word, opening a written document without a repair prompt is recorded as evidence in the fixture or example's provenance; it is never required of CI. If a document passes the schema and LibreOffice oracles and Word still rejects it, that is a defect in the oracle stack as much as in the package, and the first such case triggers evaluation of Microsoft's Open XML SDK validator as an additional lane, as the implementation plan records.
+
+=== The semantic snapshot contract
+
+The snapshot is a JSON document, versioned as `roc-docx-snapshot/1`, that every oracle adapter and the package itself can produce. It covers body blocks with text and run formatting, lists, tables as text grids, comments as threads, revisions with kind, author, date and text, sections with page geometry and header and footer text, footnotes and endnotes, and core properties. Each adapter declares the keys it is authoritative for; comparison covers only the intersection of the two sides' declared keys, and a disagreement on a declared key is a failure. Normalization rules are part of the schema: text compares exactly after line-ending normalization, dates compare as instants, and ordering is significant.
+
+Keeping the snapshot small and explicit is what makes three implementations comparable. It is not a second document model and never grows features the package does not claim.
+
+=== Accepted deviations
+
+An oracle can be wrong. A known false positive in a schema, a LibreOffice import limitation or a pandoc simplification is recorded in `conformance/accepted-deviations.json` with the oracle, the rule, the fixture, an upstream reference and a review date. The oracle lanes consult that file and report accepted deviations separately from passes. Nothing is accepted without an explanation of its cause, and an entry is removed when the upstream fix lands.
+
+== Enduring test architecture
+
+Every Roc program in the repository runs in pull-request CI. The layers, from fastest to slowest:
+
+. *`expect` tests* in every module, run by `roc test` on the package root. They cover concrete behaviour and known regressions.
+. *Data-driven cases* under `tests/`: fixtures with expected snapshots and expected diagnostics, run by a driver that builds once and runs every case, reports progress, timing and skips, and rewrites expectations with `--update` so an intended change is a reviewed diff.
+. *Examples* under `examples/`, run against `tests/spec.json` by the shared release utility; their outputs are oracle inputs too.
+. *Fuzz targets* under `fuzz/`, one property each, with declared examples, saved witnesses and allocation ceilings. Pull requests build each target, run its declared examples and explore for one bounded second.
+. *Oracle lanes*: schema validation and pandoc agreement on every pull request in the `check` task; LibreOffice agreement as its own job on every pull request.
+
+Pull-request CI is lean: it runs `check`, the LibreOffice lane and the manual build, and nothing heavier. Sustained fuzz campaigns and benchmarks are not part of CI. If they become wanted they are added later as separate scheduled work, and nothing this architecture claims depends on them.
+
+The fuzz inventory is part of the architecture because each target encodes a rule the package promises:
+
+[cols="1,3",options="header"]
+|===
+|Target |Property
+|`parse_never_crashes` |Any bytes parse to `Ok` or `Err` within the limits, and parsing is deterministic
+|`zip_opc_roundtrip` |A generated part set packages and unpacks to the same parts
+|`xml_namespace_roundtrip` |A generated namespaced tree serializes and parses to an equivalent tree
+|`mce_processing` |MCE selection agrees with a reference implementation of the Part 3 rules on generated trees
+|`document_roundtrip` |A generated document writes and parses to an equivalent document, and writes to identical bytes twice
+|`structure_oracle` |Written bytes satisfy an independent in-Roc structural check: content types cover parts, relationships resolve, identifiers unique, ranges balanced, required attributes present
+|`revision_algebra` |Accept and reject obey their laws: accept after tracked edit equals untracked edit; reject restores; final and original text agree with the untracked documents
+|`comment_anchors` |Adding, replying to, resolving and removing comments preserves text and keeps every range balanced and every identifier unique
+|`style_resolution` |Effective properties are idempotent under re-resolution and agree with a direct evaluation of the inheritance chain
+|===
+
+Allocation ceilings are asserted inside these targets as xref:architecture.adoc#performance-and-storage[Performance and storage] describes; nothing in CI accepts or updates a baseline.
+
+== Mechanical checks
+
+A rule that lives only in guidance is followed until someone forgets it. Where a rule can be checked by a program, it is, and the check runs in `check` on every pull request. The lint under `scripts/` enforces:
+
+* the compiler pin appears only in `scripts/` and matches the tooling compiler named in `Blueprint.roc`;
+* examples and fuzz targets depend on the package by relative path, never by release URL;
+* one release URL per dependency across every header in the repository;
+* no `crash` in `package/`, which is the never-crash invariant made checkable, and no `dbg` anywhere;
+* every fuzz target declares examples and carries a measurement or ceiling;
+* every `TODO` names a GitHub issue;
+* every top-level `expect` in the package has a doc comment, so a failing test prints its name;
+* every `.docx` outside the fixture corpus is byte-identical to a fixture, so it inherits that fixture's provenance;
+* every manual chapter opens with a title and is included by the manual's index.
+
+Formatting, fixture regeneration and schema validation are mechanical checks of the same kind. Guidance that cannot be checked stays in the contributing chapter, and a recurring review comment is the signal to turn it into a check.
+
+== Documentation
+
+`docs/` is the manual, for two audiences: application authors who use the package and contributors who change it. It follows the roc-automation manual conventions, one AsciiDoc chapter per file under a book index rendered by the shared renderer in CI, and it changes in the same pull request as the behaviour it describes. Each chapter answers one reader's question as a tutorial, a how-to, a reference or an explanation; this architecture is one of its chapters. Contributor material sits beside the user chapters rather than in a separate tree of notes, and it stays release-neutral: exact versions and compiler pins belong in release notes.
+
+== Module boundaries
+
+[source,text]
+----
+package/main.roc        package root: the public module list and dependencies
+package/Docx.roc        facade: parse, write, query, edit, author
+package/Document.roc    the typed model and its equivalence
+package/Styles.roc      style table and effective-property resolution
+package/Numbering.roc   numbering definitions and list membership
+package/Comments.roc    comment threads: join on read, split on write
+package/Revisions.roc   revision model and the accept/reject algebra
+package/Snapshot.roc    the semantic snapshot encoder
+package/Opc.roc         parts, content types, relationships, part graph
+package/XmlNs.roc       namespace resolution over the XML tree
+package/Mce.roc         markup compatibility processing
+package/WmlRead.roc     XML trees to model
+package/WmlWrite.roc    model to XML trees, canonical order, identifiers
+package/Limits.roc      resource bounds and limit errors
+package/Error.roc       the error and diagnostic vocabulary
+----
+
+Dependencies point downward only: the facade depends on the model and the readers and writers; readers and writers depend on OPC, XML and MCE; nothing below the model knows WordprocessingML. Fuzz targets, examples, tests and scripts live outside `package/` so the bundle contains only what a user needs.
+
+== Dependencies
+
+[cols="1,2,2",options="header"]
+|===
+|Package |Role |Policy
+|`roc-zip` (with `roc-deflate`, `roc-crc32`) |ZIP container and DEFLATE |Pinned immutable release URL
+|`roc-parser` |XML 1.0 well-formedness parser |Pinned immutable release URL
+|`roc-xml` |XML rendering with well-formedness checks |Pinned immutable release URL
+|===
+
+Each is pinned by content-addressed URL in `package/main.roc`. Upgrading a dependency is a reviewed change with evidence that the new release compiles and passes the full check on the current nightly. The package carries no compiler pin; the repository tests it with the latest nightly as the roc-automation model prescribes, and scripts alone pin their tooling compiler.
+
+If a dependency's API or behaviour becomes a limitation, the choice is to contribute upstream or to replace the dependency with an in-package module; forking is a last resort recorded here with its exit condition.
+
+== Repository and release model
+
+The repository follows the roc-automation manual's pure-package profile: `Blueprint.roc` and `Blueprint.lock` declare and pin tooling; `package/` is the bundle; `examples/` depend on the working tree by relative path; `fuzz/`, `tests/`, `oracle/` and `scripts/` sit outside the bundle; releases go through the shared release workflow and publish an immutable bundle, an examples archive and notes. Oracle adapters are the one place a language other than Roc is used in the repository, and only because independence from the package is their purpose.
+
+Work lands on an integration branch through small reviewed pull requests and reaches `main` at gate boundaries, as the implementation plan describes.
+
+== Rejected alternatives
+
+* *Own ZIP, DEFLATE or XML implementations.* Pure Roc implementations exist, are maintained and are fuzzed; roc-docx contributes upstream instead.
+* *roc-xml as the XML reader.* It is a generator and checks well-formedness of trees it builds; it has no parser.
+* *A streaming XML reader.* A tree per part is simple, and parts of business documents are small. Streaming is an optimization to adopt when evidence of need appears, not before.
+* *Strict-namespace output.* Least interoperable choice; no mainstream producer writes it.
+* *Microsoft's Open XML SDK validator as the primary oracle.* Closest proxy for Word, but it needs a .NET runtime on every contributor's machine and in every lane. It is the designated escalation when the schema and LibreOffice oracles prove insufficient, not the default.
+* *python-docx or similar libraries as oracles.* They model the same XML with less coverage than this package aims for, and they do not read revisions. They are neither independent enough nor authoritative.
+* *Byte-identical round-tripping.* Incompatible with canonical, deterministic output and with producers' inconsistent serialization.
+* *Rendering or layout.* A different product with different oracles.
+* *Repairing corrupt documents.* Word's repair behaviour is undocumented and version-specific; emulating it would be guesswork presented as fidelity.
+* *Exact allocation baselines in accepted files.* They record a number without stating a bound, force an acceptance step on every compiler improvement, and leave CI unable to tell a regression from an improvement. Ceilings in the target source say what the package promises and only move down.
+* *Dedicated fuzz or benchmark workflows in CI.* Not rejected, deferred: pull-request CI stays lean, and sustained work is added later as separate scheduled jobs if it earns its place.

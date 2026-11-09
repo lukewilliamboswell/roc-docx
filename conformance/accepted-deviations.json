@@ -1,0 +1,9 @@
+{
+  "schema": "roc-docx-accepted-deviations/1",
+  "notes": [
+    "An oracle finding that is known to be wrong or out of the package's control, recorded with its cause so a lane can report it separately from a pass.",
+    "Fields: oracle (schema | libreoffice | pandoc), document (a glob over the repository path), part, message_pattern (a regular expression every message of the finding must match), cause, reference, reviewed_on.",
+    "Nothing is accepted without a cause, and an entry is removed when the upstream fix lands."
+  ],
+  "deviations": []
+}

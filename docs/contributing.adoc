@@ -1,0 +1,144 @@
+= Contribute to roc-docx
+
+This chapter is for anyone changing the repository. Read the
+xref:architecture.adoc#architecture[architecture] first: it is the enduring
+design, and a change that conflicts with it changes the design in the same
+pull request or does not land.
+
+== Set up
+
+Install `blueprint` as the
+https://lukewilliamboswell.github.io/roc-blueprint/getting-started.html[roc-blueprint guide]
+describes and put the latest Roc nightly on your `PATH` as `roc`. The machine
+also needs `python3` and `xmllint` (libxml2) for the schema oracle. Blueprint
+fetches everything else by digest: the repository's fixed tooling compiler,
+pandoc and the shared release utility. LibreOffice is optional and found
+through `SOFFICE` or `PATH`.
+
+== Run the checks
+
+[source,sh]
+----
+blueprint run check      # everything a pull request must pass
+blueprint tasks          # each check on its own, and the fixture and release tasks
+----
+
+`check` runs these in order and reports every failure, not just the first:
+
+[cols="1,3",options="header"]
+|===
+| Check | What it establishes
+
+| oracle-provision
+| The ECMA-376 schemas and their imports match the digests in `conformance/ledger.json`
+
+| fmt, fmt-scripts
+| Every Roc source is formatted; `roc fmt` is final
+
+| lint
+| The mechanical checks below hold
+
+| scripts-test
+| The lint rules' own `expect`s pass
+
+| test
+| Every `expect` reachable from `package/main.roc` passes
+
+| examples
+| Every example prints what `tests/spec.json` records
+
+| fuzz-smoke
+| Every fuzz target builds, its declared examples and ceilings pass, and a one-second exploration finds nothing
+
+| fixtures-check
+| Committed pandoc fixtures match regeneration and every fixture has provenance
+
+| oracle-schema
+| Every XML part of every fixture validates against the schemas
+|===
+
+Pull-request CI runs `check`, the LibreOffice lane and the manual build, and
+nothing heavier. Sustained fuzz campaigns and benchmarks are not part of CI;
+if they are wanted later they will be separate scheduled work.
+
+== Write Roc the way this repository does
+
+Follow the
+https://gist.github.com/lukewilliamboswell/241a4e8adb7c89c7e0e02f1d303a8fa1[Roc style guide].
+The rules that come up most here:
+
+- A module's type block is its public surface: `Opc :: [].{ ... }` holds the
+  API, private helpers sit below it, and every top-level `expect` has a `##`
+  doc comment that names it.
+- Configuration is a props record of defaulted fields passed beside the
+  subject, as `Opc.open(bytes, {})` shows. A new option is a new defaulted
+  field.
+- Closed sets are tag unions. Fallible functions return `Try` with structured
+  tags whose payloads carry the facts; let error unions merge through `?`
+  instead of renaming tags, and use infix `?` to add context.
+- Nothing under `package/` may `crash`: a document is untrusted input, and
+  every failure is a named error.
+- Keep accumulators uniquely owned so Roc updates them in place. The fuzz
+  targets' allocation ceilings tell you when you have not.
+
+== Mechanical checks
+
+Where a rule can be checked by a program it is, because a check is more
+reliable than guidance. `blueprint run lint` runs `scripts/lint.roc`, whose
+rules are pure functions with their own `expect`s in `scripts/src/Lint.roc`.
+It reports `path:line: message` for each violation. When a rule fires, fix the
+source; when a rule is wrong, change the rule in the same pull request with
+the reason. The rules are listed in the
+xref:architecture.adoc#mechanical-checks[architecture].
+
+== Performance ratchets
+
+There are no speed targets. Each fuzz target wraps the operation it tests in a
+`Fuzz.measure!` region and asserts ceilings on its allocation count and peak
+live bytes: linear ceilings for every generated input and exact ceilings for
+its declared examples. To set or revise one:
+
+[source,sh]
+----
+roc build --fuzz fuzz/opc_open/main.roc --output=.roc-docx/fuzz/opc_open
+.roc-docx/fuzz/opc_open check --report-dir=.roc-docx/fuzz/reports/measure
+----
+
+Read `report.json` in the report directory: each example lists its regions
+with `allocs`, `reallocs`, `requested_bytes` and `peak_live_bytes`. Set an
+exact ceiling to the measured `allocs + reallocs`. A ceiling only moves down:
+lower it when a change allocates less, and when a change needs a higher
+ceiling, record the cause in the pull request beside the new value.
+
+== Fixtures and oracles
+
+Fixtures under `tests/fixtures/` are documents the package reads in tests.
+Only self-authored or generated content is admitted, and every file has an
+entry in `tests/fixtures/provenance.json`. The pandoc fixtures are regenerated
+from `tests/fixtures/sources/*.md` by `blueprint run fixtures`; the
+LibreOffice fixtures are round trips produced by
+`python3 -I oracle/make_fixtures.py --libreoffice` and committed with the
+version recorded.
+
+The oracle adapters under `oracle/` are deliberately Python: an independent
+implementation cannot share the package's mistakes. When an oracle disagrees
+with the package, find the cause. A finding that is known to be wrong or out
+of the package's control is recorded in `conformance/accepted-deviations.json`
+with its oracle, rule, document, cause and an upstream reference.
+
+== Keep the manual current
+
+This manual under `docs/` is the documentation for application authors and
+contributors. Change it in the same pull request as the behaviour it
+describes. Each chapter answers one reader's question, in the form that fits:
+a tutorial, a how-to, a reference or an explanation. Keep it release-neutral;
+exact versions and pins belong in release notes. The chapters follow the
+https://lukewilliamboswell.github.io/roc-automation/documentation.html[roc-automation documentation conventions]
+and are rendered by its shared renderer with `blueprint run docs`.
+
+== Pull requests
+
+One change per pull request, small enough for one reviewer. The description
+says what changed, what was run and what it reported, and names anything
+discovered and deliberately left for later. Baselines, snapshots and fixture
+regenerations are reviewed as diffs; CI never updates them.
