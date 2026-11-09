@@ -176,6 +176,28 @@ LibreOffice fixtures are round trips produced by
 `python3 -I oracle/make_fixtures.py --libreoffice` and committed with the
 version recorded.
 
+The Word fixtures under `tests/fixtures/word/` are Microsoft Word's own
+serialization of documents the repository authors: comment threads with
+replies and a resolved thread, every kind of tracked change Word keeps, a
+table with merged cells, and a report with headers, footers, notes, links,
+a bookmark, lists and an image. Word's scripting cannot create most of these,
+so `oracle/make_word_fixtures.py` writes each as a seed package with
+fictional authors, has Word open and save it, and checks that Word kept every
+construct and that no part carries the machine's user or account names. It
+needs macOS with Word installed and is run by a maintainer, never by `check`
+or CI:
+
+[source,sh]
+----
+python3 -I oracle/make_word_fixtures.py
+----
+
+Word output is not reproducible, so the fixtures are committed with the Word
+version in their provenance and `fixtures-check` does not regenerate them.
+Word records the signed-in account as the last editor whatever its user name
+setting says; the script replaces that one property with the seed's fictional
+editor and copies every other archive entry unchanged.
+
 The oracle adapters under `oracle/` are deliberately Python: an independent
 implementation cannot share the package's mistakes. When an oracle disagrees
 with the package, find the cause. A finding that is known to be wrong or out
@@ -254,8 +276,8 @@ comment threads or resolution, sections or properties. It restores the title,
 subtitle, author, date and abstract paragraphs that pandoc moves into
 metadata. `oracle/snapshot_libreoffice.py` reduces LibreOffice's Flat ODT
 conversion; it is authoritative for every key except comment threads and the
-properties other than title, creator, created and modified, which no fixture
-exercises yet. Each adapter's docstring lists the
+properties other than title, creator, created and modified, whose mapping
+is not yet verified. Each adapter's docstring lists the
 rules it applies and why.
 
 Run one adapter on a document, or compare two snapshots, directly:

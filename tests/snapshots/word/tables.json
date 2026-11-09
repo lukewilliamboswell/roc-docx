@@ -1,0 +1,17 @@
+{
+  "schema": "roc-docx-snapshot/1",
+  "producer": {"name": "roc-docx", "version": "working tree"},
+  "document": "tests/fixtures/word/tables.docx",
+  "keys": ["blocks.text"],
+  "blocks": [
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Sales by Region", "runs": [], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Units sold in the first half.", "runs": [], "rows": []},
+    {"kind": "table", "level": 0, "list": "", "text": "", "runs": [], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Figures are provisional.", "runs": [], "rows": []}
+  ],
+  "notes": [],
+  "comments": [],
+  "revisions": [],
+  "sections": [],
+  "properties": {"title": "", "subject": "", "creator": "", "keywords": "", "description": "", "last_modified_by": "", "created": "", "modified": ""}
+}

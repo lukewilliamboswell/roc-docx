@@ -23,6 +23,12 @@ Rules this adapter applies, each because of how pandoc represents a document:
   footers or core properties, so it declares none of those keys.
 - Inline code is text and an image contributes none; pandoc's other
   formatting maps onto the run keys.
+- A table cell that a cell above spans down over is an empty cell, as the
+  cells a column span covers are, so every row has a cell per column.
+- A deleted paragraph mark, which pandoc marks with an empty
+  `paragraph-deletion` span, joins its paragraph to the next in the current
+  text. Paragraph-mark changes are not listed as revisions, and pandoc does
+  not see property changes at all.
 - A construct this adapter does not know fails the run instead of being
   dropped silently.
 
@@ -84,6 +90,8 @@ class Reducer:
         self.runs = None
         self.anchored = False
         self.revision_stack = []
+        self.mark_deleted = False
+        self.join_into = None
 
     # Text reaches the current paragraph, every open comment anchor and every open revision.
     def emit(self, text, formatting):
@@ -99,16 +107,24 @@ class Reducer:
         self.runs.append(dict(formatting, text=text))
 
     def paragraph(self, inlines, kind="paragraph", level=0, list_kind=""):
-        outer = (self.runs, self.anchored)
-        self.runs, self.anchored = [], False
+        target, self.join_into = self.join_into, None
+        outer = (self.runs, self.anchored, self.mark_deleted)
+        self.runs, self.anchored, self.mark_deleted = [], False, False
         self.inlines(inlines, dict(PLAIN))
-        runs, anchored = self.runs, self.anchored
-        self.runs, self.anchored = outer
+        runs, anchored, mark_deleted = self.runs, self.anchored, self.mark_deleted
+        self.runs, self.anchored, self.mark_deleted = outer
         text = "".join(run["text"] for run in runs)
-        for index in self.open_comments.values():
-            self.comments[index]["anchor"] += "\n"
-        if text or anchored:
-            self.blocks.append({"kind": kind, "level": level, "list": list_kind, "text": text, "runs": runs, "rows": []})
+        if target is not None:
+            target["text"] += text
+            target["runs"] += runs
+        elif text or anchored:
+            target = {"kind": kind, "level": level, "list": list_kind, "text": text, "runs": runs, "rows": []}
+            self.blocks.append(target)
+        if mark_deleted:
+            self.join_into = target
+        else:
+            for index in self.open_comments.values():
+                self.comments[index]["anchor"] += "\n"
 
     def inlines(self, inlines, formatting):
         for inline in inlines:
@@ -148,8 +164,13 @@ class Reducer:
                                   "text": self.detached_text([{"t": "Plain", "c": inlines}]), "anchor": "",
                                   "thread": len(self.comments), "resolved": False})
         elif "comment-end" in classes:
+            # Ends at one position nest: each holds the next comment's end.
             self.anchored = True
             self.open_comments.pop(pairs["id"], None)
+            self.inlines(inlines, formatting)
+        elif "paragraph-deletion" in classes:
+            self.anchored = True
+            self.mark_deleted = True
         elif "insertion" in classes or "deletion" in classes:
             self.anchored = True
             kind = "insertion" if "insertion" in classes else "deletion"
@@ -194,6 +215,7 @@ class Reducer:
         elif tag == "HorizontalRule":
             self.paragraph([], kind, depth, list_kind)
         elif tag == "Table":
+            self.join_into = None
             self.table(content)
         else:
             raise Unsupported(f"block {tag}")

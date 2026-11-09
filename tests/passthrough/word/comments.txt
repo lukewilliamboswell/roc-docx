@@ -1,0 +1,18 @@
+written: 13415 bytes, FNV-1a 64 d57dc0d79e6333f6
+dropped: /word/document.xml 17 revision save identifiers
+dropped: /word/comments.xml 16 revision save identifiers
+part: /_rels/.rels 588 bytes application/vnd.openxmlformats-package.relationships+xml
+part: /word/document.xml 3566 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml
+part: /word/_rels/document.xml.rels 1463 bytes application/vnd.openxmlformats-package.relationships+xml
+part: /docProps/app.xml 624 bytes application/vnd.openxmlformats-officedocument.extended-properties+xml
+part: /docProps/core.xml 643 bytes application/vnd.openxmlformats-package.core-properties+xml
+part: /word/fontTable.xml 1752 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.fontTable+xml
+part: /word/webSettings.xml 939 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.webSettings+xml
+part: /word/commentsExtensible.xml 1718 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.commentsExtensible+xml
+part: /word/settings.xml 2712 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml
+part: /word/styles.xml 32192 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml
+part: /word/commentsIds.xml 1483 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.commentsIds+xml
+part: /word/commentsExtended.xml 1412 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.commentsExtended+xml
+part: /word/theme/theme1.xml 8716 bytes application/vnd.openxmlformats-officedocument.theme+xml
+part: /word/comments.xml 3569 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml
+part: /word/people.xml 1313 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.people+xml

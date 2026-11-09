@@ -1,0 +1,12 @@
+written: 10581 bytes, FNV-1a 64 243f38be31708211
+dropped: /word/document.xml 48 revision save identifiers
+part: /_rels/.rels 588 bytes application/vnd.openxmlformats-package.relationships+xml
+part: /word/document.xml 6995 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml
+part: /word/_rels/document.xml.rels 815 bytes application/vnd.openxmlformats-package.relationships+xml
+part: /docProps/app.xml 624 bytes application/vnd.openxmlformats-officedocument.extended-properties+xml
+part: /docProps/core.xml 634 bytes application/vnd.openxmlformats-package.core-properties+xml
+part: /word/webSettings.xml 939 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.webSettings+xml
+part: /word/settings.xml 2743 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml
+part: /word/styles.xml 32207 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml
+part: /word/theme/theme1.xml 8716 bytes application/vnd.openxmlformats-officedocument.theme+xml
+part: /word/fontTable.xml 1752 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.fontTable+xml

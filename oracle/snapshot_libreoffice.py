@@ -19,12 +19,18 @@ Rules this adapter applies, each because of how LibreOffice represents a documen
   body between start and end markers.
 - Dates without a zone are UTC: LibreOffice drops the `Z` of the document's
   dates on import and writes it back on export.
+- Comments that start at one position, such as a comment and its replies,
+  are written in reverse document order; the adapter reverses each such run.
+- A paragraph-attribute change has no ODF element and is written as
+  `text:UnknownChange`; it is a format change.
+- A field (page number, page count, a date) contributes the result it
+  displays.
 - A list's kind is the kind of its list style at the item's level.
 - A section is a run of body content on one page style; its header and footer
   are that page style's default header and footer.
 - Comment threads and the properties other than title, creator, created and
-  modified are written but not declared: no fixture exercises them yet, so
-  their mapping is unverified.
+  modified are written but not declared: their mapping is not yet verified
+  against a second reader.
 - Shapes and images contribute no text; one that holds text, like a table
   inside a note or comment, is not modelled and fails the run.
 - An element this adapter does not know fails the run instead of being
@@ -79,6 +85,10 @@ SILENT = {"bookmark", "bookmark-start", "bookmark-end", "reference-mark", "refer
           "reference-mark-end", "soft-page-break", "alphabetical-index-mark", "alphabetical-index-mark-start",
           "alphabetical-index-mark-end", "toc-mark", "toc-mark-start", "toc-mark-end", "user-index-mark",
           "user-index-mark-start", "user-index-mark-end", "sequence-ref"}
+# LibreOffice exports a paragraph-attribute change, which has no ODF element, as `text:UnknownChange`.
+CHANGE_KINDS = {"insertion": "insertion", "deletion": "deletion", "format-change": "format", "UnknownChange": "format"}
+# Fields whose element holds the result the document displays.
+FIELDS = {"page-number", "page-count", "creation-date", "date", "time"}
 SKIPPED_BODY = {"sequence-decls", "variable-decls", "user-field-decls", "dde-connection-decls",
                 "tracked-changes", "forms", "soft-page-break"}
 
@@ -181,7 +191,7 @@ class Document:
             change = next(child for child in region if child.tag != q("office:change-info"))
             info = change.find(q("office:change-info"))
             self.changes[region.get(q("text:id"))] = {
-                "kind": {"insertion": "insertion", "deletion": "deletion", "format-change": "format"}[local(change.tag)],
+                "kind": CHANGE_KINDS[local(change.tag)],
                 "author": (info.findtext(q("dc:creator")) or "").strip(),
                 "date": instant((info.findtext(q("dc:date")) or "").strip()),
                 "deleted": change if change.tag == q("text:deletion") else None,
@@ -197,11 +207,14 @@ class Document:
         self.after_space = True
         self.anchored = False
         self.sections = []
+        self.position = 0
+        self.comment_positions = []
 
     # Text reaches the current paragraph, every open comment anchor and every open revision.
     def emit(self, text, formatting):
         if not text:
             return
+        self.position += len(text)
         for index in self.open_comments.values():
             self.comments[index]["anchor"] += text
         for index in self.open_revisions:
@@ -225,6 +238,7 @@ class Document:
         runs, anchored = self.runs, self.anchored
         self.runs, self.anchored, self.after_space = outer
         text = "".join(run["text"] for run in runs)
+        self.position += 1
         for index in self.open_comments.values():
             self.comments[index]["anchor"] += "\n"
         for index in self.open_revisions:
@@ -269,6 +283,7 @@ class Document:
         elif ns == NS["office"] and name == "annotation":
             self.anchored = True
             index = len(self.comments)
+            self.comment_positions.append(self.position)
             self.comments.append({
                 "author": (child.findtext(q("dc:creator")) or "").strip(),
                 "date": instant((child.findtext(q("dc:date")) or "").strip()),
@@ -292,6 +307,8 @@ class Document:
             index = self.revision(child.get(q("text:change-id")))
             if index in self.open_revisions:
                 self.open_revisions.remove(index)
+        elif ns == NS["text"] and name in FIELDS:
+            self.inlines(child, formatting)
         elif ns == NS["text"] and name in SILENT:
             pass
         elif ns == NS["draw"]:
@@ -306,11 +323,11 @@ class Document:
 
     def detached_paragraphs(self, container):
         """The texts of the paragraphs inside a note, comment or deletion, in order."""
-        saved = (self.blocks, self.open_comments, self.open_revisions)
+        saved = (self.blocks, self.open_comments, self.open_revisions, self.position)
         self.blocks, self.open_comments, self.open_revisions = [], {}, []
         self.body(container, list_kind="", depth=0, list_style=None)
         blocks = self.blocks
-        self.blocks, self.open_comments, self.open_revisions = saved
+        self.blocks, self.open_comments, self.open_revisions, self.position = saved
         if any(block["kind"] == "table" for block in blocks):
             raise Unsupported(f"table inside {container.tag}")
         return [block["text"] for block in blocks]
@@ -342,7 +359,8 @@ class Document:
             self.table(element)
         elif ns == NS["text"] and name in SKIPPED_BODY:
             pass
-        elif ns in (NS["office"], NS["dc"], NS["meta"]) and name in ("change-info", "creator", "date", "date-string"):
+        elif ns in (NS["office"], NS["dc"], NS["meta"]) and name in ("change-info", "creator", "creator-initials", "date",
+                                                                      "date-string"):
             pass
         else:
             raise Unsupported(f"block {element.tag}")
@@ -428,7 +446,18 @@ class Document:
         self.body(text, "", 0, None)
         if not self.sections:
             self.sections.append(self.section("Standard"))
+        self.restore_comment_order()
         return self
+
+    def restore_comment_order(self):
+        """LibreOffice writes comments that start at one position in reverse document order; reverse each such run."""
+        order, start = [], 0
+        for end in range(1, len(self.comments) + 1):
+            if end == len(self.comments) or self.comment_positions[end] != self.comment_positions[start]:
+                order += reversed(range(start, end))
+                start = end
+        new_index = {old: new for new, old in enumerate(order)}
+        self.comments = [dict(self.comments[old], thread=new_index[self.comments[old]["thread"]]) for old in order]
 
 
 def snapshot(document, fodt, soffice_version):

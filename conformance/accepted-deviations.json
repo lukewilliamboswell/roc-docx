@@ -9,11 +9,47 @@
   "deviations": [
     {
       "oracle": "pandoc",
-      "document": "tests/fixtures/*/notes.docx",
+      "document": "tests/fixtures/*/*.docx",
       "key": "notes.text",
       "message_pattern": "^\"(.*)\" against \" \\1\"$",
       "cause": "A footnote's first paragraph holds the reference mark and then a run with one space before the note's text. pandoc's docx reader trims spaces at the start and end of every paragraph, so its note text lacks that space; LibreOffice keeps it, as the document has it.",
       "reference": "https://github.com/jgm/pandoc/blob/3.9.0.2/src/Text/Pandoc/Readers/Docx.hs (trimSps on paragraph content)",
+      "reviewed_on": "2026-11-09"
+    },
+    {
+      "oracle": "pandoc",
+      "document": "tests/fixtures/word/report.docx",
+      "key": "blocks.runs",
+      "message_pattern": "\"link\": \"#summary\".* against .*\"link\": \"#Summary\"",
+      "cause": "The internal link targets the bookmark Summary, which stands in a heading. pandoc's docx reader removes a heading's bookmark, maps its name to the heading's generated identifier (summary) and rewrites links to that identifier; LibreOffice keeps the bookmark name the document gives.",
+      "reference": "https://github.com/jgm/pandoc/blob/3.9.0.2/src/Text/Pandoc/Readers/Docx.hs (makeHeaderAnchor' and rewriteLink')",
+      "reviewed_on": "2026-11-09"
+    },
+    {
+      "oracle": "pandoc",
+      "document": "tests/fixtures/word/revisions.docx",
+      "key": "blocks.text",
+      "message_pattern": "^\"Payment is due monthly\\. \" against \"Payment is due monthly\\.\"$",
+      "cause": "The moved-away text begins with a space. pandoc's docx reader moves spaces at the edge of an inline container, here the deletion span it makes of the move, out of the container (smushInlines), so the space stays in pandoc's current text; LibreOffice keeps it inside the change.",
+      "reference": "https://github.com/jgm/pandoc/blob/3.9.0.2/src/Text/Pandoc/Readers/Docx/Combine.hs (smushInlines, spaceOutInlines)",
+      "reviewed_on": "2026-11-09"
+    },
+    {
+      "oracle": "pandoc",
+      "document": "tests/fixtures/word/revisions.docx",
+      "key": "blocks.runs",
+      "message_pattern": "\"text\": \"Payment is due monthly\\. \"\\}\\] against \\[.*\"text\": \"Payment is due monthly\\.\"\\}\\]$",
+      "cause": "The runs of the paragraph above: the space pandoc's docx reader moves out of the deletion span (smushInlines) stays in its last run.",
+      "reference": "https://github.com/jgm/pandoc/blob/3.9.0.2/src/Text/Pandoc/Readers/Docx/Combine.hs (smushInlines, spaceOutInlines)",
+      "reviewed_on": "2026-11-09"
+    },
+    {
+      "oracle": "pandoc",
+      "document": "tests/fixtures/word/revisions.docx",
+      "key": "revisions",
+      "message_pattern": "^10 against 13, first difference at \\[2\\]: ",
+      "cause": "pandoc's docx reader has no representation for property changes: it ignores w:rPrChange and w:pPrChange (and section, table, row and cell property changes), which LibreOffice lists as format changes. It reports a paragraph-mark deletion as an empty span, which the adapter applies to the current text but does not list, and its move texts lose their leading space (smushInlines). LibreOffice lists 13 changes, pandoc 10.",
+      "reference": "https://github.com/jgm/pandoc/blob/3.9.0.2/src/Text/Pandoc/Readers/Docx/Parse.hs (no handling of *PrChange; pChange for paragraph marks)",
       "reviewed_on": "2026-11-09"
     }
   ]

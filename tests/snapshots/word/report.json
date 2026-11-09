@@ -1,0 +1,25 @@
+{
+  "schema": "roc-docx-snapshot/1",
+  "producer": {"name": "roc-docx", "version": "working tree"},
+  "document": "tests/fixtures/word/report.docx",
+  "keys": ["blocks.text"],
+  "blocks": [
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Quarterly Report", "runs": [], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Summary", "runs": [], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Sales rose in every region and costs held steady.", "runs": [], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "The full figures are on the results page; see also the summary.", "runs": [], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Priorities", "runs": [], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Retain customers", "runs": [], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Open two stores", "runs": [], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Hire a buyer", "runs": [], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Review suppliers", "runs": [], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Shortlist three", "runs": [], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "The second section is landscape.", "runs": [], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Appendix: regional detail follows.", "runs": [], "rows": []}
+  ],
+  "notes": [],
+  "comments": [],
+  "revisions": [],
+  "sections": [],
+  "properties": {"title": "", "subject": "", "creator": "", "keywords": "", "description": "", "last_modified_by": "", "created": "", "modified": ""}
+}

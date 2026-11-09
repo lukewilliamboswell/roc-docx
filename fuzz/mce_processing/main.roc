@@ -22,6 +22,10 @@ import "../../tests/fixtures/libreoffice/notes.docx" as libreoffice_notes : List
 import "../../tests/fixtures/libreoffice/review.docx" as libreoffice_review : List(U8)
 import "../../tests/fixtures/libreoffice/revisions.docx" as libreoffice_revisions : List(U8)
 import "../../tests/fixtures/libreoffice/tables.docx" as libreoffice_tables : List(U8)
+import "../../tests/fixtures/word/comments.docx" as word_comments : List(U8)
+import "../../tests/fixtures/word/report.docx" as word_report : List(U8)
+import "../../tests/fixtures/word/revisions.docx" as word_revisions : List(U8)
+import "../../tests/fixtures/word/tables.docx" as word_tables : List(U8)
 
 ## MCE processing gives the interpreted tree that a separately written
 ## reading of the Part 3 rules gives, reports the same undeclared extension
@@ -30,7 +34,8 @@ import "../../tests/fixtures/libreoffice/tables.docx" as libreoffice_tables : Li
 ## `mc:Ignorable`, `mc:ProcessContent`, `mc:MustUnderstand`,
 ## `mc:AlternateContent` and prefixes rebound in nested elements. Every XML
 ## part of every fixture document also processes without a diagnostic to an
-## interpreted tree with no extension or compatibility markup left, in
+## interpreted tree with no extension or compatibility markup left, apart
+## from the root of a part in an extension namespace, which is always kept, in
 ## agreement with the reference, while the tree it was read as, the
 ## preserved tree, still holds the extension content the fixture declares.
 ##
@@ -79,7 +84,7 @@ test! = |input| {
 							if processed.diagnostics != [] {
 								crash "a fixture part has a compatibility diagnostic"
 							}
-							if extension_markup(processed.interpreted) != 0 {
+							if extension_markup(processed.interpreted) != extension_root(tree) {
 								crash "a fixture part's interpreted tree holds extension or compatibility markup"
 							}
 							if reference(tree, Mce.understood).nodes != [processed.interpreted] {
@@ -230,6 +235,10 @@ fixtures = [
 	{ name: "libreoffice-review", bytes: libreoffice_review, allocations: 4_287, preserved: 4 },
 	{ name: "libreoffice-revisions", bytes: libreoffice_revisions, allocations: 3_040, preserved: 2 },
 	{ name: "libreoffice-tables", bytes: libreoffice_tables, allocations: 4_824, preserved: 2 },
+	{ name: "word-comments", bytes: word_comments, allocations: 3_627, preserved: 131 },
+	{ name: "word-report", bytes: word_report, allocations: 4_158, preserved: 70 },
+	{ name: "word-revisions", bytes: word_revisions, allocations: 4_066, preserved: 106 },
+	{ name: "word-tables", bytes: word_tables, allocations: 3_599, preserved: 65 },
 ]
 
 w : Str
@@ -412,6 +421,15 @@ extension_markup = |node|
 				element.children.fold(own + attributes, |total, child| total + extension_markup(child))
 			}
 		}
+	}
+
+# A part's root is always kept, so an extension part (Word's people.xml or
+# commentsExtended.xml) interprets to its bare root.
+extension_root : XmlTree.Node -> U64
+extension_root = |node|
+	match node {
+		Element(element) => if (is_extension(uri_of(element.name.namespace))) 1 else 0
+		Text(_) => 0
 	}
 
 is_extension : Str -> Bool
