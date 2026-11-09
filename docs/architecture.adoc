@@ -72,13 +72,14 @@ The package does not open the binary `.doc` format, RTF or OpenDocument; does no
 These hold for every slice and are enforced by tests, fuzz targets and the oracle lanes:
 
 . *Pure Roc, no native dependencies.* The package and all of its runtime dependencies are pure Roc. External tools are test oracles only; nothing in `package/` invokes or links them.
-. *Never crash on input.* Parsing any byte sequence returns `Ok` or a structured `Err`. Resource use is bounded by explicit limits on archive size, part count, uncompressed size, XML depth and element count, so a hostile document fails fast with a named limit error.
+. *Never crash on input.* Parsing any byte sequence returns `Ok` or a structured `Err`. Resource use is bounded by explicit limits on archive size, part count, uncompressed size, XML depth and element count, so a hostile document fails fast with a named limit error. Each limit is checked before the memory it bounds is allocated: the ZIP central directory is checked against the limits before any entry is inflated, and inflation stops at the entry's limit.
 . *Parse leniently, write strictly.* The reader accepts what real producers write, including missing required attributes, undeclared ignorable namespaces and odd ordering, applying the schema's defaults and recording a diagnostic. The writer emits schema-valid Transitional markup with every required attribute, canonical element order and declared extension namespaces.
 . *No silent loss.* Every construct in an input document is modelled, preserved or dropped by an explicit rule that records a diagnostic. There is no fourth category.
 . *Deterministic.* The package reads no clock, draws no random numbers and depends on no host state. Dates and author identities come from the caller. Identifier allocation is a pure function of the model.
 . *Facts flow forward.* Each pipeline stage consumes facts the previous stage established and never re-derives them from incidental data. The WordprocessingML reader does not re-parse XML text; the writer does not inspect bytes it emitted earlier.
 . *Typed, structured errors.* Errors and diagnostics are tag unions with locations (part name, element path, offset) and never free-text only.
 . *Linear cost.* Parsing and writing are linear in input size for the modelled constructs. Evidence of allocation behaviour is part of a slice's completion, as xref:architecture.adoc#performance-and-storage[Performance and storage] says.
+. *Bounded working set.* Opening a package costs memory proportional to its central directory. A part is inflated only when a stage consumes it, into a buffer sized from its checked declared size. Beyond the model, reading holds one part's bytes and its parse state; writing holds one part's serialized and compressed bytes and the central directory. Measured ceilings enforce these bounds.
 
 == The package as a pipeline
 
@@ -99,9 +100,9 @@ flowchart LR
 [cols="1,2,2",options="header"]
 |===
 |Stage |Consumes |Establishes
-|ZIP |bytes |entries with names and decompressed contents, within limits
-|OPC |entries |parts with content types; relationships per source; the main document part; unknown parts kept as bytes
-|XML |part bytes |a well-formed tree per XML part, or a located error
+|ZIP |bytes |an index of entries with name, method, sizes, CRC and location, checked against the limits; each entry's contents inflated on demand, within its limit
+|OPC |entries |parts with content types; relationships per source; the main document part; unknown parts kept as their stored ZIP bytes
+|XML |part bytes |a well-formed namespaced tree per XML part, built in one pass from a pull reader, or a located error; the main document body may be read one block at a time
 |Namespaces |tree with prefixes |every element and attribute named by namespace URI and local name; prefix declarations retained for round-tripping
 |MCE |namespaced tree |understood and ignorable content separated; `AlternateContent` resolved for interpretation and retained for emission
 |WordprocessingML |processed trees |the typed document model with preserved extensions and diagnostics
@@ -209,13 +210,14 @@ Byte-identical round-tripping of XML parts is explicitly not a goal: producers d
 The facade is the primary product and the only module most applications import. Its shape, in order of use:
 
 * *Open and save.* `parse : List(U8) -> Try({ document, diagnostics }, Error)` and `to_bytes : Document -> Try(List(U8), Error)`, with a `to_bytes_with` variant taking options (compression level, which extension parts to emit). Writing fails transactionally: either the whole document serializes or an error names the reason, never partial bytes.
+* *Write in chunks.* `to_chunks : Document, WriteOptions -> Try(Encoder, Error)` performs every check that can fail; `next_chunk : Encoder -> [Done, Emit(List(U8), Encoder)]` then emits one part per step and cannot fail, so a caller can stream a document to a file or socket while holding one part at a time. One emission step drives both APIs, so the concatenated chunks are byte-identical to `to_bytes`.
 * *Query.* Plain text (final, original, or as-is), paragraphs with effective properties, tables as cell grids, comments as threads with anchored text, revisions with their text and authorship, sections, properties.
 * *Edit.* Insert, replace and delete text and blocks by stable positions returned from queries; add, reply to, resolve and remove comments; accept and reject revisions; set properties and tracking state. Each edit takes an optional revision context.
 * *Author.* Builders for new documents: paragraphs with styles, runs with formatting, lists, tables, hyperlinks, headers and footers with page-number fields, sections, a minimal style set that Word and LibreOffice render sensibly, and metadata.
 
 The API follows the maintainers' https://gist.github.com/lukewilliamboswell/241a4e8adb7c89c7e0e02f1d303a8fa1[Roc style guide]. Configuration is a props record: a nominal record of defaulted fields passed beside the subject, so `Opc.open(bytes, {})` takes every default and `Opc.open(bytes, { max_entries: 64 })` names only what differs, and a new option is a new defaulted field that changes no caller. Closed sets are tag unions, never booleans or magic values. Fallible operations return `Try` with structured error tags whose payloads carry the facts, and error unions merge through `?` rather than being renamed at each layer. A module's type block is its public surface.
 
-The model modules are public for applications that need more than the facade: the typed document tree, the style table, the numbering table and the properties. The OPC and XML layers are public as an advanced integration boundary for applications that must touch parts the model does not cover. Dependency types never cross any of these boundaries.
+The model modules are public for applications that need more than the facade: the typed document tree, the style table, the numbering table and the properties. The OPC and XML layers are public as an advanced integration boundary for applications that must touch parts the model does not cover: the OPC layer exposes the part index, inflates a named part on demand within the limits, and gives access to a part's stored bytes for writing it back unchanged. Dependency types never cross any of these boundaries.
 
 Diagnostics are data returned beside a result, never printed. They carry a kind, a location and the rule that produced them, so an application can log, surface or fail on them.
 
@@ -227,7 +229,7 @@ Determinism is a product property, so its ingredients are fixed here:
 * Each part's root declares the namespaces it uses, in a fixed order, with the fixed prefix table; no unused declarations.
 * Elements within properties follow the schema's sequence; attributes follow a fixed order per element.
 * Identifiers are allocated by a deterministic traversal of the model.
-* ZIP entries use DEFLATE at a fixed level, no data descriptors, zeroed timestamps, and the same entry order as the part order.
+* Generated parts use DEFLATE at a fixed level; parts preserved from an input archive are written with their stored method and bytes unchanged. Entries carry no data descriptors and zeroed timestamps, in the same order as the parts. Chunked and buffered output are byte-identical.
 * No value is taken from the environment.
 
 The same `Document` therefore produces the same bytes on every host, which the test harness verifies by hashing outputs across the supported hosts.
@@ -411,7 +413,9 @@ Work lands on an integration branch through small reviewed pull requests and rea
 
 * *Own ZIP, DEFLATE or XML implementations.* Pure Roc implementations exist, are maintained and are fuzzed; roc-docx contributes upstream instead.
 * *roc-xml as the XML reader.* It is a generator and checks well-formedness of trees it builds; it has no parser.
-* *A streaming XML reader.* A tree per part is simple, and parts of business documents are small. Streaming is an optimization to adopt when evidence of need appears, not before.
+* *Whole-document event streaming as the reader.* The model is whole-document by design: identifiers, comment threads, moves and the accept and reject algebra need the whole document. Memory is bounded instead by per-entry ZIP access, part-at-a-time writing and a pull reader under per-part and per-block trees.
+* *Incremental DEFLATE.* The DEFLATE dependency decodes against its whole output, so a part is the unit of compression and decompression.
+* *Data descriptors in written archives.* Part-at-a-time writing compresses each part before writing its header, so sizes and checksums are known and descriptors are unnecessary.
 * *Strict-namespace output.* Least interoperable choice; no mainstream producer writes it.
 * *Microsoft's Open XML SDK validator as the primary oracle.* Closest proxy for Word, but it needs a .NET runtime on every contributor's machine and in every lane. It is the designated escalation when the schema and LibreOffice oracles prove insufficient, not the default.
 * *python-docx or similar libraries as oracles.* They model the same XML with less coverage than this package aims for, and they do not read revisions. They are neither independent enough nor authoritative.

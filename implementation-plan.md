@@ -237,6 +237,13 @@ architecture's dependency section allows, with its exit condition recorded.
 | roc-deflate | [lukewilliamboswell/roc-deflate#6](https://github.com/lukewilliamboswell/roc-deflate/issues/6), a staging issue in the existing fork of niclas-ahden/roc-deflate | `decompress_into` with an output bound that fails before the copy that would exceed it; pre-sizing the output from a declared size; optionally reusable coder state | G1.1b |
 | roc-zip | [lukewilliamboswell/roc-zip#1](https://github.com/lukewilliamboswell/roc-zip/issues/1), a staging issue in a new fork of niclas-ahden/roc-zip | An entry index read from the central directory; bounded single-entry extraction; access to stored bytes; a part-at-a-time writer with `create` as a fold over it; duplicate-name detection | G1.1b, G1.2 |
 
+The maintainer intends to implement these features, in the forks and in
+roc-parser, so that Gate 1 builds on bounded, part-at-a-time and pull-reader
+APIs rather than on workarounds. The kernel slices are therefore designed
+against the APIs sketched in those issues, and the architecture's pipeline,
+API boundary, determinism and invariant sections already describe the
+resulting behaviour.
+
 The roc-deflate fork's default branch is behind upstream and carries older
 branches; it was not synced. Nothing was changed in either fork beyond
 enabling issues.
