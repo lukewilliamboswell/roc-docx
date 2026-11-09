@@ -40,8 +40,8 @@ checks = [
 	{ name: "fixtures-check", argv: ["python3", "-I", "oracle/make_fixtures.py", "--check"] },
 	# Every XML part of every fixture validates against the ECMA-376 schemas.
 	{ name: "oracle-schema", argv: ["python3", "-I", "oracle/validate_schema.py", "tests/fixtures"] },
-	# Every XML part of every document the cases wrote validates against the schemas.
-	{ name: "oracle-schema-written", argv: ["python3", "-I", "oracle/validate_schema.py", ".roc-docx/passthrough"] },
+	# Every XML part of every document the cases wrote, passed through or generated, validates against the schemas.
+	{ name: "oracle-schema-written", argv: ["python3", "-I", "oracle/validate_schema.py", ".roc-docx/passthrough", ".roc-docx/generated"] },
 	# pandoc's and the package's snapshots of every fixture conform to the snapshot contract and agree; the cases wrote the package's.
 	{ name: "oracle-snapshot", argv: ["python3", "-I", "oracle/compare_snapshots.py", "--lane", "pandoc,package", "tests/fixtures"] },
 ]

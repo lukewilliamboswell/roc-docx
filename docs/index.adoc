@@ -24,7 +24,8 @@ its sections, headers and footers, and its properties;
 <<read-a-documents-comments>> reads its comments and the text they are about,
 and writes them back as threads;
 <<read-a-documents-tracked-changes>> reads its tracked changes, its text
-with every change accepted or rejected, and whether it tracks changes;
+with every change accepted or rejected, and whether it tracks changes,
+and writes every change back;
 <<write-a-document>> writes the body from that model, in one canonical form.
 Understanding the design:: <<architecture>> is the enduring design: the
 pipeline, the document model, fidelity rules, the oracles and the tests.

@@ -77,11 +77,13 @@ blueprint run libreoffice   # pandoc, LibreOffice and the package agree; LibreOf
 
 It runs the cases first, so it needs `roc` as well, and then compares
 LibreOffice's snapshot of each document they wrote with its snapshot of the
-fixture it came from:
+fixture it came from, and LibreOffice's snapshot of each generated document
+with the package's:
 
 [source,sh]
 ----
 python3 -I oracle/compare_snapshots.py --written libreoffice tests/fixtures .roc-docx/passthrough
+python3 -I oracle/compare_snapshots.py --lane libreoffice,package .roc-docx/generated
 ----
 
 Pull-request CI runs `check`, the LibreOffice lane and the manual build, and
@@ -140,6 +142,14 @@ written package's size and FNV-1a digest, and its parts with their sizes and
 content types, so the same digest on every host shows the output is
 deterministic. The written documents go to `.roc-docx/passthrough/`, where
 `oracle-schema-written` and the LibreOffice lane read them.
+
+The generated cases build documents from the model in `tests/main.roc`, for
+content no fixture holds together, such as one of every kind of tracked
+change. Each must read back as exactly the model it was built from and then
+pass through as a fixture does; its expectation under `tests/generated/`
+is the pass-through report with the tracked changes read back. The written
+documents go to `.roc-docx/generated/`, which `oracle-schema-written`
+validates and the LibreOffice lane compares with the package's snapshots.
 
 == Performance ratchets
 

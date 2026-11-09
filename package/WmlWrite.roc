@@ -61,11 +61,17 @@ WmlWrite :: [].{
 	##
 	## A tracked change is written with its identifier, author, date as it
 	## was written and the attributes it kept; in a deletion, text is
-	## `w:delText` and a piece of field code `w:delInstrText`. A paragraph
+	## `w:delText` and a piece of field code `w:delInstrText`. The schema has
+	## no place for a hyperlink or a simple field in a change, so a change
+	## that covers one is written around the content beside it and again
+	## inside it, around its content, and reads back as those changes. A
+	## paragraph
 	## mark's changes are written first in the mark's character properties,
 	## the first kept `w:rPr` of the paragraph's properties or one of their
 	## own, and a change of properties around the properties before it, whose
-	## own changes are not written.
+	## own changes are not written, nor a section's headers and footers,
+	## which the schema has no place for there. A move's range is written
+	## with its date, which the schema requires.
 	## A relationship is reused when the part has one to the same
 	## target in the same mode, of the kind the reference needs where the
 	## reader asks for one; otherwise it is added as `rId` with the lowest
@@ -662,6 +668,7 @@ inline = |out, item|
 			{ nodes: List.append(out.nodes, with_children(kept, inner.nodes)), state: inner.state }
 		}
 
+		Revision(revision) if revision.content.any(covers_link) => distributed(revision, revision.content).fold(out, inline)
 		Revision({ kind, author, date, content, preserved }) => {
 			local = match kind {
 				Insertion => "ins"
@@ -682,7 +689,7 @@ inline = |out, item|
 				Source => ("moveFromRangeStart", { ..numbered.state, move_sources: numbered.state.move_sources.insert(name, numbered.id) })
 				Destination => ("moveToRangeStart", { ..numbered.state, move_destinations: numbered.state.move_destinations.insert(name, numbered.id) })
 			}
-			attributes = List.concat([attribute("id", numbered.id), attribute("name", name), attribute("author", author)], List.concat(date_attribute(date), preserved))
+			attributes = List.concat([attribute("id", numbered.id), attribute("name", name), attribute("author", author), attribute("date", date.written)], preserved)
 			{ nodes: List.append(out.nodes, element(local, attributes, [])), state }
 		}
 
@@ -700,6 +707,61 @@ inline = |out, item|
 
 		Preserved(node) => { ..out, nodes: List.append(out.nodes, node) }
 	}
+
+# Whether content is, or a change holds, a hyperlink or a simple field, or a
+# kept element of either, which the schema has no place for in a change.
+covers_link : Document.Inline -> Bool
+covers_link = |item|
+	match item {
+		Hyperlink(_) | SimpleField(_) => Bool.True
+		Container({ element: Element(kept), content: _ }) => is_w(kept.name, "hyperlink") or is_w(kept.name, "fldSimple")
+		Revision(inner) => inner.content.any(covers_link)
+		_ => Bool.False
+	}
+
+# Content a change covers, written where the schema allows the change: the
+# change around each stretch of other content, and inside each hyperlink or
+# simple field, around its content. A change it holds is distributed first,
+# so no change written holds a hyperlink or a simple field. A change that
+# covers an empty hyperlink stays inside it, covering nothing.
+distributed : Document.Revision, List(Document.Inline) -> List(Document.Inline)
+distributed = |revision, content| {
+	flat = content.fold(
+		List.with_capacity(content.len()),
+		|items, item|
+			match item {
+				Revision(inner) if inner.content.any(covers_link) => List.concat(items, distributed(inner, inner.content))
+				_ => List.append(items, item)
+			},
+	)
+	var $pieces = List.with_capacity(flat.len())
+	var $stretch = List.with_capacity(flat.len())
+	for item in flat {
+		inside = match item {
+			Hyperlink(link) => Ok(Hyperlink({ ..link, content: distributed(revision, link.content) }))
+			SimpleField(field) => Ok(SimpleField({ ..field, content: distributed(revision, field.content) }))
+			Container(kept) if covers_link(item) => Ok(Container({ ..kept, content: distributed(revision, kept.content) }))
+			_ => Err(Outside)
+		}
+		match inside {
+			Ok(wrapped) => {
+				if !$stretch.is_empty() {
+					$pieces = List.append($pieces, Revision({ ..revision, content: $stretch }))
+					$stretch = List.with_capacity(flat.len())
+				}
+				$pieces = List.append($pieces, wrapped)
+			}
+
+			Err(Outside) => {
+				$stretch = List.append($stretch, item)
+			}
+		}
+	}
+	if !$stretch.is_empty() or $pieces.is_empty() {
+		$pieces = List.append($pieces, Revision({ ..revision, content: $stretch }))
+	}
+	$pieces
+}
 
 # A paragraph mark's changes in the schema's order, each with a fresh
 # identifier.
@@ -1957,7 +2019,7 @@ expect {
 	content = [
 		paragraph([
 			BookmarkStart("b"),
-			MoveStart({ side: Source, name: "m", author: "Ada", date: Unset, preserved: [] }),
+			MoveStart({ side: Source, name: "m", author: "Ada", date: { written: "2026-05-07T09:00:00Z", utc_seconds: 1778144400 }, preserved: [] }),
 			change(MoveSource, [run([Text("away")])]),
 			MoveEnd({ side: Source, name: "m" }),
 			change(Deletion, [run([FieldCode(" PAGE "), Text("old")]), change(Insertion, [run([Text("x")])])]),
@@ -1965,10 +2027,22 @@ expect {
 			BookmarkEnd("b"),
 		]),
 	]
-	moved = "<w:moveFromRangeStart w:id=\"1\" w:name=\"m\" w:author=\"Ada\"/><w:moveFrom w:id=\"2\" w:author=\"Ada\" w:date=\"2026-05-07T09:00:00Z\"><w:r><w:t>away</w:t></w:r></w:moveFrom><w:moveFromRangeEnd w:id=\"1\"/>"
+	moved = "<w:moveFromRangeStart w:id=\"1\" w:name=\"m\" w:author=\"Ada\" w:date=\"2026-05-07T09:00:00Z\"/><w:moveFrom w:id=\"2\" w:author=\"Ada\" w:date=\"2026-05-07T09:00:00Z\"><w:r><w:t>away</w:t></w:r></w:moveFrom><w:moveFromRangeEnd w:id=\"1\"/>"
 	deleted = "<w:del w:id=\"3\" w:author=\"Ada\" w:date=\"2026-05-07T09:00:00Z\"><w:r><w:delInstrText xml:space=\"preserve\"> PAGE </w:delInstrText><w:delText>old</w:delText></w:r><w:ins w:id=\"4\" w:author=\"Ada\" w:date=\"2026-05-07T09:00:00Z\"><w:r><w:delText>x</w:delText></w:r></w:ins></w:del>"
 	inserted = "<w:ins w:id=\"5\" w:author=\"Lin\"><w:r><w:t>new</w:t></w:r></w:ins>"
 	written(content, no_context) == "<w:body><w:p><w:bookmarkStart w:id=\"0\" w:name=\"b\"/>${moved}${deleted}${inserted}<w:bookmarkEnd w:id=\"0\"/></w:p></w:body></w:document>"
+}
+
+## A change that covers a hyperlink is written around the content beside it
+## and inside the hyperlink, where the schema allows a change, a change it
+## holds distributed first; a change of an empty hyperlink stays inside it.
+expect {
+	change = |kind, content| Revision({ kind, author: "Ada", date: Unset, content, preserved: [] })
+	link = |content| Hyperlink({ target: Internal("b"), preserved: [], content })
+	content = [paragraph([change(Deletion, [run([Text("a")]), change(Insertion, [link([run([Text("l")])])])]), change(Insertion, [link([])])])]
+	deleted = "<w:del w:id=\"0\" w:author=\"Ada\"><w:r><w:delText>a</w:delText></w:r></w:del><w:hyperlink w:anchor=\"b\"><w:del w:id=\"1\" w:author=\"Ada\"><w:ins w:id=\"2\" w:author=\"Ada\"><w:r><w:delText>l</w:delText></w:r></w:ins></w:del></w:hyperlink>"
+	inserted = "<w:hyperlink w:anchor=\"b\"><w:ins w:id=\"3\" w:author=\"Ada\"/></w:hyperlink>"
+	written(content, no_context) == "<w:body><w:p>${deleted}${inserted}</w:p></w:body></w:document>"
 }
 
 ## A paragraph mark's changes are written first in its kept character

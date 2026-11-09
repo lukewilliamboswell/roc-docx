@@ -442,7 +442,8 @@ places = |ids| {
 }
 
 # The names of a tree's bookmarks, and of its moves' source and destination
-# ranges, by identifier, from every start that has both, outside runs,
+# ranges, by identifier, from every start that has both and that the reader
+# models, a move's with its author and date, outside runs,
 # property elements of any namespace and bookmark ends, where none ever is.
 # The tree is walked as deep as the readers walk it, within the XML depth
 # limit, without copying any list of children.
@@ -484,9 +485,15 @@ range_rule = |name, attributes| {
 		Err(NotARange)
 	}
 	match range {
-		Ok(kind) =>
+		Ok(Bookmark) =>
 			match (attribute_value(attributes, "id"), attribute_value(attributes, "name")) {
-				(Ok(id), Ok(named)) => Named({ range: kind, id, name: named })
+				(Ok(id), Ok(named)) => Named({ range: Bookmark, id, name: named })
+				_ => Opaque
+			}
+
+		Ok(kind) =>
+			match (attribute_value(attributes, "id"), attribute_value(attributes, "name"), attribute_value(attributes, "author"), attribute_value(attributes, "date").map_ok(timestamp)) {
+				(Ok(id), Ok(named), Ok(_), Ok(Ok(_))) => Named({ range: kind, id, name: named })
 				_ => Opaque
 			}
 
@@ -2473,14 +2480,16 @@ revision = |element, within| {
 
 # The start of a move's range, `w:moveFromRangeStart` of its source or
 # `w:moveToRangeStart` of its destination, named by `w:name`, by `w:author`
-# at `w:date`. One without a name or author is not modelled.
+# at `w:date`. One without a name, an author or a date and time, which the
+# schema requires, is not modelled, and neither is its end, as
+# [range_rule] names none for it.
 move_start : Element -> Try(Document.Inline, [Unknown])
 move_start = |element| {
 	name = value_of(element, "name") ? |_| Unknown
 	author = value_of(element, "author") ? |_| Unknown
-	stamp = date_of(element)
+	stamp = timestamp(value_of(element, "date") ? |_| Unknown) ? |_| Unknown
 	side = if (element.name.local == "moveFromRangeStart") Source else Destination
-	Ok(MoveStart({ side, name, author, date: stamp, preserved: element.attributes.drop_if(|attribute| is_w_in(attribute.name, ["id", "name", "author"]) or (is_w(attribute.name, "date") and stamp != Unset)) }))
+	Ok(MoveStart({ side, name, author, date: stamp, preserved: element.attributes.drop_if(|attribute| is_w_in(attribute.name, ["id", "name", "author", "date"])) }))
 }
 
 # The end of a move's range names the range its `w:id` started; an end
@@ -3044,13 +3053,15 @@ expect {
 ## identifier dropped and an unreadable date kept; deleted text and deleted
 ## field code are text and field code in deleted content only; a change
 ## without an author is a container; a move's ranges are named, an end by
-## the name its start gave, and an end without a start is kept.
+## the name its start gave, and an end without a start is kept, as are a
+## range's start without the date the schema requires and its end.
 expect {
 	moved = "<w:moveFromRangeStart w:id='5' w:author='B' w:date='2026-05-07T11:30:00Z' w:name='move1'/><w:moveFrom w:id='6' w:author='B'><w:r><w:t>m</w:t></w:r></w:moveFrom><w:moveFromRangeEnd w:id='5'/><w:moveToRangeEnd w:id='9'/>"
+	undated = "<w:moveToRangeStart w:id='7' w:author='B' w:name='move2'/><w:moveToRangeEnd w:id='7'/>"
 	changed = "<w:ins w:id='2' w:author='A' w:date='soon'><w:r><w:t>new</w:t></w:r></w:ins><w:del w:id='3' w:author='A' w:date='2026-05-07T09:00:00+02:00'><w:r><w:delText>old</w:delText><w:delInstrText> PAGE </w:delInstrText></w:r></w:del><w:r><w:delText>stray</w:delText></w:r><w:ins w:id='4'><w:r><w:t>anon</w:t></w:r></w:ins>"
-	match read("<w:p>${moved}${changed}</w:p>") {
-		[Paragraph({ properties: _, content: [MoveStart(start), Revision(source), MoveEnd(end), Preserved(_), Revision(inserted), Revision(deleted), Run(stray), Container(_)] })] =>
-			start == { side: Source, name: "move1", author: "B", date: Date({ written: "2026-05-07T11:30:00Z", utc_seconds: 1778153400 }), preserved: [] }
+	match read("<w:p>${moved}${changed}${undated}</w:p>") {
+		[Paragraph({ properties: _, content: [MoveStart(start), Revision(source), MoveEnd(end), Preserved(_), Revision(inserted), Revision(deleted), Run(stray), Container(_), Preserved(_), Preserved(_)] })] =>
+			start == { side: Source, name: "move1", author: "B", date: { written: "2026-05-07T11:30:00Z", utc_seconds: 1778153400 }, preserved: [] }
 				and end == { side: Source, name: "move1" }
 				and source.kind == MoveSource
 				and source.date == Unset

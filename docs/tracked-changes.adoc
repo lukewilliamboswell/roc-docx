@@ -4,8 +4,9 @@ This chapter reads the changes a document records under tracking: what was
 inserted, deleted or moved, which paragraph marks, table rows and cells were
 added or removed, which properties changed, by whom and when; the
 document's text with every change accepted or every change rejected; and
-whether the document tracks changes at all. It continues from
-<<read-a-documents-text>>, whose blocks and current text it builds on.
+whether the document tracks changes at all; and how the changes are
+written. It continues from <<read-a-documents-text>>, whose blocks and
+current text it builds on.
 
 == The text before and after review
 
@@ -110,13 +111,14 @@ A move is recorded twice: where the content was and where it went. Each side
 stands inside a range, `MoveStart({ side, name, author, date, preserved })`
 to `MoveEnd({ side, name })`, with `side` either `Source` or `Destination`.
 The source's and the destination's ranges share the move's name, which pairs
-them.
+them. A range's `date` is a `Document.Timestamp` itself, not `Unset` or
+`Date`, because the schema requires a move's range to say when it was made.
 
 The schema requires every change to name its author. A change without one is
 kept as a `Container` of its content rather than read with an invented
 author, and its deleted text stays `Preserved`. A move's range without a
-name or author, or whose end names no range that started, is kept as
-`Preserved`.
+name, an author or a date and time, and its end, or an end that names no
+range that started, is kept as `Preserved`.
 
 A paragraph's mark, which ends it, is the subject of its own changes, held
 in its properties as `mark`: a list of `{ kind, author, date, preserved }`,
@@ -143,8 +145,46 @@ A table's grid as it was before a change, which names no author, and a
 row's table property exceptions with their changes are kept as they were
 read, in the grid and the row, and written back unchanged.
 
-When a document is written, each change takes an identifier from the space
-the document's comments and bookmarks share, in the order it is written.
+== Write tracked changes
+
+`Docx.to_bytes` writes every change the model holds, as <<write-a-document>>
+writes the rest of the body, so the changes a document is read with are the
+changes it is written with. A change built in the model, such as a
+`Revision` around new runs, is written the same way:
+
+[source,roc]
+----
+added = Revision({ kind: Insertion, author: "Ada", date: Date(stamp), content: [run], preserved: [] })
+----
+
+where `stamp` is a `Document.Timestamp`, for instance from
+`WmlRead.date_time("2026-05-07T09:00:00Z")`, since dates and authors come
+from the application, never from the clock.
+
+* A content change is written as an insertion, deletion or move element
+  around its content, with its author, its date as the timestamp's
+  `written` form and the attributes it kept. Inside a deletion, text is
+  written as deleted text and field code as deleted field instructions.
+* A move's ranges are written with their name, author and date, a range's
+  end with its start's identifier.
+* A paragraph mark's changes are written first in the mark's character
+  properties, in the order inserted, deleted, moved away, moved here.
+* A row's insertion and deletion and a cell's insertion, deletion or merge
+  are written in the row's and cell's properties, where the schema puts
+  them.
+* A change of properties is written last in the properties it changed,
+  around the properties as they were before it. Those are written without
+  changes of their own and, for a section, without its headers and footers,
+  which the schema has no place for there.
+* The schema has no place for a hyperlink or a simple field inside a
+  content change. A change that covers one is written around the content
+  beside it and again inside it, around its content, so the document reads
+  back with one change before, one inside and one after, each with the same
+  kind, author and date.
+
+Each change takes an identifier from the space the document's comments and
+bookmarks share, the lowest left, in the order it is written. The tracking
+setting is written as the document's settings hold it.
 
 == Whether a document tracks changes
 

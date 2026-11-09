@@ -12,6 +12,8 @@ import docx.Docx
 import docx.Document
 import docx.Opc
 import docx.Snapshot
+import docx.WmlWrite
+import docx.XmlTree
 
 ## The data-driven cases, built once and run together from the repository
 ## root:
@@ -34,6 +36,14 @@ import docx.Snapshot
 ## Snapshots: the fixture's semantic snapshot, which is its own expectation
 ## and what `oracle/compare_snapshots.py` compares with the oracles' readings
 ## as the `package` adapter.
+##
+## Generated: documents built from the model rather than read, for content
+## the fixtures do not hold together, such as every kind of tracked change.
+## Each is written under `.roc-docx/generated/`, must read back as the model
+## it was built from, without anything to drop or repair, and pass through
+## as a fixture does; its snapshot goes beside the fixtures' and its report,
+## the pass-through report with the tracked changes read back, is compared
+## with `tests/generated/<name>.txt`.
 main! : List([Utf8(Str), UnixBytes(List(U8)), WindowsU16s(List(U16))]) => Try({}, _)
 main! = |args| {
 	update = args.any(|arg| is_update(arg))
@@ -42,6 +52,7 @@ main! = |args| {
 	for family in families {
 		$failed = $failed + run_family!(family, fixtures, update)?
 	}
+	$failed = $failed + run_generated!(update)?
 	if $failed > 0 {
 		Err(Exit(1))
 	} else {
@@ -148,6 +159,160 @@ pass_through = |bytes| {
 	])
 	Ok({ written, report: Str.join_with(lines.map(|line| "${line}\n"), "") })
 }
+
+# Write every generated document, check it and report each; the number
+# that failed.
+run_generated! : Bool => Try(U64, _)
+run_generated! = |update| {
+	match Path.delete_all!(Path.utf8(".roc-docx/generated")) {
+		_ => {}
+	}
+	Path.create_all!(Path.utf8(".roc-docx/generated"))?
+	Path.create_all!(Path.utf8(".roc-docx/snapshots/generated"))?
+	Stdout.line!("generated: ${generated.len().to_str()} cases${if (update) ", updating expectations" else ""}")?
+	var $failed = 0.U64
+	var $updated = 0.U64
+	for document in generated {
+		path = ".roc-docx/generated/${document.name}.docx"
+		status = match built(document.content) {
+			Ok({ written, report, document: read }) => {
+				Path.write_bytes!(Path.utf8(path), written)?
+				Path.write_utf8!(Path.utf8(".roc-docx/snapshots/generated/${document.name}.json"), Snapshot.json(read, { path, version: "working tree" }))?
+				expectation = Path.utf8("tests/generated/${document.name}.txt")
+				expected = Path.read_utf8!(expectation) ?? ""
+				if expected == report {
+					"PASS"
+				} else if update {
+					Path.create_all!(Path.utf8("tests/generated"))?
+					Path.write_utf8!(expectation, report)?
+					$updated = $updated + 1
+					"UPDATED"
+				} else {
+					$failed = $failed + 1
+					Stderr.line!("${Path.display(expectation)} expects:\n${expected}but the case reports:\n${report}")?
+					"FAIL"
+				}
+			}
+
+			Err(problem) => {
+				$failed = $failed + 1
+				Stderr.line!("${path}: ${problem}")?
+				"FAIL"
+			}
+		}
+		Stdout.line!(" ${document.name} ${status}")?
+	}
+	Stdout.line!("Summary: ${generated.len().to_str()} cases, ${(generated.len() - $failed - $updated).to_str()} passed, ${$updated.to_str()} updated, ${$failed.to_str()} failed, 0 skipped")?
+	Ok($failed)
+}
+
+# A document whose main part holds `content` and whose settings turn
+# tracking on, written as the package writes it after reading it back as
+# exactly `content`; its report; and the document the written bytes read as.
+built : List(Document.Block) -> Try({ written : List(U8), report : Str, document : Document }, Str)
+built = |content| {
+	settings_relationship = { id: "rId1", kind: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings", target: "/word/settings.xml", mode: Internal }
+	shell = Element({ name: w("document"), bindings: [{ prefix: Prefix("w"), namespace: Uri(wordprocessingml) }], attributes: [], children: [] })
+	main = WmlWrite.document(shell, content, { relationships: [settings_relationship], footnotes: [], endnotes: [], comments: [] }) ? |problem| "the content does not write: ${Str.inspect(problem)}"
+	main_bytes = XmlTree.render(main.tree) ? |problem| "the main part does not render: ${Str.inspect(problem)}"
+	settings = "<w:settings xmlns:w=\"${wordprocessingml}\"><w:trackRevisions/></w:settings>".to_utf8()
+	graph = {
+		relationships: [{ id: "rId1", kind: Opc.officedocument_relationship, target: "/word/document.xml", mode: Internal }],
+		parts: [
+			{ name: "/word/document.xml", content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml", relationships: main.relationships },
+			{ name: "/word/settings.xml", content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml", relationships: [] },
+		],
+	}
+	bytes = Opc.to_bytes(graph, |name| if (name == "/word/settings.xml") Bytes(settings) else Bytes(main_bytes)) ? |problem| "the package does not write: ${Str.inspect(problem)}"
+	parsed = Docx.parse(bytes) ? |problem| "the built document does not parse: ${Str.inspect(problem)}"
+	if Docx.body(parsed.document) != content {
+		return Err("the built document reads back differently from its content")
+	}
+	if !Docx.tracks_revisions(parsed.document) {
+		return Err("the built document does not track changes")
+	}
+	passed = pass_through(bytes)?
+	again = Docx.parse(passed.written) ? |problem| "the written document does not parse: ${Str.inspect(problem)}"
+	changes = Docx.revisions(again.document).map(|change| "change: ${change.id.to_str()} ${Str.inspect(change.kind)} of ${Str.inspect(change.of)} by ${change.author} \"${change.text.replace_each("\n", "\\n")}\"")
+	Ok({ written: passed.written, report: Str.concat(passed.report, Str.join_with(changes.map(|line| "${line}\n"), "")), document: again.document })
+}
+
+# Documents built from the model, by name.
+generated : List({ name : Str, content : List(Document.Block) })
+generated = [{ name: "revisions", content: every_revision }]
+
+# A body with every kind of tracked change the model holds: insertions,
+# deletions, a deleted field's instruction, a move's source and destination
+# with their ranges ending after the moved paragraph's mark, as Word writes
+# them, paragraph marks inserted, deleted and moved, changes of
+# run, paragraph, table, row, cell and section properties, rows inserted
+# and deleted, and cells inserted, deleted and merged; a change inside a
+# hyperlink, as the schema places one.
+every_revision : List(Document.Block)
+every_revision = {
+	text = |words| Run({ properties: Document.no_run_properties, content: [Text(words)] })
+	change = |kind, author, content| Revision({ kind, author, date: Date(stamp), content, preserved: [] })
+	by = |author| { author, date: Date(stamp), preserved: [] }
+	changed = |author, previous| { author, date: Date(stamp), preserved: [], previous }
+	plain = Document.no_paragraph_properties
+	marked = |kind| { ..plain, mark: [{ kind, author: "Cy", date: Date(stamp), preserved: [] }] }
+	paragraph = |properties, content| Paragraph({ properties, content })
+	field_mark = |kind, name| FieldMark({ kind, element: Element({ name: w("fldChar"), bindings: [], attributes: [{ name: w("fldCharType"), value: name }], children: [] }) })
+	page_field = Run({ properties: Document.no_run_properties, content: [field_mark(Begin, "begin"), FieldCode(" PAGE "), field_mark(Separate, "separate"), Text("1"), field_mark(End, "end")] })
+	move = |side, name| MoveStart({ side, name, author: "Cy", date: stamp, preserved: [] })
+	formatted = Run({ properties: { ..Document.no_run_properties, bold: On, change: [changed("Dee", { ..Document.run_properties_with(Unset), italic: On })] }, content: [Text("Reformatted run.")] })
+	centred = { ..plain, alignment: Aligned(Center), change: [changed("Dee", { ..Document.paragraph_properties_with(Unset), alignment: Aligned(Left) })] }
+	cell_of = |properties, words| Cell({ properties, content: [paragraph(plain, [text(words)])] })
+	cell_with = |tracked| { width: Twips(3000), span: Unset, merge: Unset, borders: [], shading: Unset, alignment: Unset, preserved: [], revision: Unset, change: tracked }
+	plain_cell = cell_with([])
+	plain_row = { header: Unset, grid_before: Unset, grid_after: Unset, preserved: [], inserted: Unset, deleted: Unset, change: [] }
+	wide = { ..plain_cell, width: Twips(9000), span: Columns(3) }
+	rows = [
+		Row({ properties: { ..plain_row, inserted: Tracked(by("Eve")) }, content: [cell_of(wide, "Inserted row.")] }),
+		Row({ properties: { ..plain_row, deleted: Tracked(by("Eve")) }, content: [cell_of(wide, "Deleted row.")] }),
+		Row({
+			properties: { ..plain_row, header: Off, change: [changed("Eve", { header: On, grid_before: Unset, grid_after: Unset, preserved: [], inserted: Unset, deleted: Unset, change: Unset })] },
+			content: [
+				cell_of({ ..plain_cell, change: [changed("Eve", { ..cell_with(Unset), width: Twips(2000) })] }, "Reformatted cell."),
+				cell_of(plain_cell, "Above."),
+				cell_of({ ..plain_cell, merge: Restart }, "Merged above."),
+			],
+		}),
+		Row({
+			properties: plain_row,
+			content: [
+				cell_of({ ..plain_cell, revision: Inserted(by("Eve")) }, "Inserted cell."),
+				cell_of({ ..plain_cell, revision: Deleted(by("Eve")) }, "Deleted cell."),
+				cell_of({ ..plain_cell, merge: Continue, revision: Merged({ author: "Eve", date: Date(stamp), preserved: [], merge: Continue, previous: Unset }) }, ""),
+			],
+		}),
+	]
+	table = Table({ properties: { style: Unset, width: Twips(9000), borders: [], shading: Unset, preserved: [], change: [changed("Eve", { style: Unset, width: Auto, borders: [], shading: Unset, preserved: [], change: Unset })] }, grid: [Column(3000), Column(3000), Column(3000)], content: rows })
+	letter = Size({ width: 12240, height: 15840, orientation: Portrait })
+	section = Section({ start: Unset, page_size: Size({ width: 11906, height: 16838, orientation: Portrait }), margins: Unset, columns: Unset, page_numbers: Unset, title_page: Unset, headers: [], footers: [], preserved: [], change: [changed("Fay", { start: Unset, page_size: letter, margins: Unset, columns: Unset, page_numbers: Unset, title_page: Unset, headers: [], footers: [], preserved: [], change: Unset })] })
+	[
+		paragraph(plain, [text("Kept, "), change(Insertion, "Ada", [text("inserted, ")]), change(Deletion, "Ben", [text("deleted, "), page_field]), text("kept.")]),
+		paragraph(marked(MoveSource), [move(Source, "move1"), change(MoveSource, "Cy", [text("Moved paragraph.")])]),
+		paragraph(marked(Insertion), [MoveEnd({ side: Source, name: "move1" }), text("Inserted mark.")]),
+		paragraph(marked(Deletion), [text("Deleted mark, ")]),
+		paragraph(plain, [text("joined.")]),
+		paragraph(marked(MoveDestination), [move(Destination, "move1"), change(MoveDestination, "Cy", [text("Moved paragraph.")])]),
+		paragraph(centred, [MoveEnd({ side: Destination, name: "move1" }), formatted]),
+		paragraph(plain, [Hyperlink({ target: External("https://example.org/"), preserved: [], content: [change(Insertion, "Ada", [text("Inserted link.")])] })]),
+		table,
+		paragraph(plain, [text("After the table.")]),
+		section,
+	]
+}
+
+stamp : Document.Timestamp
+stamp = { written: "2026-05-07T09:00:00Z", utc_seconds: 1778144400 }
+
+wordprocessingml : Str
+wordprocessingml = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+
+w : Str -> XmlTree.Name
+w = |local| { namespace: Uri(wordprocessingml), local, prefix: Prefix("w") }
 
 describe : Document.Diagnostic -> Str
 describe = |diagnostic|

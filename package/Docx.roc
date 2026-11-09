@@ -571,9 +571,9 @@ expect {
 ## and destination are paired by their ranges' names; a change follows the
 ## one before only when nothing comes between them.
 expect {
-	away = "<w:moveFromRangeStart w:id='1' w:name='m' w:author='B'/><w:moveFrom w:author='B'><w:r><w:t>Away</w:t></w:r><w:ins w:author='C'><w:r><w:t>!</w:t></w:r></w:ins></w:moveFrom><w:moveFromRangeEnd w:id='1'/>"
+	away = "<w:moveFromRangeStart w:id='1' w:name='m' w:author='B' w:date='2026-05-07T09:00:00Z'/><w:moveFrom w:author='B'><w:r><w:t>Away</w:t></w:r><w:ins w:author='C'><w:r><w:t>!</w:t></w:r></w:ins></w:moveFrom><w:moveFromRangeEnd w:id='1'/>"
 	inserted = "<w:ins w:author='A'><w:r><w:t>a</w:t></w:r></w:ins><w:ins w:author='A'><w:r><w:t>b</w:t></w:r></w:ins><w:r><w:t>-</w:t></w:r><w:ins w:author='A'><w:r><w:t>c</w:t></w:r></w:ins>"
-	arrived = "<w:moveToRangeStart w:id='3' w:name='m' w:author='B'/><w:moveTo w:author='B'><w:r><w:t>Away</w:t></w:r></w:moveTo><w:moveToRangeEnd w:id='3'/><w:moveTo w:author='B'><w:r><w:t>loose</w:t></w:r></w:moveTo>"
+	arrived = "<w:moveToRangeStart w:id='3' w:name='m' w:author='B' w:date='2026-05-07T09:00:00Z'/><w:moveTo w:author='B'><w:r><w:t>Away</w:t></w:r></w:moveTo><w:moveToRangeEnd w:id='3'/><w:moveTo w:author='B'><w:r><w:t>loose</w:t></w:r></w:moveTo>"
 	parsed = Docx.parse(package_of("<w:p>${away}${inserted}</w:p><w:tbl><w:tr><w:tc><w:p>${arrived}</w:p></w:tc></w:tr></w:tbl>")?)?
 	listed = Docx.revisions(parsed.document).map(|change| (change.id, change.kind, change.author, change.move, change.text, change.follows))
 	listed

@@ -1,0 +1,25 @@
+written: 2350 bytes, FNV-1a 64 e1216aee10bdfe56
+part: /_rels/.rels 297 bytes application/vnd.openxmlformats-package.relationships+xml
+part: /word/document.xml 4472 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml
+part: /word/_rels/document.xml.rels 448 bytes application/vnd.openxmlformats-package.relationships+xml
+part: /word/settings.xml 171 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml
+change: 0 Insertion of Content by Ada "inserted, "
+change: 1 Deletion of Content by Ben "deleted, 1"
+change: 2 MoveSource of Content by Cy "Moved paragraph."
+change: 3 MoveSource of ParagraphMark by Cy "\n"
+change: 4 Insertion of ParagraphMark by Cy "\n"
+change: 5 Deletion of ParagraphMark by Cy "\n"
+change: 6 MoveDestination of Content by Cy "Moved paragraph."
+change: 7 MoveDestination of ParagraphMark by Cy "\n"
+change: 8 Formatting of Paragraph by Dee "Reformatted run."
+change: 9 Formatting of Run by Dee "Reformatted run."
+change: 10 Insertion of Content by Ada "Inserted link."
+change: 11 Formatting of Table by Eve ""
+change: 12 Insertion of Row by Eve ""
+change: 13 Deletion of Row by Eve ""
+change: 14 Formatting of Row by Eve ""
+change: 15 Formatting of Cell by Eve ""
+change: 16 Insertion of Cell by Eve ""
+change: 17 Deletion of Cell by Eve ""
+change: 18 Merge of Cell by Eve ""
+change: 19 Formatting of Section by Fay ""

@@ -243,8 +243,9 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 
 	## The start of a move's range: which side of the move it is, the move's
 	## name, who moved the content and when, and every attribute the model
-	## does not hold.
-	MoveRange : { side : MoveSide, name : Str, author : Str, date : [Unset, Date(Timestamp)], preserved : List(XmlTree.Attribute) }
+	## does not hold. Unlike a change's, a move's range always has its date,
+	## which the schema requires of it.
+	MoveRange : { side : MoveSide, name : Str, author : Str, date : Timestamp, preserved : List(XmlTree.Attribute) }
 
 	## Where a move's range is: where the content was, or where it went.
 	MoveSide : [Source, Destination]
