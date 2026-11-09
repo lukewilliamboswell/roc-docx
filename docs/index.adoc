@@ -21,7 +21,8 @@ Using it for the first time:: <<read-and-write-the-parts-of-a-document>>
 opens a document, lists what is inside it and writes it to a new package;
 <<read-a-documents-text>> reads its body's text, blocks, formatting and styles,
 its sections, headers and footers, and its properties;
-<<read-a-documents-comments>> reads its comments and the text they are about;
+<<read-a-documents-comments>> reads its comments and the text they are about,
+and writes them back as threads;
 <<read-a-documents-tracked-changes>> reads its tracked changes and its text
 with every change accepted or rejected;
 <<write-a-document>> writes the body from that model, in one canonical form.

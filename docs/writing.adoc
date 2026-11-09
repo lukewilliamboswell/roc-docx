@@ -95,12 +95,18 @@ its image part and a header or footer by its part. The writer chooses the
 identifiers the markup needs, as a function of the model and the part's
 relationships alone:
 
-* A bookmark takes the lowest number that no other bookmark and no element
-  kept as it was read uses as its `w:id`, in the order the bookmarks begin,
-  so that bookmarks, comments and revisions share one space of identifiers
-  without colliding. A bookmark's end takes its start's identifier. Each
-  part allocates its own: the notes of a footnotes part share one space,
-  and a header's bookmarks have theirs.
+* A comment takes the lowest number from 0 up that no element kept as it
+  was read in the body or in any comment uses and no earlier comment takes,
+  in the order of the comments, and every range boundary and reference to
+  it, in the body, a note or a header, takes the same. <<read-a-documents-comments>>
+  says how the comments themselves are written.
+* A bookmark takes the lowest number that no comment, no other bookmark and
+  no element kept as it was read uses as its `w:id`, in the order the
+  bookmarks begin, so that bookmarks, comments and revisions share one space
+  of identifiers without colliding. A bookmark's end takes its start's
+  identifier. Each part allocates its own: the notes of a footnotes part
+  share one space, and a header's bookmarks have theirs; the comments
+  part's bookmarks also avoid every identifier the other parts use.
 * A hyperlink, picture, header or footer uses the part's relationship to its
   target, in the same mode, internal or external; a header or footer needs
   one of the header or footer kind. When the part has none, a relationship
@@ -109,8 +115,10 @@ relationships alone:
   relationship and takes its size from the model.
 * A note reference takes the identifier of the note at its place.
 * Word's paragraph and row identifiers, `w14:paraId` and `w14:textId`, are
-  not part of the model and are not written: nothing in the body refers to
-  them.
+  not part of the model and are not written in the body, notes, headers or
+  footers: nothing refers to them there. The last paragraph of each comment
+  is the exception, as the parts that make comments threads name the
+  comment by it.
 
 An identifier written by the package therefore need not be the one the
 document was read with, which is why two documents are compared with

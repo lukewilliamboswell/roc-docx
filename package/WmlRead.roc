@@ -11,8 +11,8 @@
 ## rather than the part's identifiers for it. Whitespace-only text between
 ## elements is not content and is not kept.
 ##
-## A body, its notes and its headers and footers are read as they are
-## written, without [Mce.process] first, so that the model holds everything
+## A body, its notes, its comments and its headers and footers are read as
+## they are written, without [Mce.process] first, so that the model holds everything
 ## [WmlWrite] writes back: an extension element or
 ## alternative content (`mc:AlternateContent`) is kept whole in its place,
 ## and a paragraph, run, table, row, cell, piece of run content or property
@@ -134,8 +134,8 @@ WmlRead :: [].{
 	note_ids = |tree| note_elements(tree).map(|element| value_of(element, "id") ?? "")
 
 	## The comments of a comments part, in the part's order, from the part's
-	## tree as [Docx.parse] read it, interpreted by [Mce.process] first, with
-	## what reading them noticed. A comment's content is read as a body's
+	## tree as [Docx.parse] read it, read as written as a body is, with what
+	## reading them noticed. A comment's content is read as a body's
 	## blocks are; `w:author`, `w:initials` and `w:date` say who wrote it and
 	## when. A comment without an author, which the schema requires, has the
 	## empty author and a `Defaulted` diagnostic. A tree whose root is not a
@@ -145,9 +145,8 @@ WmlRead :: [].{
 	## [Comments.threads] completes them from the parts beside it.
 	comments : XmlTree.Node, Context -> { comments : List(Document.Comment), diagnostics : List(WmlRead.Diagnostic) }
 	comments = |tree, context| {
-		interpreted = Mce.process(tree).interpreted
-		within = reading(interpreted, context)
-		elements = comment_elements(interpreted)
+		within = reading(tree, context)
+		elements = comment_elements(tree)
 		var $comments = List.with_capacity(elements.len())
 		var $diagnostics = List.with_capacity(0)
 		for element in elements {
@@ -200,7 +199,7 @@ WmlRead :: [].{
 	## [WmlRead.comments] reads them; a comment without one has the empty
 	## string.
 	comment_ids : XmlTree.Node -> List(Str)
-	comment_ids = |tree| comment_elements(Mce.process(tree).interpreted).map(|element| value_of(element, "id") ?? "")
+	comment_ids = |tree| comment_elements(tree).map(|element| value_of(element, "id") ?? "")
 
 	## The blocks of a header or footer part, from the part's tree as
 	## [Docx.parse] read it, read as a body's blocks are. A tree whose root is not a WordprocessingML header
@@ -296,7 +295,17 @@ WmlRead :: [].{
 	## section's margins, read as zero. `element` and `attribute` are the
 	## local names of the WordprocessingML element and attribute, and `value`
 	## is the value as the document wrote it.
-	Diagnostic : [Rounded({ element : Str, attribute : Str, value : Str }), Defaulted({ element : Str, attribute : Str })]
+	##
+	## Or an entry of a part beside the comments part that the model does
+	## not hold as it was written, `NotApplied`: an entry of the extended
+	## comments, comment identifiers or extensible comments parts (`element`
+	## `commentEx`, `commentId` or `commentExtensible`) that names no
+	## comment, repeats an identifier a later entry has, or holds what the
+	## model cannot, keyed by the paragraph or durable identifier it names;
+	## or a person's presence (`presenceInfo`) without both a provider and an
+	## identifier, keyed by the person's author. What is not applied is kept
+	## and written back as it was read, as [Comments.kept] says.
+	Diagnostic : [Rounded({ element : Str, attribute : Str, value : Str }), Defaulted({ element : Str, attribute : Str }), NotApplied({ element : Str, key : Str })]
 
 	## A paragraph's properties from the children of its `w:pPr`, or of a
 	## style's or the document defaults' `w:pPr`. Each modelled property is

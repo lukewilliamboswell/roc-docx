@@ -32,8 +32,11 @@ WmlWrite :: [].{
 
 	## Why blocks cannot be written: a note reference names a note by a
 	## place the document's footnotes or endnotes do not have, or a comment's
-	## range or reference a comment by a place its comments do not have.
-	WriteError : [MissingNote({ kind : Document.NoteKind, note : U64 }), MissingComment(U64)]
+	## range or reference a comment by a place its comments do not have; or a
+	## comment with a thread to write, a parent, replies, the resolved mark, a
+	## durable identifier or a UTC date, has no paragraph in its content for
+	## the parts beside the comments part to name it by.
+	WriteError : [MissingNote({ kind : Document.NoteKind, note : U64 }), MissingComment(U64), CommentWithoutParagraph(U64)]
 
 	## The tree of a main document part whose body holds `content`, and the
 	## part's relationships with any it needs added. `shell` is the part as
@@ -186,6 +189,116 @@ WmlWrite :: [].{
 		tree = Element({ name: root.name, bindings: root.bindings, attributes: root.attributes, children: out.nodes })
 		Ok({ tree, relationships: out.state.relationships })
 	}
+
+	## What the parts a comments part is written beside use, which the
+	## comments part's identifiers avoid: their WordprocessingML `w:id`
+	## values, and their paragraph identifiers as numbers, `w14:paraId` and,
+	## in entries kept from the parts beside a comments part, `w15:paraId` and
+	## `w16cid:paraId`.
+	Taken : { ids : Set(Str), paragraphs : Set(U32) }
+
+	## The identifiers these trees use, as [WmlWrite.Taken] gathers them. A
+	## paragraph identifier that is not hexadecimal is not a number and
+	## takes none.
+	taken : List(XmlTree.Node) -> Taken
+	taken = |trees| trees.fold({ ids: Set.with_capacity(16), paragraphs: Set.with_capacity(16) }, taken_in)
+
+	## The identifier each comment takes, in the order of the comments, from
+	## the space bookmarks share: the lowest number from 0 up that no kept
+	## content of the body or of any comment uses and no earlier comment
+	## takes. A body written by [WmlWrite.document] with these identifiers
+	## as its [WmlWrite.Context]'s comments gives its bookmarks numbers
+	## after them.
+	comment_ids : List(Document.Block), List(Document.Comment) -> List(Str)
+	comment_ids = |body, listed| {
+		if listed.is_empty() {
+			return []
+		}
+		none = { relationships: [], footnotes: [], endnotes: [], comments: [] }
+		empty = { used: Set.with_capacity(8), named: Dict.with_capacity(0), starts: List.with_capacity(0), missing: Ok({}) }
+		in_body = body.fold(empty, |found, block| scan_block(none, found, block))
+		scanned = listed.fold(in_body, |found, comment| comment.content.fold(found, |inner, block| scan_block(none, inner, block)))
+		var $ids = List.with_capacity(listed.len())
+		var $next = 0.U64
+		for _ in listed {
+			id = free_id(scanned.used, $next)
+			$ids = List.append($ids, id.to_str())
+			$next = id + 1
+		}
+		$ids
+	}
+
+	## The tree of a comments part holding `listed`, the part's
+	## relationships with any its comments need added, and the paragraph
+	## identifier each comment's last paragraph is given, the empty string
+	## for a comment without a paragraph. `shell` is the part as it was read:
+	## its root's declarations, attributes and children other than comments
+	## are kept, and a shell that is not a comments part gives a new root.
+	##
+	## Each comment is written with the identifier `context` gives its
+	## place, its author, date and initials, its other attributes as the
+	## model keeps them, and its content written as a body's blocks are.
+	## Bookmarks in comments take the lowest numbers that no identifier in
+	## `taken`, no comment and no kept content uses. The last paragraph of a
+	## comment's content, looking into tables and other elements but not
+	## into a paragraph, is given the lowest paragraph identifier from 1 up
+	## that `taken` and the paragraphs kept in comments do not use, as eight
+	## hexadecimal digits; the extended comments, comment identifiers and
+	## extensible comments parts name the comment by it, as
+	## [Comments.split] writes them.
+	comments : XmlTree.Node, List(Document.Comment), Context, Taken -> Try({ tree : XmlTree.Node, relationships : List(Opc.Relationship), paragraphs : List(Str) }, WriteError)
+	comments = |shell, listed, context, taken_ids| {
+		root = match shell {
+			Element(found) if is_w(found.name, "comments") => found
+			_ => { name: { namespace: Uri(wordprocessingml), local: "comments", prefix: Prefix("w") }, bindings: [], attributes: [], children: [] }
+		}
+		content = listed.fold(List.with_capacity(listed.fold(0, |total, comment| total + comment.content.len())), |all, comment| List.concat(all, comment.content))
+		var $state = initial_reserving(content, context, taken_ids.ids)?
+		parents = listed.fold(
+			Set.with_capacity(listed.len()),
+			|found, comment|
+				match comment.parent {
+					Parent(place) => found.insert(place)
+					Unset => found
+				},
+		)
+		var $unmarked = List.with_capacity(listed.len())
+		var $place = 0.U64
+		for comment in listed {
+			id = context.comments.get($place) ? |_| MissingComment($place)
+			out = blocks(comment.content, Flow, $state)
+			$state = out.state
+			unmarked = last_paragraph(out.nodes, |paragraph| { ..paragraph, attributes: paragraph.attributes.drop_if(is_paragraph_id) })
+			threaded = comment.parent != Unset or comment.resolved or comment.durable_id != Unset or comment.utc_date != Unset or parents.contains($place)
+			if threaded and !unmarked.found {
+				return Err(CommentWithoutParagraph($place))
+			}
+			$unmarked = List.append($unmarked, { attributes: comment_attributes(comment, id), content: unmarked })
+			$place = $place + 1
+		}
+		var $used = $unmarked.fold(taken_ids.paragraphs, |used, comment| comment.content.nodes.fold(used, paragraph_ids_in))
+		var $next = 1.U32
+		var $written = List.with_capacity(listed.len())
+		var $paragraphs = List.with_capacity(listed.len())
+		for comment in $unmarked {
+			if comment.content.found {
+				while $used.contains($next) {
+					$next = $next + 1
+				}
+				identifier = hex8($next)
+				$used = $used.insert($next)
+				marked = last_paragraph(comment.content.nodes, |paragraph| { ..paragraph, attributes: List.append(paragraph.attributes, { name: { namespace: Uri(word_2010), local: "paraId", prefix: Prefix("w14") }, value: identifier }) })
+				$written = List.append($written, element("comment", comment.attributes, marked.nodes))
+				$paragraphs = List.append($paragraphs, identifier)
+			} else {
+				$written = List.append($written, element("comment", comment.attributes, comment.content.nodes))
+				$paragraphs = List.append($paragraphs, "")
+			}
+		}
+		tree : XmlTree.Node
+		tree = Element({ name: root.name, bindings: root.bindings, attributes: root.attributes, children: List.concat(root.children.drop_if(|child| is_element_named(child, "comment")), $written) })
+		Ok({ tree, relationships: $state.relationships, paragraphs: $paragraphs })
+	}
 }
 
 # A note's attributes with its kind: `w:type` in its place, or last where
@@ -243,8 +356,13 @@ Mode : [Body, Flow, Cell]
 Scan : { used : Set(Str), named : Dict(Str, Str), starts : List(Str), missing : Try({}, WmlWrite.WriteError) }
 
 initial : List(Document.Block), WmlWrite.Context -> Try(State, WmlWrite.WriteError)
-initial = |content, context| {
-	empty = { used: Set.with_capacity(8), named: Dict.with_capacity(0), starts: List.with_capacity(8), missing: Ok({}) }
+initial = |content, context| initial_reserving(content, context, Set.with_capacity(8))
+
+# The state before writing content, its bookmarks avoiding the identifiers
+# `reserved` holds, every comment's and those kept content uses.
+initial_reserving : List(Document.Block), WmlWrite.Context, Set(Str) -> Try(State, WmlWrite.WriteError)
+initial_reserving = |content, context, reserved| {
+	empty = { used: context.comments.fold(reserved, |ids, id| ids.insert(id)), named: Dict.with_capacity(0), starts: List.with_capacity(8), missing: Ok({}) }
 	scan = content.fold(empty, |found, block| scan_block(context, found, block))
 	scan.missing?
 	var $bookmarks = Dict.with_capacity(scan.starts.len() + scan.named.len())
@@ -616,6 +734,133 @@ run_content = |out, content|
 		FieldCode(code) if out.state.deleted => { ..out, nodes: List.append(out.nodes, text_element("delInstrText", code)) }
 		_ => { ..out, nodes: List.append(out.nodes, plain_content(content)) }
 	}
+
+# A comment's identifier, author, date and initials, then the attributes the
+# model keeps.
+comment_attributes : Document.Comment, Str -> List(XmlTree.Attribute)
+comment_attributes = |comment, id| {
+	date = match comment.date {
+		Date(stamp) => [attribute("date", stamp.written)]
+		Unset => []
+	}
+	initials = match comment.initials {
+		Initials(text) => [attribute("initials", text)]
+		Unset => []
+	}
+	List.join([[attribute("id", id), attribute("author", comment.author)], date, initials, comment.preserved])
+}
+
+Element : { name : XmlTree.Name, bindings : List(XmlTree.Binding), attributes : List(XmlTree.Attribute), children : List(XmlTree.Node) }
+
+# Nodes with their last paragraph changed by `change`, looking into every
+# element but a paragraph from the last node back, and whether there was one.
+last_paragraph : List(XmlTree.Node), (Element -> Element) -> { nodes : List(XmlTree.Node), found : Bool }
+last_paragraph = |nodes, change| {
+	var $index = nodes.len()
+	while $index > 0 {
+		$index = $index - 1
+		match nodes.get($index) {
+			Ok(Element(found)) if is_w(found.name, "p") => {
+				return { nodes: List.set(nodes, $index, Element(change(found))) ?? nodes, found: Bool.True }
+			}
+
+			Ok(Element(container)) => {
+				inner = last_paragraph(container.children, change)
+				if inner.found {
+					return { nodes: List.set(nodes, $index, Element({ ..container, children: inner.nodes })) ?? nodes, found: Bool.True }
+				}
+			}
+
+			_ => {}
+		}
+	}
+	{ nodes, found: Bool.False }
+}
+
+# The paragraph identifiers a node and its content use, added to `used`.
+paragraph_ids_in : Set(U32), XmlTree.Node -> Set(U32)
+paragraph_ids_in = |used, node|
+	match node {
+		Element(found) => found.children.fold(with_paragraph_id(used, found), paragraph_ids_in)
+		Text(_) => used
+	}
+
+# The paragraph identifier an element has, added to `used`.
+with_paragraph_id : Set(U32), Element -> Set(U32)
+with_paragraph_id = |used, found|
+	match found.attributes.find_first(is_paragraph_id) {
+		Ok(identifier) =>
+			match hexadecimal(identifier.value) {
+				Ok(number) => used.insert(number)
+				Err(NotHex) => used
+			}
+
+		Err(_) => used
+	}
+
+# The identifiers a tree uses, added to those found so far.
+taken_in : WmlWrite.Taken, XmlTree.Node -> WmlWrite.Taken
+taken_in = |found, node|
+	match node {
+		Element(found_element) => {
+			ids = match found_element.attributes.find_first(|candidate| candidate.name.local == "id" and candidate.name.namespace == Uri(wordprocessingml)) {
+				Ok(id) => found.ids.insert(id.value)
+				Err(_) => found.ids
+			}
+			paragraphs = match found_element.attributes.find_first(|candidate| candidate.name.local == "paraId" and [Uri(word_2010), Uri(word_2012), Uri(word_2016_cid)].contains(candidate.name.namespace)) {
+				Ok(identifier) =>
+					match hexadecimal(identifier.value) {
+						Ok(number) => found.paragraphs.insert(number)
+						Err(NotHex) => found.paragraphs
+					}
+
+				Err(_) => found.paragraphs
+			}
+			found_element.children.fold({ ids, paragraphs }, taken_in)
+		}
+
+		Text(_) => found
+	}
+
+is_paragraph_id : XmlTree.Attribute -> Bool
+is_paragraph_id = |candidate| candidate.name.local == "paraId" and candidate.name.namespace == Uri(word_2010)
+
+is_element_named : XmlTree.Node, Str -> Bool
+is_element_named = |node, local|
+	match node {
+		Element(found) => is_w(found.name, local)
+		Text(_) => Bool.False
+	}
+
+# One to eight hexadecimal digits as a number.
+hexadecimal : Str -> Try(U32, [NotHex])
+hexadecimal = |text| {
+	digits = text.to_utf8()
+	if digits.is_empty() or digits.len() > 8 {
+		return Err(NotHex)
+	}
+	digits.fold(Ok(0.U32), |sum, digit| Ok((sum?) * 16 + (hex_value(digit)?)))
+}
+
+hex_value : U8 -> Try(U32, [NotHex])
+hex_value = |digit|
+	if digit >= '0' and digit <= '9' {
+		Ok((digit - '0').to_u32())
+	} else if digit >= 'a' and digit <= 'f' {
+		Ok((digit - 'a' + 10).to_u32())
+	} else if digit >= 'A' and digit <= 'F' {
+		Ok((digit - 'A' + 10).to_u32())
+	} else {
+		Err(NotHex)
+	}
+
+# A number as eight hexadecimal digits.
+hex8 : U32 -> Str
+hex8 = |number| {
+	digits = "0123456789ABCDEF".to_utf8()
+	shifts = [268_435_456, 16_777_216, 1_048_576, 65_536, 4096, 256, 16, 1]
+	Str.from_utf8(shifts.map(|shift| digits.get(((number // shift) % 16).to_u64()) ?? '0')) ?? "00000000"
+}
 
 # A comment's range boundary or reference, by its comment's identifier.
 comment_node : Str, U64, State -> XmlTree.Node
@@ -1467,6 +1712,17 @@ drawingml = "http://schemas.openxmlformats.org/drawingml/2006/main"
 xml_namespace : Str
 xml_namespace = "http://www.w3.org/XML/1998/namespace"
 
+# Word's extension that identifies paragraphs, and those of the extended
+# comments and comment identifiers parts, from MS-DOCX.
+word_2010 : Str
+word_2010 = "http://schemas.microsoft.com/office/word/2010/wordml"
+
+word_2012 : Str
+word_2012 = "http://schemas.microsoft.com/office/word/2012/wordml"
+
+word_2016_cid : Str
+word_2016_cid = "http://schemas.microsoft.com/office/word/2016/wordml/cid"
+
 hyperlink_relationship : Str
 hyperlink_relationship = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink"
 
@@ -1503,6 +1759,7 @@ written = |content, context|
 
 		Err(MissingNote(_)) => "missing note"
 		Err(MissingComment(_)) => "missing comment"
+		Err(CommentWithoutParagraph(_)) => "comment without paragraph"
 	}
 
 run : List(Document.RunContent) -> Document.Inline
@@ -1617,4 +1874,38 @@ expect {
 	rendered(WmlWrite.notes(notes_shell, notes, no_context)).ends_with("<w:footnotes xmlns:w=\"${wordprocessingml}\"><w:footnote w:type=\"separator\" w:id=\"0\"><w:p/></w:footnote><w:footnote w:id=\"1\"><w:p><w:r><w:t>a</w:t></w:r></w:p></w:footnote><w:footnote w:id=\"2\" w:type=\"continuationNotice\"/></w:footnotes>")
 		and rendered(WmlWrite.notes(notes_shell, notes.take_first(1), no_context)).ends_with("<w:footnote w:type=\"separator\" w:id=\"0\"><w:p/></w:footnote></w:footnotes>")
 		and rendered(WmlWrite.header_footer(header_shell, [paragraph([run([Tab])]), paragraph([])], no_context)).ends_with("<w:hdr xmlns:w=\"${wordprocessingml}\"><w:p><w:r><w:tab/></w:r></w:p><w:p/></w:hdr>")
+}
+
+## Comments take the lowest identifiers no kept content uses and the body's
+## bookmarks the next; in the comments part, bookmarks avoid every identifier
+## the other parts and the comments use, and each comment's last paragraph,
+## inside a table too, takes the lowest paragraph identifier no other part
+## uses, a comment without a paragraph none; a reply without a paragraph
+## cannot be written.
+expect {
+	kept = XmlTree.parse("<w:ins xmlns:w='${wordprocessingml}' w:id='0'/>".to_utf8(), {}) ?? Text("")
+	identified = XmlTree.parse("<w:p xmlns:w='${wordprocessingml}' xmlns:w14='${word_2010}' w14:paraId='00000001'/>".to_utf8(), {}) ?? Text("")
+	comment = |content| { author: "Ada Reviewer", initials: Initials("AR"), date: Unset, content, preserved: [], parent: Unset, resolved: Bool.False, durable_id: Unset, utc_date: Unset }
+	cell = Cell({ properties: { width: Unset, span: Unset, merge: Unset, borders: [], shading: Unset, alignment: Unset, preserved: [] }, content: [paragraph([run([Text("in")])])] })
+	table = Table({ properties: { style: Unset, width: Unset, borders: [], shading: Unset, preserved: [] }, grid: [], content: [Row({ properties: { header: Unset, grid_before: Unset, grid_after: Unset, preserved: [] }, content: [cell] })] })
+	listed = [comment([paragraph([BookmarkStart("b"), BookmarkEnd("b"), run([Text("one")])]), paragraph([run([Text("two")])])]), comment([table]), comment([])]
+	body = [paragraph([Preserved(kept), CommentStart(0), BookmarkStart("a"), BookmarkEnd("a"), CommentEnd(0), run([CommentReference(0)])])]
+	ids = WmlWrite.comment_ids(body, listed)
+	context = { ..no_context, comments: ids }
+	main = WmlWrite.document(shell, body, context)?
+	part = WmlWrite.comments(Text(""), listed, context, WmlWrite.taken([main.tree, identified]))?
+	rendered = Str.from_utf8(XmlTree.render(part.tree)?) ?? ""
+	comments = match rendered.split_first("<w:comment ") {
+		Ok({ before: _, after }) => "<w:comment ${after}"
+		Err(_) => rendered
+	}
+	start = |id| "<w:comment w:id=\"${id}\" w:author=\"Ada Reviewer\" w:initials=\"AR\">"
+	first = "${start("1")}<w:p><w:bookmarkStart w:id=\"5\" w:name=\"b\"/><w:bookmarkEnd w:id=\"5\"/><w:r><w:t>one</w:t></w:r></w:p><w:p w14:paraId=\"00000002\"><w:r><w:t>two</w:t></w:r></w:p></w:comment>"
+	second = "${start("2")}<w:tbl><w:tblPr/><w:tblGrid/><w:tr><w:tc><w:p w14:paraId=\"00000003\"><w:r><w:t>in</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:comment>"
+	third = "<w:comment w:id=\"3\" w:author=\"Ada Reviewer\" w:initials=\"AR\"/>"
+	ids == ["1", "2", "3"]
+		and written(body, context) == "<w:body><w:p><w:ins w:id=\"0\"/><w:commentRangeStart w:id=\"1\"/><w:bookmarkStart w:id=\"4\" w:name=\"a\"/><w:bookmarkEnd w:id=\"4\"/><w:commentRangeEnd w:id=\"1\"/><w:r><w:commentReference w:id=\"1\"/></w:r></w:p></w:body></w:document>"
+		and part.paragraphs == ["00000002", "00000003", ""]
+		and comments == "${first}${second}${third}</w:comments>"
+		and WmlWrite.comments(Text(""), [comment([paragraph([])]), { ..comment([]), parent: Parent(0) }], { ..no_context, comments: ["0", "1"] }, WmlWrite.taken([])).map_ok(|_| {}) == Err(CommentWithoutParagraph(1))
 }

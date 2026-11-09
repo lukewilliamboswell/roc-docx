@@ -247,14 +247,22 @@ small_of = |input|
 # Exact ceilings: the allocations and reallocations of parsing and of
 # writing each declared document, as measured on nightly-2026-11-07 with
 # roc-zip 0.3.0-rc1 and roc-parser 6.0.0-rc.1 when the ceiling was set.
+# Writing comments and their threads from the model (G3.3) looks for the
+# comments part and its threads on every write, 3 more for each example's
+# writing, and writes the comments part and the parts beside it, reading
+# which entries the model does not hold and scanning every other part for
+# the identifiers comments must avoid: 37 more for the pandoc document,
+# whose comments part is empty, and 572 for the Google Docs export's two
+# comments. Reading comments as written, without processing them for
+# compatibility first, lowered parsing them by 5 and 337.
 exact_ceiling : Input -> Try({ parse : U64, write : U64 }, [NotDeclared])
 exact_ceiling = |input|
 	match input {
-		Generated(program) if program == one_paragraph_program => Ok({ parse: 292, write: 451 })
-		Generated(program) if program == small_program => Ok({ parse: 579, write: 651 })
-		Generated(program) if program == large_program => Ok({ parse: 5_324, write: 3_908 })
-		Generated(program) if program == undeclared_program => Ok({ parse: 578, write: 761 })
-		Generated(program) if program == repaired_program => Ok({ parse: 753, write: 736 })
+		Generated(program) if program == one_paragraph_program => Ok({ parse: 292, write: 454 })
+		Generated(program) if program == small_program => Ok({ parse: 579, write: 654 })
+		Generated(program) if program == large_program => Ok({ parse: 5_324, write: 3_911 })
+		Generated(program) if program == undeclared_program => Ok({ parse: 578, write: 764 })
+		Generated(program) if program == repaired_program => Ok({ parse: 753, write: 739 })
 		Fixture(index) => fixtures.get(index).map_ok(|fixture| { parse: fixture.parse, write: fixture.write }).map_err(|_| NotDeclared)
 		_ => Err(NotDeclared)
 	}
@@ -293,10 +301,10 @@ program_unit = [7, 4, 3, 5, 1, 2, 6, 2, 0]
 # one table, and one from each of pandoc and LibreOffice.
 fixtures : List({ name : Str, bytes : List(U8), parse : U64, write : U64 })
 fixtures = [
-	{ name: "word-report", bytes: word_report, parse: 10_357, write: 10_489 },
-	{ name: "gdocs-resume", bytes: gdocs_resume, parse: 20_803, write: 17_221 },
-	{ name: "pandoc-basics", bytes: pandoc_basics, parse: 9_165, write: 8_302 },
-	{ name: "libreoffice-basics", bytes: libreoffice_basics, parse: 8_025, write: 7_540 },
+	{ name: "word-report", bytes: word_report, parse: 10_357, write: 10_492 },
+	{ name: "gdocs-resume", bytes: gdocs_resume, parse: 20_466, write: 17_793 },
+	{ name: "pandoc-basics", bytes: pandoc_basics, parse: 9_160, write: 8_339 },
+	{ name: "libreoffice-basics", bytes: libreoffice_basics, parse: 8_025, write: 7_543 },
 ]
 
 wordprocessingml : Str

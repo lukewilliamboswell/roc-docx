@@ -1,4 +1,4 @@
-written: 13315 bytes, FNV-1a 64 73634d7a7f70bef4
+written: 13298 bytes, FNV-1a 64 b4f395953cee99db
 dropped: /word/document.xml 17 revision save identifiers
 dropped: /word/comments.xml 16 revision save identifiers
 part: /_rels/.rels 588 bytes application/vnd.openxmlformats-package.relationships+xml
@@ -14,5 +14,5 @@ part: /word/styles.xml 32192 bytes application/vnd.openxmlformats-officedocument
 part: /word/commentsIds.xml 1483 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.commentsIds+xml
 part: /word/commentsExtended.xml 1412 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.commentsExtended+xml
 part: /word/theme/theme1.xml 8716 bytes application/vnd.openxmlformats-officedocument.theme+xml
-part: /word/comments.xml 3569 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml
+part: /word/comments.xml 3371 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml
 part: /word/people.xml 1313 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.people+xml

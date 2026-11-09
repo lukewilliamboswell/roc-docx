@@ -71,6 +71,7 @@ Docx :: [].{
 		XmlPartUnwritable({ part : Str, problem : XmlTree.WriteError }),
 		MissingNote({ kind : Document.NoteKind, note : U64 }),
 		MissingComment(U64),
+		CommentWithoutParagraph(U64),
 	]
 
 	## Write a document as the bytes of a `.docx`. The main document part is
@@ -135,26 +136,20 @@ Docx :: [].{
 	## identifiers and extensible comments relationships target, with its
 	## place in that part and the text it is anchored to, those the body
 	## anchors in the order their anchors begin. What reading the comments
-	## noticed comes beside them. A document without a comments part has
-	## none.
+	## noticed comes beside them, with the entries of the parts beside them
+	## that the model does not hold as [Comments.kept] finds them. A document
+	## without a comments part has none.
 	comments : Document -> { comments : List(Comments.Anchored), diagnostics : List(WmlRead.Diagnostic) }
 	comments = |document| {
-		read = match comments_part(document) {
-			Ok(part) => {
-				found = WmlRead.comments(part.tree, { relationships: part.relationships, footnotes: [], endnotes: [], comments: [] })
-				parts = { comments: part.tree, extended: main_related_tree(document, comments_extended_relationship), ids: main_related_tree(document, comments_ids_relationship), extensible: main_related_tree(document, comments_extensible_relationship) }
-				{ comments: Comments.threads(found.comments, parts), diagnostics: found.diagnostics }
-			}
-
-			Err(NotFound) => { comments: [], diagnostics: [] }
-		}
-		{ comments: Comments.anchored(Docx.body(document), read.comments), diagnostics: read.diagnostics }
+		read = threads(document)
+		{ comments: Comments.anchored(Docx.body(document), read.comments), diagnostics: List.concat(read.diagnostics, read.kept.diagnostics) }
 	}
 
 	## The people who wrote a document's comments and tracked changes, as
 	## [Comments.people] reads them from the part the main document's people
-	## relationship targets. A document without the part has none.
-	people : Document -> List(Document.Person)
+	## relationship targets, with a diagnostic for each presence it does not
+	## apply. A document without the part has none.
+	people : Document -> { people : List(Document.Person), diagnostics : List(WmlRead.Diagnostic) }
 	people = |document| Comments.people(main_related_tree(document, people_relationship))
 
 	## The fields of a document's body, as [Document.fields] gathers them:
@@ -284,21 +279,28 @@ part_context = |part, comments| { relationships: part.relationships, footnotes: 
 
 # The document as it is written: its main document part, its notes parts and
 # the header and footer parts it relates to written from the model, with the
-# relationships writing them needs.
+# relationships writing them needs, then its comments and the parts beside
+# them written from their threads. Comments take the identifiers
+# [WmlWrite.comment_ids] allocates, and every part's ranges and references
+# name them by those.
 as_written : Document -> Try(Document, WmlWrite.WriteError)
 as_written = |document| {
 	main = match Document.related(document, "/", Opc.officedocument_relationship) {
 		Ok(found) => found
 		Err(NotFound) => return Ok(document)
 	}
-	comments = comment_ids(document)
-	written = WmlWrite.document(main.tree, Docx.body(document), main_context(document, main.name, main.relationships))?
+	read_ids = comment_ids(document)
+	body = Docx.body(document)
+	read = threads(document)
+	threaded = read.comments
+	comments = WmlWrite.comment_ids(body, threaded)
+	written = WmlWrite.document(main.tree, body, { ..main_context(document, main.name, main.relationships), comments })?
 	var $document = Document.with_part(document, main.name, written.tree, written.relationships)
 	for kind in [footnotes_relationship, endnotes_relationship] {
 		match Document.related(document, main.name, kind) {
 			Ok(part) => {
 				context = part_context(part, comments)
-				notes_written = WmlWrite.notes(part.tree, WmlRead.notes(part.tree, context), context)?
+				notes_written = WmlWrite.notes(part.tree, WmlRead.notes(part.tree, part_context(part, read_ids)), context)?
 				$document = Document.with_part($document, part.name, notes_written.tree, notes_written.relationships)
 			}
 
@@ -310,7 +312,7 @@ as_written = |document| {
 			match Document.xml_part(document, relationship.target) {
 				Ok(part) => {
 					context = part_context(part, comments)
-					part_written = WmlWrite.header_footer(part.tree, WmlRead.header_footer(part.tree, context), context)?
+					part_written = WmlWrite.header_footer(part.tree, WmlRead.header_footer(part.tree, part_context(part, read_ids)), context)?
 					$document = Document.with_part($document, part.name, part_written.tree, part_written.relationships)
 				}
 
@@ -318,7 +320,7 @@ as_written = |document| {
 			}
 		}
 	}
-	Ok($document)
+	with_comments($document, threaded, read.kept, comments)
 }
 
 header_relationship : Str
@@ -326,6 +328,77 @@ header_relationship = "http://schemas.openxmlformats.org/officeDocument/2006/rel
 
 footer_relationship : Str
 footer_relationship = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer"
+
+# The document with its comments part written from `comments`, taking `ids`,
+# and its extended comments, comment identifiers, extensible comments and
+# people parts written from the model, each where the document has it. The
+# comments' identifiers avoid those of every other part.
+with_comments : Document, List(Document.Comment), Comments.Kept, List(Str) -> Try(Document, WmlWrite.WriteError)
+with_comments = |document, comments, kept, ids| {
+	people = match Document.related(document, main_name(document), people_relationship) {
+		Ok(part) => Document.with_part(document, part.name, Comments.people_part(part.tree, Comments.people(part.tree).people), part.relationships)
+		Err(NotFound) => document
+	}
+	match comments_part(people) {
+		Ok(part) => {
+			rewritten = [part.name, related_name(people, comments_extended_relationship), related_name(people, comments_ids_relationship)]
+			others = Document.xml_parts(people).drop_if(|other| rewritten.contains(other.name)).map(|other| other.tree)
+			taken = WmlWrite.taken(List.join([others, kept.extended, kept.ids]))
+			written = WmlWrite.comments(part.tree, comments, { relationships: part.relationships, footnotes: [], endnotes: [], comments: ids }, taken)?
+			shells = { extended: main_related_tree(people, comments_extended_relationship), ids: main_related_tree(people, comments_ids_relationship), extensible: main_related_tree(people, comments_extensible_relationship) }
+			split = Comments.split(comments, written.paragraphs, shells, kept)
+			with_part = Document.with_part(people, part.name, written.tree, written.relationships)
+			with_extended = rewrite(with_part, comments_extended_relationship, split.extended)
+			with_ids = rewrite(with_extended, comments_ids_relationship, split.ids)
+			Ok(rewrite(with_ids, comments_extensible_relationship, split.extensible))
+		}
+
+		Err(NotFound) => Ok(people)
+	}
+}
+
+# The name of the part the main document's relationship of `kind` targets,
+# or the empty string where there is none.
+related_name : Document, Str -> Str
+related_name = |document, kind|
+	match Document.related(document, main_name(document), kind) {
+		Ok(part) => part.name
+		Err(NotFound) => ""
+	}
+
+# The document with the part the main document's relationship of `kind`
+# targets holding `tree`, where it has one.
+rewrite : Document, Str, XmlTree.Node -> Document
+rewrite = |document, kind, tree|
+	match Document.related(document, main_name(document), kind) {
+		Ok(part) => Document.with_part(document, part.name, tree, part.relationships)
+		Err(NotFound) => document
+	}
+
+# The name of the main document part, or the package's own `/` when there is
+# none, which no part's relationship is.
+main_name : Document -> Str
+main_name = |document|
+	match Document.related(document, "/", Opc.officedocument_relationship) {
+		Ok(main) => main.name
+		Err(NotFound) => "/"
+	}
+
+# The comments of a document's comments part, as [WmlRead.comments] reads
+# them, threaded by [Comments.threads] from the parts the main document's
+# extended comments, comment identifiers and extensible comments
+# relationships target, with what reading them noticed.
+threads : Document -> { comments : List(Document.Comment), kept : Comments.Kept, diagnostics : List(WmlRead.Diagnostic) }
+threads = |document|
+	match comments_part(document) {
+		Ok(part) => {
+			found = WmlRead.comments(part.tree, { relationships: part.relationships, footnotes: [], endnotes: [], comments: [] })
+			parts = { comments: part.tree, extended: main_related_tree(document, comments_extended_relationship), ids: main_related_tree(document, comments_ids_relationship), extensible: main_related_tree(document, comments_extensible_relationship) }
+			{ comments: Comments.threads(found.comments, parts), kept: Comments.kept(parts), diagnostics: found.diagnostics }
+		}
+
+		Err(NotFound) => { comments: [], kept: { extended: [], ids: [], extensible: [], diagnostics: [] }, diagnostics: [] }
+	}
 
 footnotes_relationship : Str
 footnotes_relationship = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes"

@@ -741,6 +741,17 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 		Ok({ name: part.name, tree, relationships: target.relationships })
 	}
 
+	## Every XML part of the document, in the order of its part graph.
+	xml_parts : Document -> List(XmlPart)
+	xml_parts = |document|
+		document.graph.parts.keep_oks(
+			|part|
+				match document.trees.get(part.name) {
+					Ok(tree) => Ok({ name: part.name, tree, relationships: part.relationships })
+					Err(_) => Err(NotXml)
+				},
+		)
+
 	## Something reading did to a document that writing it back shows: a part
 	## lost `count` occurrences of editor state that carries no document
 	## meaning; or an attribute the schema does not allow as the part wrote
@@ -818,7 +829,7 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 	## A main document's body as the model: its blocks in reading order, and
 	## what reading them noticed that the schema does not allow, in document
 	## order, as [WmlRead.read_body] gives them.
-	Body : { blocks : List(Block), diagnostics : List([Rounded({ element : Str, attribute : Str, value : Str }), Defaulted({ element : Str, attribute : Str })]) }
+	Body : { blocks : List(Block), diagnostics : List([Rounded({ element : Str, attribute : Str, value : Str }), Defaulted({ element : Str, attribute : Str }), NotApplied({ element : Str, key : Str })]) }
 
 	## How [Document.from_package_with_body] has a main document's body read
 	## one block at a time. Two passes read the part. The first gives `scan`

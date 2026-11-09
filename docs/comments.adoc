@@ -2,7 +2,7 @@
 
 This chapter reads the comments reviewers leave on a document: who wrote
 each one and when, what it says, the text it is about, and the thread it
-belongs to. It continues from
+belongs to, and how they are written back. It continues from
 <<read-a-documents-text>>, whose blocks and current text it builds on.
 
 == The comments
@@ -124,9 +124,13 @@ identifiers part its durable identifier, and the extensible comments part
 the UTC date for a durable identifier. Each knows a comment by the
 identifier Word gives the last paragraph of its content, which is not part
 of the model. An entry that names no comment, a parent that is not another
-comment, and a durable identifier or date that is not one are not applied;
-the parts are kept as they were read, and a document is written back with
-them unchanged.
+comment, and a durable identifier or date that is not one are not applied.
+Each entry the model does not hold exactly as it was written, those and an
+entry an identifier's later entry replaces or one with anything else in it,
+comes back as a `NotApplied({ element, key })` diagnostic beside the
+comments, naming the entry (`commentEx`, `commentId` or
+`commentExtensible`) and the paragraph or durable identifier it names, and
+is written back as it was read.
 
 A document without these parts, as LibreOffice, Google Docs and pandoc
 write one, has the same comments with every `parent` and `durable_id` and
@@ -134,12 +138,57 @@ write one, has the same comments with every `parent` and `durable_id` and
 
 == People
 
-`Docx.people` gives the people part of a document: the authors of its
-comments and tracked changes as Word records them, each a `Document.Person`
-with:
+`Docx.people` gives the people part of a document as `people`: the
+authors of its comments and tracked changes as Word records them, each a
+`Document.Person` with:
 
 * `author`, the name the comments and changes give as their author;
 * `presence`, `Presence({ provider, user })`, the identity provider that
   knows the author and their identifier there, or `Unset`.
 
-A document without a people part has no people.
+A presence without both a provider and an identifier is `Unset`, with a
+`NotApplied({ element: "presenceInfo", key: author })` diagnostic in
+`diagnostics`, and is written back as it was read. A document without a
+people part has no people.
+
+== Write comments
+
+`Docx.to_bytes` writes a document's comments from the model, as it writes
+its body: the comments part from the comments `Docx.comments` reads, and
+each of the extended comments, comment identifiers, extensible comments and
+people parts the document has from the threads and people. So what a
+comment says, who wrote it, when, what it replies to and whether it is
+resolved is written as the model holds it, and Word and LibreOffice show
+replies as replies and resolved comments as resolved.
+
+* Each comment is written with its author, date, initials and the other
+  attributes it kept, and its content is written as the body's blocks are,
+  in the same canonical form.
+* Comments take new identifiers, as <<write-a-document>> says, and every
+  range and reference to a comment takes its comment's.
+* The last paragraph of each comment's content is given a paragraph
+  identifier, `w14:paraId`, the lowest from `00000001` up that no other
+  part and no paragraph kept in a comment uses. The other parts name the
+  comment by it.
+* The extended comments part has an entry for each comment with a
+  paragraph: the paragraph of the comment it replies to, and whether it is
+  done. The comment identifiers part has an entry for each such comment
+  with a durable identifier, and the extensible comments part one for that
+  durable identifier with the comment's UTC date where it has one, keeping
+  whatever else the document's entry for that durable identifier held,
+  such as reactions.
+* The people part has each person with their presence.
+
+Each part keeps its root's declarations and attributes and anything it
+holds that is not one of its entries. The entries reading did not apply,
+each a `NotApplied` diagnostic, are written as they were read, before the
+written entries so that they never stand in for them, and the paragraph
+identifiers they name are not given to any comment, so they name no
+comment when the document is read again. A person keeps what else the
+document wrote for them, and the presence reading did not apply. A comment
+whose content has no paragraph cannot be named by the other parts: one
+with a thread to write, a parent, replies, the resolved mark, a durable
+identifier or a UTC date, cannot be written, and `Docx.to_bytes` fails
+with `CommentWithoutParagraph(id)`; one without is written as it is. A
+UTC date is kept by its durable identifier, so a comment without one is
+written without its UTC date.

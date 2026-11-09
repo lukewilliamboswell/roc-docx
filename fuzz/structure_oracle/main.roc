@@ -140,12 +140,17 @@ inflated = |bytes|
 
 # Exact ceilings: the allocations and reallocations of checking each
 # declared example, as measured on nightly-2026-11-07 when the ceiling was
-# set.
+# set. Writing comments from their threads (G3.3) gives each comment's last
+# paragraph an identifier in Word's `w14` namespace, declared ignorable on
+# the comments part, which the check reads: 15 more for the generated
+# examples, 18 for pandoc's comments and 15 for its review; the Word
+# comments and Google Docs documents lost the identifiers on every other
+# paragraph and fell by 19 and 6.
 exact_ceiling : Input -> Try(U64, [NotDeclared])
 exact_ceiling = |input|
 	match input {
-		Generated(program) if program == small_program => Ok(1_333)
-		Generated(program) if program == large_program => Ok(9_102)
+		Generated(program) if program == small_program => Ok(1_348)
+		Generated(program) if program == large_program => Ok(9_117)
 		Fixture(index) => fixtures.get(index).map_ok(|fixture| fixture.allocations).map_err(|_| NotDeclared)
 		_ => Err(NotDeclared)
 	}
@@ -164,7 +169,7 @@ held_per_byte : U64
 held_per_byte = 14
 
 # The small and large generated examples repeat one program, the large one
-# sixteen times as often; checking them takes 1,333 and 9,102 allocations,
+# sixteen times as often; checking them takes 1,348 and 9,117 allocations,
 # the small one mostly the constant cost of a package's parts.
 small_program : List(U8)
 small_program = List.join(List.repeat(program_unit, 4))
@@ -179,7 +184,7 @@ program_unit = [1, 2, 18, 3, 19, 4, 5, 6, 7, 9, 8, 10, 0]
 
 fixtures : List({ name : Str, bytes : List(U8), allocations : U64 })
 fixtures = [
-	{ name: "gdocs-resume", bytes: gdocs_resume, allocations: 8_384 },
+	{ name: "gdocs-resume", bytes: gdocs_resume, allocations: 8_378 },
 	{ name: "libreoffice-basics", bytes: libreoffice_basics, allocations: 5_397 },
 	{ name: "libreoffice-comments", bytes: libreoffice_comments, allocations: 5_322 },
 	{ name: "libreoffice-lists", bytes: libreoffice_lists, allocations: 8_106 },
@@ -188,13 +193,13 @@ fixtures = [
 	{ name: "libreoffice-revisions", bytes: libreoffice_revisions, allocations: 5_114 },
 	{ name: "libreoffice-tables", bytes: libreoffice_tables, allocations: 7_848 },
 	{ name: "pandoc-basics", bytes: pandoc_basics, allocations: 6_274 },
-	{ name: "pandoc-comments", bytes: pandoc_comments, allocations: 6_083 },
+	{ name: "pandoc-comments", bytes: pandoc_comments, allocations: 6_101 },
 	{ name: "pandoc-lists", bytes: pandoc_lists, allocations: 7_034 },
 	{ name: "pandoc-notes", bytes: pandoc_notes, allocations: 5_962 },
-	{ name: "pandoc-review", bytes: pandoc_review, allocations: 6_749 },
+	{ name: "pandoc-review", bytes: pandoc_review, allocations: 6_764 },
 	{ name: "pandoc-revisions", bytes: pandoc_revisions, allocations: 5_954 },
 	{ name: "pandoc-tables", bytes: pandoc_tables, allocations: 6_425 },
-	{ name: "word-comments", bytes: word_comments, allocations: 6_575 },
+	{ name: "word-comments", bytes: word_comments, allocations: 6_556 },
 	{ name: "word-report", bytes: word_report, allocations: 7_432 },
 	{ name: "word-revisions", bytes: word_revisions, allocations: 6_814 },
 	{ name: "word-tables", bytes: word_tables, allocations: 6_057 },
