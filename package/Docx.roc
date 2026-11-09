@@ -4,10 +4,11 @@
 ## `Docx.parse` opens the package within the default `Limits` and reads it as
 ## a [Document]; `Docx.body` and `Docx.text` read what its body says,
 ## `Docx.footnotes` and `Docx.endnotes` its notes, `Docx.comments` its
-## comments and `Docx.fields` its fields; `Docx.to_bytes` writes a document as
-## a package, its body written from the model, and `Docx.equivalent` says
-## whether two documents write the same. What reading drops comes back as
-## diagnostics beside the document, never printed.
+## comments, `Docx.people` their authors and `Docx.fields` its fields;
+## `Docx.to_bytes` writes a document as a package, its body written from the
+## model, and `Docx.equivalent` says whether two documents write the same.
+## What reading drops comes back as diagnostics beside the document, never
+## printed.
 import Comments
 import Document
 import Mce
@@ -116,18 +117,32 @@ Docx :: [].{
 
 	## A document's comments joined with its body by [Comments.anchored]:
 	## each comment, read by [WmlRead.comments] from the part the main
-	## document's comments relationship targets, with its place in that part
-	## and the text it is anchored to, those the body anchors in the order
-	## their anchors begin. What reading the comments noticed comes beside
-	## them. A document without a comments part has none.
+	## document's comments relationship targets and threaded by
+	## [Comments.threads] from the parts its extended comments, comment
+	## identifiers and extensible comments relationships target, with its
+	## place in that part and the text it is anchored to, those the body
+	## anchors in the order their anchors begin. What reading the comments
+	## noticed comes beside them. A document without a comments part has
+	## none.
 	comments : Document -> { comments : List(Comments.Anchored), diagnostics : List(WmlRead.Diagnostic) }
 	comments = |document| {
 		read = match comments_part(document) {
-			Ok(part) => WmlRead.comments(part.tree, { relationships: part.relationships, footnotes: [], endnotes: [], comments: [] })
+			Ok(part) => {
+				found = WmlRead.comments(part.tree, { relationships: part.relationships, footnotes: [], endnotes: [], comments: [] })
+				parts = { comments: part.tree, extended: main_related_tree(document, comments_extended_relationship), ids: main_related_tree(document, comments_ids_relationship), extensible: main_related_tree(document, comments_extensible_relationship) }
+				{ comments: Comments.threads(found.comments, parts), diagnostics: found.diagnostics }
+			}
+
 			Err(NotFound) => { comments: [], diagnostics: [] }
 		}
 		{ comments: Comments.anchored(Docx.body(document), read.comments), diagnostics: read.diagnostics }
 	}
+
+	## The people who wrote a document's comments and tracked changes, as
+	## [Comments.people] reads them from the part the main document's people
+	## relationship targets. A document without the part has none.
+	people : Document -> List(Document.Person)
+	people = |document| Comments.people(main_related_tree(document, people_relationship))
 
 	## The fields of a document's body, as [Document.fields] gathers them:
 	## each field's code and its result as last calculated. The fields of a
@@ -291,6 +306,32 @@ comments_part : Document -> Try(Document.XmlPart, [NotFound])
 comments_part = |document| {
 	main = Document.related(document, "/", Opc.officedocument_relationship)?
 	Document.related(document, main.name, comments_relationship)
+}
+
+comments_extended_relationship : Str
+comments_extended_relationship = "http://schemas.microsoft.com/office/2011/relationships/commentsExtended"
+
+comments_ids_relationship : Str
+comments_ids_relationship = "http://schemas.microsoft.com/office/2016/09/relationships/commentsIds"
+
+comments_extensible_relationship : Str
+comments_extensible_relationship = "http://schemas.microsoft.com/office/2018/08/relationships/commentsExtensible"
+
+people_relationship : Str
+people_relationship = "http://schemas.microsoft.com/office/2011/relationships/people"
+
+# The tree of the part the main document's relationship of `kind` targets,
+# or an empty one.
+main_related_tree : Document, Str -> XmlTree.Node
+main_related_tree = |document, kind| {
+	found = match Document.related(document, "/", Opc.officedocument_relationship) {
+		Ok(main) => Document.related(document, main.name, kind)
+		Err(NotFound) => Err(NotFound)
+	}
+	match found {
+		Ok(part) => part.tree
+		Err(NotFound) => Text("")
+	}
 }
 
 # The identifiers of the comments that ranges and references name, in the

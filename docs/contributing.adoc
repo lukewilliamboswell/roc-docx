@@ -287,7 +287,8 @@ everywhere.
 The package is compared with the oracles the same way. `Snapshot.json`
 writes its reading of a document as a snapshot that declares only the keys
 it is authoritative for so far: every block, run, note, section and property
-key, and the comments' `author`, `date`, `text` and `anchor`; the `snapshots` cases
+key, and the comments' `author`, `date`, `text`, `anchor`, `thread` and
+`resolved`; the `snapshots` cases
 of `tests/main.roc` write one for every fixture under `.roc-docx/snapshots/`
 and check it against `tests/snapshots/`; and `oracle/snapshot_package.py`, the
 `package` adapter, only copies those files, so a lane compares exactly what
@@ -299,9 +300,10 @@ pandoc's JSON reading of a document; it is not authoritative for note kinds,
 comment threads or resolution, sections or properties. It restores the title,
 subtitle, author, date and abstract paragraphs that pandoc moves into
 metadata. `oracle/snapshot_libreoffice.py` reduces LibreOffice's Flat ODT
-conversion; it is authoritative for every key except comment threads and the
-properties other than title, creator, created and modified, whose mapping
-is not yet verified. Each adapter's docstring lists the
+conversion, following the parent each reply names to the comment that
+starts its thread; it is authoritative for every key except the properties
+other than title, creator, created and modified, whose mapping is not yet
+verified. Each adapter's docstring lists the
 rules it applies and why.
 
 Run one adapter on a document, or compare two snapshots, directly:

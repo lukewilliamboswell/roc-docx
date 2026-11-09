@@ -1,7 +1,8 @@
 = Read a document's comments
 
 This chapter reads the comments reviewers leave on a document: who wrote
-each one and when, what it says, and the text it is about. It continues from
+each one and when, what it says, the text it is about, and the thread it
+belongs to. It continues from
 <<read-a-documents-text>>, whose blocks and current text it builds on.
 
 == The comments
@@ -90,6 +91,55 @@ Neither the boundaries nor the references contribute text. A boundary or
 reference that names a comment the comments part does not have, or that
 another construct has displaced, is kept as `Preserved`.
 
-Replies, resolution and the identifiers Word keeps for comments in further
-parts are not read yet. Those parts are kept, and a document is written back
-with them unchanged.
+== Threads
+
+A comment is a node of a thread. Besides what it says, a
+`Document.Comment` has:
+
+* `parent`, `Parent(id)` when the comment is a reply, naming the comment it
+  replies to by its place among the comments, or `Unset`;
+* `resolved`, whether the comment is marked done;
+* `durable_id`, `DurableId(number)`, the identifier that stays with the
+  comment across editing sessions, or `Unset`;
+* `utc_date`, `Date(timestamp)`, when the comment was written as Word
+  records it in UTC, or `Unset`.
+
+A thread starts at a comment without a parent, and a reply's replies follow
+their parents up to it. `resolved` is each comment's own mark, as the
+document gives it:
+
+[source,roc]
+----
+entries = Docx.comments(document).comments
+open_threads = entries.keep_if(
+    |entry| entry.comment.parent == Unset and !entry.comment.resolved,
+)
+replies_to = |id| entries.keep_if(|entry| entry.comment.parent == Parent(id))
+----
+
+The comments part does not say any of this. Word keeps it in four parts
+beside it, which the reader joins with the comments: the extended comments
+part gives each comment's parent and whether it is done, the comment
+identifiers part its durable identifier, and the extensible comments part
+the UTC date for a durable identifier. Each knows a comment by the
+identifier Word gives the last paragraph of its content, which is not part
+of the model. An entry that names no comment, a parent that is not another
+comment, and a durable identifier or date that is not one are not applied;
+the parts are kept as they were read, and a document is written back with
+them unchanged.
+
+A document without these parts, as LibreOffice, Google Docs and pandoc
+write one, has the same comments with every `parent` and `durable_id` and
+`utc_date` `Unset` and none resolved.
+
+== People
+
+`Docx.people` gives the people part of a document: the authors of its
+comments and tracked changes as Word records them, each a `Document.Person`
+with:
+
+* `author`, the name the comments and changes give as their author;
+* `presence`, `Presence({ provider, user })`, the identity provider that
+  knows the author and their identifier there, or `Unset`.
+
+A document without a people part has no people.

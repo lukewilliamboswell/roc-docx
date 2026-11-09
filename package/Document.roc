@@ -428,13 +428,29 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 	## is how the document's ranges and references name it, which the model
 	## replaces by the comment's place; every other attribute, and a date
 	## that is not a date and time, is kept in `preserved` as it was read.
+	##
+	## A comment is a node of a thread: `parent` is the comment it replies
+	## to, by its place among the comments, and `resolved` whether the
+	## comment is marked done. `durable_id` is the identifier that stays with
+	## the comment across editing sessions, and `utc_date` when it was
+	## written in UTC, where the document records them.
 	Comment : {
 		author : Str,
 		initials : [Unset, Initials(Str)],
 		date : [Unset, Date(Timestamp)],
 		content : List(Block),
 		preserved : List(XmlTree.Attribute),
+		parent : [Unset, Parent(U64)],
+		resolved : Bool,
+		durable_id : [Unset, DurableId(U32)],
+		utc_date : [Unset, Date(Timestamp)],
 	}
+
+	## Someone who wrote comments or tracked changes, as the people part
+	## records them: the name the document's comments and changes give as
+	## their author, and, where the document says, the identity provider
+	## that knows them and their identifier there.
+	Person : { author : Str, presence : [Unset, Presence({ provider : Str, user : Str })] }
 
 	## A date and time as the document writes it, in the XML Schema
 	## `dateTime` form such as `2026-05-04T09:15:00Z`, and the instant it

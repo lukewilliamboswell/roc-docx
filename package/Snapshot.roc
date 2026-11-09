@@ -6,7 +6,8 @@
 ## declares in `keys` only what the package is authoritative for: the
 ## body's blocks with their kind, level, list kind and text, their runs'
 ## direct formatting and hyperlinks, the notes' kinds and text, the comments'
-## authors, dates, text and anchored text, the sections' page geometry and
+## authors, dates, text, anchored text, threads and resolution, the
+## sections' page geometry and
 ## header and footer text, and the core properties. Every other field holds
 ## its empty value.
 import Docx
@@ -54,8 +55,9 @@ Snapshot :: [].{
 	## begin, as [Docx.comments] gives them: each with its author, its date
 	## as the instant in UTC, `2026-05-04T09:15:00Z`, or empty when it has
 	## none, its blocks' text joined by line feeds, and the text its range
-	## covers, empty for a comment at a point. Every comment is its own
-	## thread and none is resolved.
+	## covers, empty for a comment at a point; the index of the comment its
+	## thread starts at, reached by following parents up, its own index when
+	## that comment is not among them; and whether it is resolved.
 	##
 	## The sections are those [Document.sections] finds in the body, with
 	## their page geometry in twips and the text of their default header
@@ -123,6 +125,8 @@ keys = [
 	"comments.date",
 	"comments.text",
 	"comments.anchor",
+	"comments.thread",
+	"comments.resolved",
 	"sections.page_width",
 	"sections.page_height",
 	"sections.orientation",
@@ -146,7 +150,16 @@ keys = [
 # begin.
 comments_json : Document, Tables -> List(Str)
 comments_json = |document, tables| {
-	anchored = Docx.comments(document).comments.drop_if(|entry| entry.anchor == Unanchored)
+	all = Docx.comments(document).comments
+	var $parents = Dict.with_capacity(all.len())
+	for entry in all {
+		$parents = $parents.insert(entry.id, entry.comment.parent)
+	}
+	anchored = all.drop_if(|entry| entry.anchor == Unanchored)
+	var $indices = Dict.with_capacity(anchored.len())
+	for entry in anchored {
+		$indices = $indices.insert(entry.id, $indices.len())
+	}
 	var $out = List.with_capacity(anchored.len())
 	for entry in anchored {
 		comment = entry.comment
@@ -159,10 +172,20 @@ comments_json = |document, tables| {
 			_ => ""
 		}
 		text = Str.join_with(snapshot_of_blocks(comment.content, tables).map(|block| block.text), "\n")
-		$out = List.append($out, "{\"author\": ${quoted(comment.author)}, \"date\": ${quoted(date)}, \"text\": ${quoted(text)}, \"anchor\": ${quoted(anchor)}, \"thread\": ${$out.len().to_str()}, \"resolved\": false}")
+		thread = $indices.get(thread_start($parents, entry.id, all.len())) ?? $out.len()
+		$out = List.append($out, "{\"author\": ${quoted(comment.author)}, \"date\": ${quoted(date)}, \"text\": ${quoted(text)}, \"anchor\": ${quoted(anchor)}, \"thread\": ${thread.to_str()}, \"resolved\": ${if (comment.resolved) "true" else "false"}}")
 	}
 	$out
 }
+
+# The comment a comment's thread starts at: the one reached by following
+# parents up, at most `steps` of them, so that parents that form a cycle end.
+thread_start : Dict(U64, [Unset, Parent(U64)]), U64, U64 -> U64
+thread_start = |parents, id, steps|
+	match parents.get(id) {
+		Ok(Parent(parent)) if steps > 0 => thread_start(parents, parent, steps - 1)
+		_ => id
+	}
 
 # An instant in seconds since 1970-01-01T00:00:00Z as an ISO 8601 date and
 # time in UTC, to the second, counting each year from March so that a leap

@@ -33,9 +33,10 @@ Rules this adapter applies, each because of how LibreOffice represents a documen
   height, its spacing included, reaches down to the body. The snapshot's top
   and bottom margins are the distance to the body, so the shown header's and
   footer's heights are added to them.
-- Comment threads and the properties other than title, creator, created and
-  modified are written but not declared: their mapping is not yet verified
-  against a second reader.
+- A reply names the comment it answers in `loext:parent-name`; a comment's
+  thread starts at the comment reached by following those names up.
+- The properties other than title, creator, created and modified are written
+  but not declared: their mapping is not yet verified against a second reader.
 - Shapes and images contribute no text; one that holds text, like a table
   inside a note or comment, is not modelled and fails the run.
 - An element this adapter does not know fails the run instead of being
@@ -62,7 +63,7 @@ KEYS = [
     "blocks.runs.bold", "blocks.runs.italic", "blocks.runs.underline", "blocks.runs.strike",
     "blocks.runs.superscript", "blocks.runs.subscript", "blocks.runs.link",
     "notes.kind", "notes.text",
-    "comments.author", "comments.date", "comments.text", "comments.anchor", "comments.resolved",
+    "comments.author", "comments.date", "comments.text", "comments.anchor", "comments.thread", "comments.resolved",
     "revisions.kind", "revisions.author", "revisions.date", "revisions.text",
     "sections.page_width", "sections.page_height", "sections.orientation",
     "sections.margin_top", "sections.margin_bottom", "sections.margin_left", "sections.margin_right",
@@ -218,6 +219,8 @@ class Document:
         self.sections = []
         self.position = 0
         self.comment_positions = []
+        self.comment_names = {}
+        self.comment_parents = []
 
     # Text reaches the current paragraph, every open comment anchor and every open revision.
     def emit(self, text, formatting):
@@ -299,8 +302,10 @@ class Document:
                 "text": "", "anchor": "", "thread": index,
                 "resolved": child.get(q("loext:resolved")) == "true",
             })
+            self.comment_parents.append(child.get(q("loext:parent-name")))
             self.comments[index]["text"] = "\n".join(self.detached_paragraphs(child))
             if child.get(q("office:name")):
+                self.comment_names[child.get(q("office:name"))] = index
                 self.open_comments[child.get(q("office:name"))] = index
         elif ns == NS["office"] and name == "annotation-end":
             self.anchored = True
@@ -465,8 +470,18 @@ class Document:
         self.body(text, "", 0, None)
         if not self.sections:
             self.sections.append(self.section("Standard"))
+        self.join_threads()
         self.restore_comment_order()
         return self
+
+    def join_threads(self):
+        """A comment's thread starts where following its parents' names up ends; a name no comment has ends it."""
+        for index, comment in enumerate(self.comments):
+            start, seen = index, {index}
+            while self.comment_names.get(self.comment_parents[start]) not in (None, *seen):
+                start = self.comment_names[self.comment_parents[start]]
+                seen.add(start)
+            comment["thread"] = start
 
     def restore_comment_order(self):
         """LibreOffice writes comments that start at one position in reverse document order; reverse each such run."""

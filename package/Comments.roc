@@ -59,6 +59,126 @@ Comments :: [].{
 			.sort_with(|a, b| if (a.order < b.order) Before else if (a.order > b.order) After else Same)
 			.map(|entry| entry.anchored)
 	}
+
+	## The parts that make a document's comments threads, each the tree
+	## [Docx.parse] read, or the empty text where the document does not have
+	## the part: the comments part, whose paragraphs carry the identifiers
+	## the others are joined by; the extended comments part, which says what
+	## each comment replies to and whether it is done; the comment
+	## identifiers part, which gives each its durable identifier; and the
+	## extensible comments part, which gives a durable identifier its UTC
+	## date.
+	Parts : { comments : XmlTree.Node, extended : XmlTree.Node, ids : XmlTree.Node, extensible : XmlTree.Node }
+
+	## The comments of a comments part, as [WmlRead.comments] reads them,
+	## completed from the parts beside it. A comment is known to those parts
+	## by the paragraph identifier of the last paragraph of its content, its
+	## `w14:paraId`: the extended comments entry with that identifier gives
+	## its parent, by the identifier of the parent's last paragraph, and
+	## whether it is done; the comment identifiers entry gives its durable
+	## identifier, eight hexadecimal digits; and the extensible comments
+	## entry with that durable identifier its UTC date.
+	##
+	## The parts are read as written, without [Mce.process], since their
+	## namespaces are extensions to ECMA-376. An entry that names no comment,
+	## a parent that is no other comment, and a durable identifier or date
+	## that is not one are not applied. Where an identifier repeats, the last
+	## entry with it counts. A document without the parts, as older
+	## producers write it, has comments without parents, unresolved and
+	## without durable identifiers or UTC dates.
+	threads : List(Document.Comment), Parts -> List(Document.Comment)
+	threads = |comments, parts| {
+		var $last = Dict.with_capacity(comments.len())
+		for element in entries(parts.comments, wordprocessingml, "comments", "comment") {
+			$last = $last.insert(attribute(element, wordprocessingml, "id") ?? "", last_paragraph(element.children))
+		}
+		paragraphs = WmlRead.comment_ids(parts.comments).map(|id| $last.get(id) ?? "")
+		var $places = Dict.with_capacity(paragraphs.len())
+		var $place = 0.U64
+		for paragraph in paragraphs {
+			$places = $places.insert(paragraph, $place)
+			$place = $place + 1
+		}
+		var $extended = Dict.with_capacity(paragraphs.len())
+		for element in entries(parts.extended, w15, "commentsEx", "commentEx") {
+			entry = { parent: attribute(element, w15, "paraIdParent") ?? "", done: is_on(attribute(element, w15, "done") ?? "") }
+			$extended = $extended.insert(attribute(element, w15, "paraId") ?? "", entry)
+		}
+		var $durable = Dict.with_capacity(paragraphs.len())
+		for element in entries(parts.ids, w16cid, "commentsIds", "commentId") {
+			match hexadecimal(attribute(element, w16cid, "durableId") ?? "") {
+				Ok(id) => {
+					$durable = $durable.insert(attribute(element, w16cid, "paraId") ?? "", id)
+				}
+
+				Err(NotHex) => {}
+			}
+		}
+		var $dates = Dict.with_capacity(paragraphs.len())
+		for element in entries(parts.extensible, w16cex, "commentsExtensible", "commentExtensible") {
+			match (hexadecimal(attribute(element, w16cex, "durableId") ?? ""), WmlRead.date_time(attribute(element, w16cex, "dateUtc") ?? "")) {
+				(Ok(id), Ok(stamp)) => {
+					$dates = $dates.insert(id, stamp)
+				}
+
+				_ => {}
+			}
+		}
+		var $out = List.with_capacity(comments.len())
+		var $index = 0.U64
+		for comment in comments {
+			paragraph = paragraphs.get($index) ?? ""
+			threaded = if paragraph == "" {
+				comment
+			} else {
+				extended = $extended.get(paragraph) ?? { parent: "", done: Bool.False }
+				durable = $durable.get(paragraph)
+				durable_id = match durable {
+					Ok(id) => DurableId(id)
+					Err(_) => Unset
+				}
+				utc_date = match durable {
+					Ok(id) =>
+						match $dates.get(id) {
+							Ok(stamp) => Date(stamp)
+							Err(_) => Unset
+						}
+
+					Err(_) => Unset
+				}
+				parent = match $places.get(extended.parent) {
+					Ok(place) if extended.parent != "" and place != $index => Parent(place)
+					_ => Unset
+				}
+				{ ..comment, parent, resolved: extended.done, durable_id, utc_date }
+			}
+			$out = List.append($out, threaded)
+			$index = $index + 1
+		}
+		$out
+	}
+
+	## The people of a people part, in its order: each `w15:person`'s
+	## author, with its presence where its `w15:presenceInfo` names both a
+	## provider and an identifier there. The part is read as written, as
+	## [Comments.threads] reads the comments' parts. A tree that is not a
+	## people part has no people.
+	people : XmlTree.Node -> List(Document.Person)
+	people = |tree|
+		entries(tree, w15, "people", "person").map(
+			|element| {
+				presence = match element.children.find_first(|child| is_named(child, w15, "presenceInfo")) {
+					Ok(Element(info)) =>
+						match (attribute(info, w15, "providerId"), attribute(info, w15, "userId")) {
+							(Ok(provider), Ok(user)) => Presence({ provider, user })
+							_ => Unset
+						}
+
+					_ => Unset
+				}
+				{ author: attribute(element, w15, "author") ?? "", presence }
+			},
+		)
 }
 
 # The body's current text so far, with every comment's range as offsets in
@@ -199,6 +319,99 @@ is_removal = |node|
 wordprocessingml : Str
 wordprocessingml = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 
+# The namespaces of the paragraph identifiers, the extended comments and
+# people parts, the comment identifiers part and the extensible comments
+# part, from MS-DOCX.
+w14 : Str
+w14 = "http://schemas.microsoft.com/office/word/2010/wordml"
+
+w15 : Str
+w15 = "http://schemas.microsoft.com/office/word/2012/wordml"
+
+w16cid : Str
+w16cid = "http://schemas.microsoft.com/office/word/2016/wordml/cid"
+
+w16cex : Str
+w16cex = "http://schemas.microsoft.com/office/word/2018/wordml/cex"
+
+Element : { name : XmlTree.Name, bindings : List(XmlTree.Binding), attributes : List(XmlTree.Attribute), children : List(XmlTree.Node) }
+
+is_named : XmlTree.Node, Str, Str -> Bool
+is_named = |node, namespace, local|
+	match node {
+		Element(element) => element.name.namespace == Uri(namespace) and element.name.local == local
+		Text(_) => Bool.False
+	}
+
+# The children named `entry` of a root named `root`, both in `namespace`.
+entries : XmlTree.Node, Str, Str, Str -> List(Element)
+entries = |tree, namespace, root, entry|
+	match tree {
+		Element(element) if is_named(tree, namespace, root) =>
+			element.children.keep_oks(
+				|child|
+					match child {
+						Element(found) if is_named(child, namespace, entry) => Ok(found)
+						_ => Err(NotAnEntry)
+					},
+			)
+
+		_ => []
+	}
+
+attribute : Element, Str, Str -> Try(Str, [NotFound])
+attribute = |element, namespace, local|
+	match element.attributes.find_first(|candidate| candidate.name.namespace == Uri(namespace) and candidate.name.local == local) {
+		Ok(found) => Ok(found.value)
+		Err(_) => Err(NotFound)
+	}
+
+# The paragraph identifier of the last paragraph among these nodes, looking
+# into tables and other containers but not into a paragraph; the empty
+# string when there is none or that paragraph has no identifier.
+last_paragraph : List(XmlTree.Node) -> Str
+last_paragraph = |nodes|
+	nodes.fold(
+		"",
+		|found, node|
+			match node {
+				Element(element) if is_named(node, wordprocessingml, "p") => attribute(element, w14, "paraId") ?? ""
+				Element(element) =>
+					match last_paragraph(element.children) {
+						"" => found
+						inner => inner
+					}
+
+				Text(_) => found
+			},
+	)
+
+# An on or off value as the extended comments part writes `done`.
+is_on : Str -> Bool
+is_on = |value| ["1", "true", "on"].contains(value)
+
+# A durable identifier: one to eight hexadecimal digits.
+hexadecimal : Str -> Try(U32, [NotHex])
+hexadecimal = |text| {
+	digits = text.to_utf8()
+	if digits.is_empty() or digits.len() > 8 {
+		return Err(NotHex)
+	}
+	digits.fold(Ok(0.U32), |sum, digit| Ok((sum?) * 16 + (hex_value(digit)?)))
+}
+
+hex_value : U8 -> Try(U32, [NotHex])
+hex_value = |digit|
+	if digit >= '0' and digit <= '9' {
+		Ok((digit - '0').to_u32())
+	} else if digit >= 'a' and digit <= 'f' {
+		Ok((digit - 'a' + 10).to_u32())
+	} else if digit >= 'A' and digit <= 'F' {
+		Ok((digit - 'A' + 10).to_u32())
+	} else {
+		Err(NotHex)
+	}
+
 # The comments of a body with this content, whose comments part has
 # comments with these identifiers, each anchored or not.
 anchors_of : Str, List(Str) -> List({ id : U64, anchor : Comments.Anchor })
@@ -207,7 +420,7 @@ anchors_of = |content, ids| {
 	tree = XmlTree.parse("<w:document ${namespaces}><w:body>${content}</w:body></w:document>".to_utf8(), {}) ?? Text("")
 	body = WmlRead.body(tree, { relationships: [], footnotes: [], endnotes: [], comments: ids })
 	comment : Document.Comment
-	comment = { author: "Ada Reviewer", initials: Unset, date: Unset, content: [], preserved: [] }
+	comment = { author: "Ada Reviewer", initials: Unset, date: Unset, content: [], preserved: [], parent: Unset, resolved: Bool.False, durable_id: Unset, utc_date: Unset }
 	Comments.anchored(body, List.repeat(comment, ids.len())).map(|entry| { id: entry.id, anchor: entry.anchor })
 }
 
@@ -243,4 +456,78 @@ expect {
 			{ id: 1, anchor: Range("a\nb\n") },
 			{ id: 2, anchor: Range("cd\n") },
 		]
+}
+
+# The comments of a comments part with this content, threaded by extended
+# comments, comment identifiers and extensible comments parts with this
+# content each, the empty content for a part the document does not have.
+threads_of : Str, { extended : Str, ids : Str, extensible : Str } -> List({ parent : [Unset, Parent(U64)], resolved : Bool, durable_id : [Unset, DurableId(U32)], utc_date : Str })
+threads_of = |comments, parts| {
+	namespaces = "xmlns:w='${wordprocessingml}' xmlns:w14='${w14}' xmlns:w15='${w15}' xmlns:w16cid='${w16cid}' xmlns:w16cex='${w16cex}'"
+	tree = |root, content| if (content == "") Text("") else XmlTree.parse("<${root} ${namespaces}>${content}</${root}>".to_utf8(), {}) ?? Text("")
+	part = tree("w:comments", comments)
+	read = WmlRead.comments(part, { relationships: [], footnotes: [], endnotes: [], comments: [] }).comments
+	threaded = Comments.threads(read, { comments: part, extended: tree("w15:commentsEx", parts.extended), ids: tree("w16cid:commentsIds", parts.ids), extensible: tree("w16cex:commentsExtensible", parts.extensible) })
+	threaded.map(
+		|comment| {
+			utc_date = match comment.utc_date {
+				Date(stamp) => stamp.written
+				Unset => ""
+			}
+			{ parent: comment.parent, resolved: comment.resolved, durable_id: comment.durable_id, utc_date }
+		},
+	)
+}
+
+## A comment is joined with the extension parts by the identifier of its
+## last paragraph, inside a table too: a reply names its parent by the
+## parent's, and the durable identifier leads to the UTC date. A parent that
+## is the comment itself, a durable identifier or date that is not one, and
+## a comment whose last paragraph has no identifier take nothing.
+expect {
+	paragraph = |id| if (id == "") "<w:p/>" else "<w:p w14:paraId='${id}'/>"
+	comment = |id, content| "<w:comment w:id='${id}' w:author='Ada Reviewer'>${content}</w:comment>"
+	comments = Str.join_with(
+		[
+			comment("7", "${paragraph("0A")}${paragraph("1B")}"),
+			comment("3", paragraph("2C")),
+			comment("5", "<w:tbl><w:tr><w:tc>${paragraph("3D")}</w:tc></w:tr></w:tbl>"),
+			comment("9", paragraph("")),
+		],
+		"",
+	)
+	extended = "<w15:commentEx w15:paraId='1B' w15:done='0'/><w15:commentEx w15:paraId='2C' w15:paraIdParent='1B' w15:done='1'/><w15:commentEx w15:paraId='3D' w15:paraIdParent='3D'/><w15:commentEx w15:paraId='4E' w15:paraIdParent='1B'/>"
+	ids = "<w16cid:commentId w16cid:paraId='1B' w16cid:durableId='0000ABCD'/><w16cid:commentId w16cid:paraId='2C' w16cid:durableId='zz'/><w16cid:commentId w16cid:paraId='3D' w16cid:durableId='7F'/>"
+	extensible = "<w16cex:commentExtensible w16cex:durableId='0000abcd' w16cex:dateUtc='2026-05-04T09:15:00Z'/><w16cex:commentExtensible w16cex:durableId='7F' w16cex:dateUtc='later'/>"
+	threads_of(comments, { extended, ids, extensible })
+		== [
+			{ parent: Unset, resolved: Bool.False, durable_id: DurableId(0xABCD), utc_date: "2026-05-04T09:15:00Z" },
+			{ parent: Parent(0), resolved: Bool.True, durable_id: Unset, utc_date: "" },
+			{ parent: Unset, resolved: Bool.False, durable_id: DurableId(0x7F), utc_date: "" },
+			{ parent: Unset, resolved: Bool.False, durable_id: Unset, utc_date: "" },
+		]
+}
+
+## Without the extension parts, as older producers write a document, every
+## comment is unthreaded, unresolved and without a durable identifier or UTC
+## date.
+expect {
+	comments = "<w:comment w:id='0' w:author='Ada Reviewer'><w:p w14:paraId='1A'/></w:comment>"
+	threads_of(comments, { extended: "", ids: "", extensible: "" }) == [{ parent: Unset, resolved: Bool.False, durable_id: Unset, utc_date: "" }]
+}
+
+## A person has the author and, where both are given, the presence the
+## people part records; a tree that is not a people part has no people.
+expect {
+	part = "<w15:people xmlns:w15='${w15}'><w15:person w15:author='Ada Reviewer'><w15:presenceInfo w15:providerId='None' w15:userId='Ada Reviewer'/></w15:person><w15:person w15:author='Lin Editor'><w15:presenceInfo w15:providerId='None'/></w15:person></w15:people>"
+	people = match XmlTree.parse(part.to_utf8(), {}) {
+		Ok(tree) => Comments.people(tree)
+		Err(_) => []
+	}
+	people
+		== [
+			{ author: "Ada Reviewer", presence: Presence({ provider: "None", user: "Ada Reviewer" }) },
+			{ author: "Lin Editor", presence: Unset },
+		]
+		and Comments.people(Text("")) == []
 }

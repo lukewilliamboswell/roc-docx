@@ -120,7 +120,10 @@ WmlRead :: [].{
 	## blocks are; `w:author`, `w:initials` and `w:date` say who wrote it and
 	## when. A comment without an author, which the schema requires, has the
 	## empty author and a `Defaulted` diagnostic. A tree whose root is not a
-	## WordprocessingML comments part has no comments.
+	## WordprocessingML comments part has no comments. The comments part does
+	## not say how comments thread, so every comment is read without a
+	## parent, unresolved and without a durable identifier or UTC date, as
+	## [Comments.threads] completes them from the parts beside it.
 	comments : XmlTree.Node, Context -> { comments : List(Document.Comment), diagnostics : List(WmlRead.Diagnostic) }
 	comments = |tree, context| {
 		interpreted = Mce.process(tree).interpreted
@@ -158,11 +161,21 @@ WmlRead :: [].{
 				date,
 				content: read.blocks,
 				preserved: element.attributes.drop_if(kept),
+				parent: Unset,
+				resolved: Bool.False,
+				durable_id: Unset,
+				utc_date: Unset,
 			}
 			$comments = List.append($comments, comment)
 		}
 		{ comments: $comments, diagnostics: $diagnostics }
 	}
+
+	## A date and time in the XML Schema `dateTime` form, such as
+	## `2026-05-04T09:15:00Z`, with the instant it names, read as a
+	## comment's `w:date` is read.
+	date_time : Str -> Try(Document.Timestamp, [NotDate])
+	date_time = |written| timestamp(written)
 
 	## The identifiers of a comments part's comments, in the order
 	## [WmlRead.comments] reads them; a comment without one has the empty
