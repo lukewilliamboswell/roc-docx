@@ -23,18 +23,37 @@ import cli.Stdout
 ## under `.roc-docx/fuzz/`. A build failure, failed example, exceeded ceiling,
 ## finding or inconclusive exploration fails the run. Targets keep no baseline
 ## files; roc-fuzz reports them as unbaselined, which is expected.
+##
+## A build is single-threaded code generation and dominates the run, so up to
+## `concurrent_builds` builds run at once with their output captured. Targets
+## are still reported in order: a target's build output is printed when its
+## build ends, then its examples and exploration run.
 main! = |_args| {
 	names = target_names!()?
 	if names.is_empty() {
 		return fail!("no fuzz targets under fuzz/")
 	}
-	Stdout.line!("Running ${names.len().to_str()} fuzz targets")?
+	Stdout.line!("Running ${names.len().to_str()} fuzz targets, building up to ${concurrent_builds.to_str()} at once")?
 	Path.create_all!(Path.utf8(".roc-docx/fuzz/reports"))?
+	var $builds = List.with_capacity(names.len())
+	for name in names.take_first(concurrent_builds) {
+		$builds = List.append($builds, start_build!(name))
+	}
 	var $failed = 0.U64
 	var $position = 0.U64
 	for name in names {
-		$position = $position + 1
 		started = Monotonic.now!()
+		built = match $builds.get($position) {
+			Ok(build) => finish_build!(name, build)?
+			Err(_) => Bool.False
+		}
+		match names.get($position + concurrent_builds) {
+			Ok(next) => {
+				$builds = List.append($builds, start_build!(next))
+			}
+			Err(_) => {}
+		}
+		$position = $position + 1
 		executable = ".roc-docx/fuzz/${name}"
 		corpus = ".roc-docx/fuzz/corpus/${name}"
 		report = ".roc-docx/fuzz/reports/${name}"
@@ -43,11 +62,10 @@ main! = |_args| {
 			_ => {}
 		}
 		steps = [
-			["roc", "build", "--fuzz", "fuzz/${name}/main.roc", "--output=${executable}"],
 			[executable, "check"],
 			[executable, "run", corpus, "--time=1", "--runs=64", "--max-input-size=4096", "--timeout=10", "--report-dir=${report}"],
 		]
-		var $ok = Bool.True
+		var $ok = built
 		for argv in steps {
 			if $ok {
 				$ok = step!(argv)?
@@ -64,6 +82,44 @@ main! = |_args| {
 		Err(Exit(1))
 	} else {
 		Ok({})
+	}
+}
+
+# The run takes as long as its slowest builds, so the bound admits every
+# current target at once; it caps memory as targets are added (eleven builds
+# peaked at about 4.6 GB together).
+concurrent_builds : U64
+concurrent_builds = 12
+
+# The build command of a target, without the program name.
+build_args : Str -> List(Str)
+build_args = |name| ["build", "--fuzz", "fuzz/${name}/main.roc", "--output=.roc-docx/fuzz/${name}"]
+
+# Start building a target with both output streams captured together.
+start_build! = |name|
+	Cmd.new("roc").args(build_args(name).map(OsStr.from_str)).stdout(Capture).stderr(MergeWithStdout).spawn!()
+
+# Wait for a target's build, print its command and output, and report whether it succeeded.
+finish_build! = |name, build| {
+	Stdout.line!("+ roc ${Str.join_with(build_args(name), " ")}")?
+	match build {
+		Ok(child) =>
+			match child.wait!() {
+				Ok(output) => {
+					Stdout.write_bytes!(output.stdout_bytes)?
+					Ok(output.status == Exited(0))
+				}
+				Err(Interrupted) => Err(Interrupted)
+				Err(err) => {
+					Stderr.line!("error: cannot build ${name}: ${Str.inspect(err)}")?
+					Ok(Bool.False)
+				}
+			}
+		Err(Interrupted) => Err(Interrupted)
+		Err(err) => {
+			Stderr.line!("error: cannot run roc: ${Str.inspect(err)}")?
+			Ok(Bool.False)
+		}
 	}
 }
 

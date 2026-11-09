@@ -52,7 +52,7 @@ blueprint tasks          # each check on its own, and the fixture and release ta
 | Every example prints what `tests/spec.json` records
 
 | fuzz-smoke
-| Every fuzz target builds, its declared examples and ceilings pass, and a one-second exploration finds nothing
+| Every fuzz target builds, its declared examples and ceilings pass, and a one-second exploration finds nothing; targets build concurrently and report in order
 
 | fixtures-check
 | Committed pandoc fixtures match regeneration and every fixture has provenance
