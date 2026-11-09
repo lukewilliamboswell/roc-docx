@@ -1,0 +1,161 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "roc-docx-snapshot/1",
+  "title": "roc-docx semantic snapshot",
+  "description": "What a reader understood of a .docx, reduced to the facts oracles and the package can compare. Every field is always present; a reader writes the empty value (\"\", 0, false, []) for what it does not know and leaves that key out of `keys`. Comparison covers only the keys both snapshots list in `keys`. Normalization: text compares exactly after CR LF and CR become LF; dates are ISO 8601 and compare as instants, a date without a zone being UTC; lengths are whole twips (1/1440 inch); order is significant in every list.",
+  "type": "object",
+  "required": ["schema", "producer", "document", "keys", "blocks", "notes", "comments", "revisions", "sections", "properties"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": { "const": "roc-docx-snapshot/1" },
+    "producer": {
+      "description": "The reader that made the snapshot and its version.",
+      "type": "object",
+      "required": ["name", "version"],
+      "additionalProperties": false,
+      "properties": { "name": { "type": "string" }, "version": { "type": "string" } }
+    },
+    "document": { "description": "The document's path relative to the repository root.", "type": "string" },
+    "keys": {
+      "description": "The keys this reader is authoritative for. A key names a field of an element of a collection, a run field of a block, or a property.",
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "blocks.kind", "blocks.level", "blocks.list", "blocks.text", "blocks.rows",
+          "blocks.runs.bold", "blocks.runs.italic", "blocks.runs.underline", "blocks.runs.strike",
+          "blocks.runs.superscript", "blocks.runs.subscript", "blocks.runs.link",
+          "notes.kind", "notes.text",
+          "comments.author", "comments.date", "comments.text", "comments.anchor", "comments.thread", "comments.resolved",
+          "revisions.kind", "revisions.author", "revisions.date", "revisions.text",
+          "sections.page_width", "sections.page_height", "sections.orientation",
+          "sections.margin_top", "sections.margin_bottom", "sections.margin_left", "sections.margin_right",
+          "sections.header", "sections.footer",
+          "properties.title", "properties.subject", "properties.creator", "properties.keywords",
+          "properties.description", "properties.last_modified_by", "properties.created", "properties.modified"
+        ]
+      }
+    },
+    "blocks": {
+      "description": "The body in reading order, including the paragraphs inside lists and block quotes. A paragraph whose text is empty and that anchors no note, comment or revision is not a block.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/block" }
+    },
+    "notes": {
+      "description": "Footnotes and endnotes in the order of their references.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/note" }
+    },
+    "comments": {
+      "description": "Comments in the order of their anchors' starts.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/comment" }
+    },
+    "revisions": {
+      "description": "Tracked changes in the order they first occur in the body.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/revision" }
+    },
+    "sections": {
+      "description": "The body's sections in order.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/section" }
+    },
+    "properties": { "$ref": "#/$defs/properties" }
+  },
+  "$defs": {
+    "block": {
+      "type": "object",
+      "required": ["kind", "level", "list", "text", "runs", "rows"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "enum": ["paragraph", "heading", "list_item", "table"] },
+        "level": { "description": "A heading's outline level from 1, a list item's nesting depth from 1, otherwise 0.", "type": "integer", "minimum": 0 },
+        "list": { "description": "A list item's list kind, otherwise empty.", "enum": ["", "bullet", "number"] },
+        "text": { "description": "The paragraph's current text: inserted text is included, deleted text, note references and comment content are not. A line break is LF and a tab is TAB. Empty for a table.", "type": "string" },
+        "runs": { "description": "The text split where direct formatting changes; formatting a paragraph or character style contributes is not run formatting. Concatenated, the runs' text is the block's text. Empty for a table.", "type": "array", "items": { "$ref": "#/$defs/run" } },
+        "rows": { "description": "A table as a text grid: one list of cell texts per row, a cell's paragraphs joined by LF, a cell spanning columns followed by empty cells for the columns it covers. Empty unless the block is a table.", "type": "array", "items": { "type": "array", "items": { "type": "string" } } }
+      }
+    },
+    "run": {
+      "type": "object",
+      "required": ["text", "bold", "italic", "underline", "strike", "superscript", "subscript", "link"],
+      "additionalProperties": false,
+      "properties": {
+        "text": { "type": "string" },
+        "bold": { "type": "boolean" },
+        "italic": { "type": "boolean" },
+        "underline": { "type": "boolean" },
+        "strike": { "type": "boolean" },
+        "superscript": { "type": "boolean" },
+        "subscript": { "type": "boolean" },
+        "link": { "description": "The hyperlink target, or empty.", "type": "string" }
+      }
+    },
+    "note": {
+      "type": "object",
+      "required": ["kind", "text"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "enum": ["footnote", "endnote"] },
+        "text": { "description": "The note's paragraphs joined by LF.", "type": "string" }
+      }
+    },
+    "comment": {
+      "type": "object",
+      "required": ["author", "date", "text", "anchor", "thread", "resolved"],
+      "additionalProperties": false,
+      "properties": {
+        "author": { "type": "string" },
+        "date": { "type": "string" },
+        "text": { "description": "The comment's paragraphs joined by LF.", "type": "string" },
+        "anchor": { "description": "The current text the comment covers, paragraphs joined by LF; empty for a comment without a range.", "type": "string" },
+        "thread": { "description": "The index in `comments` of the comment that starts this one's thread; a comment that is not a reply has its own index.", "type": "integer", "minimum": 0 },
+        "resolved": { "type": "boolean" }
+      }
+    },
+    "revision": {
+      "type": "object",
+      "required": ["kind", "author", "date", "text"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "enum": ["insertion", "deletion", "format"] },
+        "author": { "type": "string" },
+        "date": { "type": "string" },
+        "text": { "description": "The inserted, deleted or reformatted text, paragraphs joined by LF.", "type": "string" }
+      }
+    },
+    "section": {
+      "type": "object",
+      "required": ["page_width", "page_height", "orientation", "margin_top", "margin_bottom", "margin_left", "margin_right", "header", "footer"],
+      "additionalProperties": false,
+      "properties": {
+        "page_width": { "type": "integer", "minimum": 0 },
+        "page_height": { "type": "integer", "minimum": 0 },
+        "orientation": { "enum": ["portrait", "landscape"] },
+        "margin_top": { "type": "integer" },
+        "margin_bottom": { "type": "integer" },
+        "margin_left": { "type": "integer" },
+        "margin_right": { "type": "integer" },
+        "header": { "description": "The default header's paragraphs joined by LF, or empty.", "type": "string" },
+        "footer": { "description": "The default footer's paragraphs joined by LF, or empty.", "type": "string" }
+      }
+    },
+    "properties": {
+      "description": "Core properties.",
+      "type": "object",
+      "required": ["title", "subject", "creator", "keywords", "description", "last_modified_by", "created", "modified"],
+      "additionalProperties": false,
+      "properties": {
+        "title": { "type": "string" },
+        "subject": { "type": "string" },
+        "creator": { "type": "string" },
+        "keywords": { "type": "string" },
+        "description": { "type": "string" },
+        "last_modified_by": { "type": "string" },
+        "created": { "type": "string" },
+        "modified": { "type": "string" }
+      }
+    }
+  }
+}

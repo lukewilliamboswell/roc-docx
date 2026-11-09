@@ -22,8 +22,9 @@ config = [
 	# Repository scripts run on a fixed compiler so they keep working while the package is broken.
 	Environment("tools", [Extend("package"), Programs([Fetch("roc-stable", Recipes.roc_nightly("nightly-2026-11-07-ad3a5d2"))]), RocPackages(["https://github.com/roc-lang/basic-cli/releases/download/0.27.0/9yjxqdGTP4xSpSEmDazwTmRsehfRZzA19pwEKkR6fj1g.tar.zst"])]),
 	# Oracle adapters: pandoc is fetched; xmllint and python3 come from the host.
-	# LibreOffice is found through SOFFICE or PATH by the adapter that needs it.
 	Environment("oracle", [Programs([Fetch("pandoc", pandoc)]), Expect(["python3", "xmllint"])]),
+	# The LibreOffice lane: LibreOffice is found through SOFFICE or PATH by the adapter that needs it.
+	Environment("libreoffice", [Programs([Fetch("pandoc", pandoc)]), Expect(["python3"])]),
 	# Everything the check driver runs: the scripts' compiler, the oracle programs and the release utility.
 	Environment("dev", [Extend("tools"), Programs([Fetch("pandoc", pandoc), Fetch("release-package", release_package)]), Expect(["python3", "xmllint"])]),
 	Environment("docs", [Programs([Fetch("roc-docs", Recipes.file("https://github.com/lukewilliamboswell/roc-automation/releases/download/tools-0.10.0/roc-docs-{system}"))]), Expect(["realpath", "sh"])]),
@@ -41,6 +42,9 @@ config = [
 	Task("fuzz-smoke", [Use("tools"), Run(["scripts/fuzz_smoke.roc"])]),
 	Task("oracle-provision", [Use("oracle"), Run(["python3", "-I", "oracle/provision.py"])]),
 	Task("oracle-schema", [Use("oracle"), Run(["python3", "-I", "oracle/validate_schema.py", "tests/fixtures"])]),
+	Task("oracle-snapshot", [Use("oracle"), Run(["python3", "-I", "oracle/compare_snapshots.py", "--lane", "pandoc", "tests/fixtures"])]),
+	# pandoc and LibreOffice agree on every fixture: a CI job of its own, because check does not need LibreOffice.
+	Task("libreoffice", [Use("libreoffice"), Run(["python3", "-I", "oracle/compare_snapshots.py", "--lane", "pandoc,libreoffice", "tests/fixtures"])]),
 	Task("fixtures", [Use("oracle"), Run(["python3", "-I", "oracle/make_fixtures.py"])]),
 	Task("fixtures-check", [Use("oracle"), Run(["python3", "-I", "oracle/make_fixtures.py", "--check"])]),
 	Task("docs", [Use("docs"), Run(["roc-docs", "build", "--workspace", ".", "--pdf-filename", "roc-docx.pdf"])]),

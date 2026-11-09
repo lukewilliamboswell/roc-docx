@@ -33,6 +33,22 @@ jobs:
           path: .roc-docx/oracle/downloads
           key: oracle-downloads-${{ hashFiles('conformance/ledger.json') }}
       - run: blueprint run check
+  libreoffice:
+    name: libreoffice
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: lukewilliamboswell/roc-automation/actions/setup-blueprint@8f0bb2254540fcdd746bdb4ed10851b4c34c8203
+        with:
+          cache: 'true'
+          cache-workload: libreoffice
+      # The distribution's LibreOffice; the lane prints the version it compared against.
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libreoffice-writer
+      - run: blueprint run libreoffice
   docs:
     name: docs
     runs-on: ubuntu-24.04

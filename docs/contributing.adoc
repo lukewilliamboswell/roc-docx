@@ -12,8 +12,9 @@ https://lukewilliamboswell.github.io/roc-blueprint/getting-started.html[roc-blue
 describes and put the latest Roc nightly on your `PATH` as `roc`. The machine
 also needs `python3` and `xmllint` (libxml2) for the schema oracle. Blueprint
 fetches everything else by digest: the repository's fixed tooling compiler,
-pandoc and the shared release utility. LibreOffice is optional and found
-through `SOFFICE` or `PATH`.
+pandoc and the shared release utility. LibreOffice is needed only for the
+LibreOffice lane and is found through `SOFFICE`, `PATH` or the macOS
+application bundle.
 
 == Run the checks
 
@@ -55,7 +56,18 @@ blueprint tasks          # each check on its own, and the fixture and release ta
 
 | oracle-schema
 | Every XML part of every fixture validates against the schemas
+
+| oracle-snapshot
+| pandoc's snapshot of every fixture conforms to the snapshot contract
 |===
+
+The LibreOffice lane is a task of its own, because `check` does not need
+LibreOffice:
+
+[source,sh]
+----
+blueprint run libreoffice   # pandoc and LibreOffice agree on every fixture
+----
 
 Pull-request CI runs `check`, the LibreOffice lane and the manual build, and
 nothing heavier. Sustained fuzz campaigns and benchmarks are not part of CI;
@@ -125,6 +137,90 @@ implementation cannot share the package's mistakes. When an oracle disagrees
 with the package, find the cause. A finding that is known to be wrong or out
 of the package's control is recorded in `conformance/accepted-deviations.json`
 with its oracle, rule, document, cause and an upstream reference.
+
+== Compare readers with snapshots
+
+A snapshot is what one reader understood of a document, reduced to facts that
+another reader can be checked against. `oracle/snapshot_schema.json` defines
+it as `roc-docx-snapshot/1`. Every reader writes every field, using the empty
+value for what it does not know, and lists in `keys` the fields it is
+authoritative for. Two snapshots are compared only on the keys both list.
+
+[cols="1,3",options="header"]
+|===
+| Field | What it holds
+
+| `blocks`
+| The body in reading order. Each block has a `kind` (`paragraph`, `heading`,
+`list_item` or `table`), a `level` (a heading's outline level or a list
+item's depth, from 1), a `list` kind (`bullet` or `number`), its current
+`text`, its `runs`, and for a table its `rows` as a grid of cell texts. A
+paragraph with no text that anchors no note, comment or revision is not a
+block.
+
+| `runs`
+| A block's text split where direct formatting changes, each with `bold`,
+`italic`, `underline`, `strike`, `superscript`, `subscript` and a hyperlink
+target in `link`. What paragraph and character styles contribute is not run
+formatting.
+
+| `notes`
+| Footnotes and endnotes in reference order, with `kind` and `text`.
+
+| `comments`
+| Comments in anchor order, with `author`, `date`, `text`, the `anchor` text
+they cover, `resolved`, and `thread`: the index of the comment that starts
+the thread, which is a comment's own index unless it is a reply.
+
+| `revisions`
+| Tracked changes in body order, with `kind` (`insertion`, `deletion` or
+`format`), `author`, `date` and the `text` they change.
+
+| `sections`
+| Page width, height, orientation and margins in twips, and the default
+header and footer text.
+
+| `properties`
+| The core properties: title, subject, creator, keywords, description, last
+modified by, created and modified.
+|===
+
+The current text of a paragraph includes inserted text and leaves out
+deleted text, note references and comment content. Paragraphs inside notes,
+comments, cells and multi-paragraph anchors are joined with a line feed.
+
+The comparison normalizes before it compares: line endings become line
+feeds and then text compares exactly; dates compare as instants, a date
+without a zone being UTC; runs are projected onto the run keys both sides
+declare and neighbours that become equal are joined; order is significant
+everywhere.
+
+Two adapters produce snapshots today, each in its own file and sharing
+nothing with the package or each other. `oracle/snapshot_pandoc.py` reduces
+pandoc's JSON reading of a document; it is not authoritative for note kinds,
+comment threads or resolution, sections or properties. It restores the title,
+subtitle, author, date and abstract paragraphs that pandoc moves into
+metadata. `oracle/snapshot_libreoffice.py` reduces LibreOffice's Flat ODT
+conversion; it is authoritative for every key except comment threads and the
+properties other than title, creator, created and modified, which no fixture
+exercises yet. Each adapter's docstring lists the
+rules it applies and why.
+
+Run one adapter on a document, or compare two snapshots, directly:
+
+[source,sh]
+----
+python3 -I oracle/snapshot_pandoc.py tests/fixtures/pandoc/review.docx > pandoc.json
+python3 -I oracle/snapshot_libreoffice.py tests/fixtures/pandoc/review.docx > libreoffice.json
+python3 -I oracle/compare_snapshots.py pandoc.json libreoffice.json
+----
+
+A disagreement is a finding to explain, not to silence. Most are adapter
+bugs, fixed in the adapter with the reason in the pull request. A reader that
+cannot see a key stops declaring it, with the reason in its docstring. What
+is left is a deviation of one oracle, recorded with its `key` and a pattern
+for the comparison's message in `conformance/accepted-deviations.json`; the
+lane prints it as `ACCEPTED`, apart from agreements.
 
 == Keep the manual current
 

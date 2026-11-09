@@ -3,7 +3,18 @@
   "notes": [
     "An oracle finding that is known to be wrong or out of the package's control, recorded with its cause so a lane can report it separately from a pass.",
     "Fields: oracle (schema | libreoffice | pandoc), document (a glob over the repository path), part, message_pattern (a regular expression every message of the finding must match), cause, reference, reviewed_on.",
+    "A snapshot disagreement names the oracle that is wrong and has key (the snapshot key, such as notes.text, or blocks.runs for run formatting) in place of part; its message_pattern matches the comparison's message, which reads `<first value> against <second value>` with values as JSON.",
     "Nothing is accepted without a cause, and an entry is removed when the upstream fix lands."
   ],
-  "deviations": []
+  "deviations": [
+    {
+      "oracle": "pandoc",
+      "document": "tests/fixtures/*/notes.docx",
+      "key": "notes.text",
+      "message_pattern": "^\"(.*)\" against \" \\1\"$",
+      "cause": "A footnote's first paragraph holds the reference mark and then a run with one space before the note's text. pandoc's docx reader trims spaces at the start and end of every paragraph, so its note text lacks that space; LibreOffice keeps it, as the document has it.",
+      "reference": "https://github.com/jgm/pandoc/blob/3.9.0.2/src/Text/Pandoc/Readers/Docx.hs (trimSps on paragraph content)",
+      "reviewed_on": "2026-11-09"
+    }
+  ]
 }
