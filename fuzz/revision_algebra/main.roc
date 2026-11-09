@@ -31,14 +31,20 @@ import docx.XmlTree
 ## `Docx.parse` must read back as the same body, whose `Docx.final_text` and
 ## `Docx.original_text` are those texts again.
 ##
-## The program also chooses a span of one line of the rejected body's text,
-## or of the accepted body's for a program of odd length, and a replacement.
-## `Revisions.replace` made silently must splice the replacement into the
-## text; made as tracked changes, its final text must be that text and its
-## original text the text before, accepting its changes, all of them or the
-## editor's, must give the silent edit and rejecting them the body before,
-## each the same up to how text is split into runs, and it must write and
-## read back with the same final and original text.
+## The program also chooses a span of the rejected body's text, or of the
+## accepted body's for a program of odd length, which may run over line
+## feeds, and a replacement, which may hold one. `Revisions.replace` made
+## silently must splice the replacement into the text, or fail, as the
+## tracked edit must, only for a span holding a line feed; made as tracked
+## changes, its final text must be that text and its original text the text
+## before, accepting its changes, all of them or the editor's, must give the
+## silent edit and rejecting them the body before, each the same up to how
+## text is split into runs, hyperlinks and changes, and it must write and
+## read back with the same final and original text. The same laws hold for
+## blocks, a paragraph, two, a table or a table and a paragraph, inserted
+## by `Revisions.insert_blocks` where a line begins, and for the blocks
+## between two line starts deleted by `Revisions.delete_blocks`: the text
+## is spliced, and silent and tracked edits fail alike.
 ##
 ## Allocation ratchets, which only ever move down: the final and original
 ## text of the tracked body take at most linearly many allocations and bytes
@@ -110,7 +116,10 @@ texts! = |program| {
 	if Revisions.reject(built.tracked, All) != Ok(built.original) {
 		crash "rejecting every change differs from the rejected body"
 	}
-	edited(program, if (program.len() % 2 == 0) built.original else built.final)
+	body = if (program.len() % 2 == 0) built.original else built.final
+	edited(program, body)
+	blocks_inserted(program, body)
+	blocks_deleted(program, body)
 	{ allocations: stats.allocs + stats.reallocs, requested_bytes: stats.requested_bytes, held_bytes: stats.peak_live_bytes - stats.entry_live_bytes }
 }
 
@@ -159,20 +168,85 @@ edited : List(U8), List(Document.Block) -> {}
 edited = |program, body| {
 	text = Revisions.text(body, Current).to_utf8()
 	first = (program.first() ?? 0).to_u64() % text.len()
-	last = first + (program.last() ?? 0).to_u64() % 8
-	line_end = text.drop_first(first).find_first_index(|byte| byte == 10) ?? 0
-	span = { start: first, end: if (last < first + line_end) last else first + line_end }
-	replacement = match program.len() % 3 {
+	last = first + (program.last() ?? 0).to_u64() % 24
+	span = { start: first, end: if (last < text.len()) last else text.len() }
+	replacement = match program.len() % 4 {
 		0 => "new"
 		1 => ""
-		_ => "t\tx"
+		2 => "t\tx"
+		_ => "a\nb"
 	}
-	silent = Revisions.replace(body, span, replacement, Untracked) ?? crash "a silent edit failed"
-	tracked = Revisions.replace(body, span, replacement, Tracked({ author: "Morgan", date: Date("2026-11-10T09:00:00Z") })) ?? crash "a tracked edit failed"
 	spliced = List.join([text.sublist({ start: 0, len: span.start }), replacement.to_utf8(), text.drop_first(span.end)])
-	if Revisions.text(silent, Current).to_utf8() != spliced {
-		crash "a silent edit's text is not the replacement spliced in"
+	across = text.sublist({ start: span.start, len: span.end - span.start }).contains(10)
+	match (Revisions.replace(body, span, replacement, Untracked), Revisions.replace(body, span, replacement, by_morgan)) {
+		(Ok(silent), Ok(tracked)) => {
+			if Revisions.text(silent, Current).to_utf8() != spliced {
+				crash "a silent edit's text is not the replacement spliced in"
+			}
+			laws(body, silent, tracked)
+		}
+
+		(Err(LineFeedInSpan(_)), Err(LineFeedInSpan(_))) if across => {}
+		_ => crash "a silent and a tracked edit did not both succeed or both fail for a line feed in the span"
 	}
+}
+
+# Blocks inserted where a line begins, silently and tracked.
+blocks_inserted : List(U8), List(Document.Block) -> {}
+blocks_inserted = |program, body| {
+	text = Revisions.text(body, Current).to_utf8()
+	starts = line_starts(text)
+	at = starts.get((program.get(1) ?? 0).to_u64() % starts.len()) ?? 0
+	new = match program.len() % 4 {
+		0 => [said(Document.no_paragraph_properties, "n")]
+		1 => [said(Document.no_paragraph_properties, "n"), said({ ..Document.no_paragraph_properties, style: Style("Quote") }, "q")]
+		2 => [new_table]
+		_ => [new_table, said({ ..Document.no_paragraph_properties, style: Style("Quote") }, "q")]
+	}
+	spliced = List.join([text.sublist({ start: 0, len: at }), Revisions.text(new, Current).to_utf8(), text.drop_first(at)])
+	match (Revisions.insert_blocks(body, at, new, Untracked), Revisions.insert_blocks(body, at, new, by_morgan)) {
+		(Ok(silent), Ok(tracked)) => {
+			if Revisions.text(silent, Current).to_utf8() != spliced {
+				crash "a silent block insertion's text is not the new blocks' text spliced in"
+			}
+			laws(body, silent, tracked)
+		}
+
+		(Err(NoParagraphToJoin(one)), Err(NoParagraphToJoin(other))) if one == at and other == at => {}
+		_ => crash "a silent and a tracked block insertion did not both succeed or both fail for want of a paragraph to join"
+	}
+}
+
+# The blocks between two line starts deleted, silently and tracked.
+blocks_deleted : List(U8), List(Document.Block) -> {}
+blocks_deleted = |program, body| {
+	text = Revisions.text(body, Current).to_utf8()
+	starts = line_starts(text)
+	one = starts.get((program.get(1) ?? 0).to_u64() % starts.len()) ?? 0
+	other = starts.get((program.get(2) ?? 0).to_u64() % starts.len()) ?? 0
+	span = if (one < other) { start: one, end: other } else { start: other, end: one }
+	spliced = List.concat(text.sublist({ start: 0, len: span.start }), text.drop_first(span.end))
+	match (Revisions.delete_blocks(body, span, Untracked), Revisions.delete_blocks(body, span, by_morgan)) {
+		(Ok(silent), Ok(tracked)) => {
+			if Revisions.text(silent, Current).to_utf8() != spliced {
+				crash "a silent block deletion's text is not the text without the span"
+			}
+			laws(body, silent, tracked)
+		}
+
+		(Err(NotABlockBoundary(at)), Err(NotABlockBoundary(again))) if at == again => {}
+		(Err(NoParagraphToJoin(at)), Err(NoParagraphToJoin(again))) if at == again => {}
+		_ => crash "a silent and a tracked block deletion did not both succeed or both fail alike"
+	}
+}
+
+# The laws of a tracked edit against the same edit made silently: its final
+# and original text are the silent edit's and the body's; accepting its
+# changes, all of them or the editor's, gives the silent edit and rejecting
+# them the body, up to how text is split; and it writes and reads back with
+# the same final and original text.
+laws : List(Document.Block), List(Document.Block), List(Document.Block) -> {}
+laws = |body, silent, tracked| {
 	if Revisions.text(tracked, Final) != Revisions.text(silent, Current) or Revisions.text(tracked, Original) != Revisions.text(body, Current) {
 		crash "a tracked edit's final or original text differs"
 	}
@@ -195,9 +269,41 @@ edited = |program, body| {
 	{}
 }
 
+by_morgan : Revisions.Context
+by_morgan = Tracked({ author: "Morgan", date: Date("2026-11-10T09:00:00Z") })
+
+# The offsets where lines of text begin, the end of the text among them.
+line_starts : List(U8) -> List(U64)
+line_starts = |text| {
+	var $starts = [0]
+	var $at = 0.U64
+	for byte in text {
+		$at = $at + 1
+		if byte == 10 {
+			$starts = List.append($starts, $at)
+		}
+	}
+	$starts
+}
+
+# A paragraph of these properties saying `words`, for inserting.
+said : Document.ParagraphProperties, Str -> Document.Block
+said = |properties, words| Paragraph({ properties, content: [Run({ properties: Document.no_run_properties, content: [Text(words)] })] })
+
+# A table of one row of two cells, for inserting.
+new_table : Document.Block
+new_table = {
+	no_row = { header: Unset, grid_before: Unset, grid_after: Unset, preserved: [], inserted: Unset, deleted: Unset, change: [] }
+	no_cell = { width: Unset, span: Unset, merge: Unset, borders: [], shading: Unset, alignment: Unset, preserved: [], revision: Unset, change: [] }
+	cell = |words| Cell({ properties: no_cell, content: [said(Document.no_paragraph_properties, words)] })
+	Table({ properties: { style: Unset, width: Unset, borders: [], shading: Unset, preserved: [], change: [] }, grid: [Column(1000), Column(1000)], content: [Row({ properties: no_row, content: [cell("x"), cell("y")] })] })
+}
+
 # A block with every two neighbouring runs of the same properties joined into
-# one and neighbouring text joined, through tables, hyperlinks, fields and
-# changes, so that blocks compare whatever runs their text is split into.
+# one, and neighbouring text, hyperlinks to one target and changes of one
+# kind, author and date joined, through tables, hyperlinks, fields and
+# changes, so that blocks compare whatever runs, hyperlinks and changes
+# their text is split into.
 joined : Document.Block -> Document.Block
 joined = |block|
 	match block {
@@ -233,6 +339,8 @@ joined_inlines = |inlines|
 			}
 			match (out.last(), next) {
 				(Ok(Run(before)), Run(run)) if before.properties == run.properties => List.append(out.drop_last(1), Run({ ..run, content: joined_text(List.concat(before.content, run.content)) }))
+				(Ok(Hyperlink(before)), Hyperlink(link)) if before.target == link.target and before.preserved == link.preserved => List.append(out.drop_last(1), Hyperlink({ ..link, content: joined_inlines(List.concat(before.content, link.content)) }))
+				(Ok(Revision(before)), Revision(revision)) if before.kind == revision.kind and before.author == revision.author and before.date == revision.date and before.preserved == revision.preserved => List.append(out.drop_last(1), Revision({ ..revision, content: joined_inlines(List.concat(before.content, revision.content)) }))
 				_ => List.append(out, next)
 			}
 		},

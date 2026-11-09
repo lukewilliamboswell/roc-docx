@@ -12,8 +12,9 @@
 ## `Docx.remove_comment` edit its comments; `Docx.accept`, `Docx.reject`,
 ## `Docx.accept_all` and `Docx.reject_all` its tracked changes;
 ## `Docx.replace_text`, `Docx.insert_text` and `Docx.delete_text` its text,
-## silently or as tracked changes; `Docx.set_tracking` whether it tracks
-## changes;
+## and `Docx.insert_blocks` and `Docx.delete_blocks` its paragraphs and
+## tables, silently or as tracked changes; `Docx.set_tracking` whether it
+## tracks changes;
 ## `Docx.to_bytes` writes a document as a package, its body written from the
 ## model, and `Docx.equivalent` says whether two documents write the same.
 ## What reading drops comes back as diagnostics beside the document, never
@@ -286,16 +287,19 @@ Docx :: [].{
 	## Why a document cannot be edited: it has no main document part; the
 	## span is not within the text, ends before it starts, or starts or ends
 	## inside a character, as [Comments.mark] and [Revisions.replace] say;
-	## a text edit's span or new text holds a line feed, as
-	## [Revisions.replace] says; no comment has the place; a date is not a
-	## date and time; or the document cannot be written, as
-	## [Docx.WriteError] says.
+	## a text edit's span holds a line feed it cannot take away, as
+	## [Revisions.replace] says; no block begins or ends where a block edit
+	## asks, or its paragraphs would have no paragraph to join, as
+	## [Revisions.insert_blocks] and [Revisions.delete_blocks] say; no
+	## comment has the place; a date is not a date and time; or the document
+	## cannot be written, as [Docx.WriteError] says.
 	EditError : [
 		NoMainDocument,
 		OutsideText({ start : U64, end : U64 }),
 		NotACharacterBoundary(U64),
 		LineFeedInSpan({ start : U64, end : U64 }),
-		LineFeedInText(Str),
+		NotABlockBoundary(U64),
+		NoParagraphToJoin(U64),
 		NoSuchComment(U64),
 		NotADate(Str),
 		MissingNote({ kind : Document.NoteKind, note : U64 }),
@@ -406,37 +410,28 @@ Docx :: [].{
 		written_with(document, { body: Comments.relabel(Docx.body(document), $places), comments: $comments, kept: read.kept, places: $places })
 	}
 
-	## The document with the selected tracked changes of its body accepted,
-	## as [Revisions.accept] accepts them in [Docx.body], and written as
-	## [Docx.to_bytes] writes it. The changes in its notes, headers, footers
-	## and comments are not the body's and stay. Changes are named by their
-	## ids in [Docx.revisions], so once changes go the others' ids change:
-	## [Docx.revisions] gives them again.
+	## The document with the selected tracked changes accepted, as
+	## [Revisions.accept] accepts them, in [Docx.body], in its notes, in its
+	## headers and footers and in its comments, and written as
+	## [Docx.to_bytes] writes it. Changes selected by id are the body's:
+	## ids are those of [Docx.revisions], which lists the body's changes, so
+	## once changes go the others' ids change and [Docx.revisions] gives them
+	## again. Every other selection applies to every part.
 	accept : Document, Revisions.Selection -> Try(Document, EditError)
-	accept = |document, selection| {
-		_ = main_part(document)?
-		read = threads(document)
-		written_with(document, { body: Revisions.accept(Docx.body(document), selection)?, comments: read.comments, kept: read.kept, places: [] })
-	}
+	accept = |document, selection| resolved_everywhere(document, |blocks, in_part| Revisions.accept(blocks, if (in_part) beside_body(selection) else selection))
 
-	## The document with the selected tracked changes of its body rejected,
-	## as [Revisions.reject] rejects them, as [Docx.accept] accepts them.
+	## The document with the selected tracked changes rejected, as
+	## [Revisions.reject] rejects them, where [Docx.accept] accepts them.
 	reject : Document, Revisions.Selection -> Try(Document, EditError)
-	reject = |document, selection| {
-		_ = main_part(document)?
-		read = threads(document)
-		written_with(document, { body: Revisions.reject(Docx.body(document), selection)?, comments: read.comments, kept: read.kept, places: [] })
-	}
+	reject = |document, selection| resolved_everywhere(document, |blocks, in_part| Revisions.reject(blocks, if (in_part) beside_body(selection) else selection))
 
-	## The document with every tracked change of its body accepted: its
-	## text is the final text, [Docx.final_text], of the document it came
-	## from.
+	## The document with every tracked change accepted: its text is the
+	## final text, [Docx.final_text], of the document it came from.
 	accept_all : Document -> Try(Document, EditError)
 	accept_all = |document| Docx.accept(document, All)
 
-	## The document with every tracked change of its body rejected: its
-	## text is the original text, [Docx.original_text], of the document it
-	## came from.
+	## The document with every tracked change rejected: its text is the
+	## original text, [Docx.original_text], of the document it came from.
 	reject_all : Document -> Try(Document, EditError)
 	reject_all = |document| Docx.reject(document, All)
 
@@ -463,6 +458,30 @@ Docx :: [].{
 	delete_text : Document, Comments.Span, Revisions.Context -> Try(Document, EditError)
 	delete_text = |document, span, context| Docx.replace_text(document, span, "", context)
 
+	## The document with `blocks` inserted in its body where a paragraph or
+	## table begins at byte `at` of its current text, or at its end, as
+	## [Revisions.insert_blocks] inserts them: silently, or as tracked
+	## changes by the author the context names, at its date. The document is
+	## written as [Docx.to_bytes] writes it. Positions from `at` move by the
+	## length of the new blocks' text.
+	insert_blocks : Document, U64, List(Document.Block), Revisions.Context -> Try(Document, EditError)
+	insert_blocks = |document, at, blocks, context| {
+		_ = main_part(document)?
+		read = threads(document)
+		written_with(document, { body: Revisions.insert_blocks(Docx.body(document), at, blocks, context)?, comments: read.comments, kept: read.kept, places: [] })
+	}
+
+	## The document without the paragraphs and tables of its body from byte
+	## `start` of its current text, where one begins, to byte `end`, where
+	## one ends, as [Revisions.delete_blocks] deletes them: silently, or as
+	## tracked changes. The document is written as [Docx.to_bytes] writes it.
+	delete_blocks : Document, Comments.Span, Revisions.Context -> Try(Document, EditError)
+	delete_blocks = |document, span, context| {
+		_ = main_part(document)?
+		read = threads(document)
+		written_with(document, { body: Revisions.delete_blocks(Docx.body(document), span, context)?, comments: read.comments, kept: read.kept, places: [] })
+	}
+
 	## The document with tracking `On`, so that its editor records edits as
 	## tracked changes, or `Off`, as [WmlWrite.tracking] sets it in the
 	## settings part of its main document; a document without settings that
@@ -482,6 +501,60 @@ Docx :: [].{
 		}
 	}
 }
+
+# The document with its tracked changes resolved by `resolve`: in the body,
+# then, told that they are not the body's, in its notes, headers, footers
+# and comments, each part written from its model.
+resolved_everywhere : Document, (List(Document.Block), Bool -> Try(List(Document.Block), [NotADate(Str)])) -> Try(Document, EditError)
+resolved_everywhere = |document, resolve| {
+	main = main_part(document)?
+	body = resolve(Docx.body(document), Bool.False)?
+	read_ids = comment_ids(document)
+	var $document = document
+	for kind in [footnotes_relationship, endnotes_relationship] {
+		match Document.related(document, main.name, kind) {
+			Ok(part) => {
+				context = part_context(part, read_ids)
+				var $notes = List.with_capacity(8)
+				for note in WmlRead.notes(part.tree, context) {
+					$notes = List.append($notes, { ..note, content: resolve(note.content, Bool.True)? })
+				}
+				written = WmlWrite.notes(part.tree, $notes, context)?
+				$document = Document.with_part($document, part.name, written.tree, written.relationships)
+			}
+
+			Err(NotFound) => {}
+		}
+	}
+	for relationship in main.relationships {
+		if relationship.mode == Internal and (relationship.kind == header_relationship or relationship.kind == footer_relationship) {
+			match Document.xml_part(document, relationship.target) {
+				Ok(part) => {
+					context = part_context(part, read_ids)
+					written = WmlWrite.header_footer(part.tree, resolve(WmlRead.header_footer(part.tree, context), Bool.True)?, context)?
+					$document = Document.with_part($document, part.name, written.tree, written.relationships)
+				}
+
+				Err(NotFound) => {}
+			}
+		}
+	}
+	read = threads($document)
+	var $comments = List.with_capacity(read.comments.len())
+	for comment in read.comments {
+		$comments = List.append($comments, { ..comment, content: resolve(comment.content, Bool.True)? })
+	}
+	written_with($document, { body, comments: $comments, kept: read.kept, places: [] })
+}
+
+# A selection as it applies beside the body: ids name the body's changes
+# only, so they select none there.
+beside_body : Revisions.Selection -> Revisions.Selection
+beside_body = |selection|
+	match selection {
+		Ids(_) => Ids([])
+		_ => selection
+	}
 
 # The main document part, which every edit needs.
 main_part : Document -> Try(Document.XmlPart, [NoMainDocument])
@@ -1487,18 +1560,112 @@ expect {
 		and Docx.text(silent) == "link\n"
 }
 
-## An edit's span must lie within the text, hold no line feed and start and
-## end between characters, and its text must hold no line feed.
+## An edit's span must lie within the text and start and end between
+## characters, and a line feed in it must end a paragraph with a paragraph
+## after it to join.
 expect {
-	parsed = Docx.parse(package_of("<w:p><w:r><w:t>caf\u(e9)</w:t></w:r></w:p><w:p><w:r><w:t>b</w:t></w:r></w:p>")?)?
+	parsed = Docx.parse(package_of("<w:p><w:r><w:t>caf\u(e9)</w:t></w:r></w:p><w:p><w:r><w:t>b</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>c</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>")?)?
 	failed = |result| result.map_ok(|_| {})
-	failed(Docx.delete_text(parsed.document, { start: 2, end: 7 }, Untracked)) == Err(LineFeedInSpan({ start: 2, end: 7 }))
+	failed(Docx.delete_text(parsed.document, { start: 6, end: 9 }, Untracked)) == Err(LineFeedInSpan({ start: 6, end: 9 }))
+		and failed(Docx.delete_text(parsed.document, { start: 9, end: 11 }, Untracked)) == Err(LineFeedInSpan({ start: 9, end: 11 }))
 		and failed(Docx.delete_text(parsed.document, { start: 3, end: 4 }, Untracked)) == Err(NotACharacterBoundary(4))
-		and failed(Docx.insert_text(parsed.document, 9, "x", Untracked)) == Err(OutsideText({ start: 9, end: 9 }))
-		and failed(Docx.insert_text(parsed.document, 8, "x", Untracked)) == Err(OutsideText({ start: 8, end: 8 }))
-		and failed(Docx.insert_text(parsed.document, 0, "a\nb", Untracked)) == Err(LineFeedInText("a\nb"))
+		and failed(Docx.insert_text(parsed.document, 12, "x", Untracked)) == Err(OutsideText({ start: 12, end: 12 }))
+		and failed(Docx.insert_text(parsed.document, 11, "x", Untracked)) == Err(OutsideText({ start: 11, end: 11 }))
 		and failed(Docx.insert_text(parsed.document, 0, "x", Tracked({ author: "A", date: Date("soon") }))) == Err(NotADate("soon"))
-		and Docx.text(Docx.insert_text(parsed.document, 6, "x", Untracked)?) == "caf\u(e9)\nxb\n"
+		and Docx.text(Docx.insert_text(parsed.document, 6, "x", Untracked)?) == "caf\u(e9)\nxb\nc\n\n"
+		and Docx.text(Docx.delete_text(parsed.document, { start: 2, end: 7 }, Untracked)?) == "ca\nc\n\n"
+}
+
+## A span over a paragraph's line feed joins the paragraph into the next,
+## which keeps its own properties, or, tracked, deletes the mark, so that
+## accepting the edit gives the silent edit and rejecting it the paragraphs
+## before; new text holding a line feed splits its paragraph, the part
+## before taking a copy of its properties and, tracked, an inserted mark.
+expect {
+	centred = "<w:pPr><w:jc w:val='center'/></w:pPr>"
+	parsed = Docx.parse(package_of("<w:p><w:r><w:t>one</w:t></w:r></w:p><w:p><w:r><w:t>two</w:t></w:r></w:p><w:p>${centred}<w:r><w:t>three</w:t></w:r></w:p>")?)?
+	before = Docx.text(parsed.document)
+	morgan = Tracked({ author: "Morgan", date: Date("2026-11-10T09:00:00Z") })
+	silent = Docx.replace_text(parsed.document, { start: 2, end: 9 }, "-", Untracked)?
+	tracked = Docx.replace_text(parsed.document, { start: 2, end: 9 }, "-", morgan)?
+	aligned = |document| Docx.body(document).map(
+		|block| match block {
+			Paragraph(paragraph) => paragraph.properties.alignment
+			_ => Unset
+		},
+	)
+	marks = |document| Docx.revisions(document).keep_if(|change| change.of == ParagraphMark).map(|change| change.kind)
+	split_silent = Docx.insert_text(parsed.document, 9, "a\nb", Untracked)?
+	split = Docx.insert_text(parsed.document, 9, "a\nb", morgan)?
+	Docx.text(silent) == "on-hree\n"
+		and aligned(silent) == [Aligned(Center)]
+		and Docx.text(tracked) == Docx.text(silent)
+		and Docx.final_text(tracked) == Docx.text(silent)
+		and Docx.original_text(tracked) == before
+		and marks(tracked) == [Deletion, Deletion]
+		and Docx.text(Docx.accept(tracked, By("Morgan"))?) == Docx.text(silent)
+		and aligned(Docx.accept(tracked, All)?) == [Aligned(Center)]
+		and Docx.text(Docx.reject(tracked, All)?) == before
+		and Docx.text(split_silent) == "one\ntwo\nta\nbhree\n"
+		and aligned(split_silent) == [Unset, Unset, Aligned(Center), Aligned(Center)]
+		and Docx.text(split) == Docx.text(split_silent)
+		and Docx.original_text(split) == before
+		and marks(split) == [Insertion]
+		and aligned(Docx.reject(split, All)?) == [Unset, Unset, Aligned(Center)]
+		and Docx.text(Docx.reject(split, All)?) == before
+}
+
+## Blocks are inserted where a paragraph or table begins, or at the end of
+## the body; tracked, their content and marks are inserted, or, at the end,
+## the mark of the paragraph before, so rejecting takes them away again and
+## accepting keeps them as given.
+expect {
+	parsed = Docx.parse(package_of("<w:p><w:r><w:t>one</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>c</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>two</w:t></w:r></w:p><w:sectPr/>")?)?
+	before = Docx.text(parsed.document)
+	morgan = Tracked({ author: "Morgan", date: Date("2026-11-10T09:00:00Z") })
+	heading = Paragraph({ properties: { ..Document.no_paragraph_properties, style: Style("Heading1") }, content: [Run({ properties: Document.no_run_properties, content: [Text("new")] })] })
+	table = Table({
+		properties: { style: Unset, width: Unset, borders: [], shading: Unset, preserved: [], change: [] },
+		grid: [Column(1000)],
+		content: [Row({ properties: { header: Unset, grid_before: Unset, grid_after: Unset, preserved: [], inserted: Unset, deleted: Unset, change: [] }, content: [Cell({ properties: { width: Unset, span: Unset, merge: Unset, borders: [], shading: Unset, alignment: Unset, preserved: [], revision: Unset, change: [] }, content: [Paragraph({ properties: Document.no_paragraph_properties, content: [Run({ properties: Document.no_run_properties, content: [Text("t")] })] })] })] })],
+	})
+	first = Docx.insert_blocks(parsed.document, 0, [table, heading], morgan)?
+	ending = Docx.insert_blocks(parsed.document, 10, [heading], morgan)?
+	silent_end = Docx.insert_blocks(parsed.document, 10, [heading], Untracked)?
+	failed = |result| result.map_ok(|_| {})
+	Docx.text(Docx.insert_blocks(parsed.document, 0, [table, heading], Untracked)?) == "t\nnew\n${before}"
+		and Docx.final_text(first) == "t\nnew\n${before}"
+		and Docx.original_text(first) == before
+		and Docx.text(Docx.reject(first, All)?) == before
+		and Docx.text(silent_end) == "${before}new\n"
+		and Docx.final_text(ending) == Docx.text(silent_end)
+		and Docx.body(Docx.accept(ending, All)?) == Docx.body(silent_end)
+		and Docx.body(Docx.reject(ending, All)?) == Docx.body(parsed.document)
+		and Docx.text(Docx.insert_blocks(parsed.document, 4, [table], morgan)?) == "one\nt\nc\ntwo\n"
+		and failed(Docx.insert_blocks(parsed.document, 4, [table, heading], morgan)) == Err(NoParagraphToJoin(4))
+		and failed(Docx.insert_blocks(parsed.document, 1, [heading], Untracked)) == Err(NotABlockBoundary(1))
+}
+
+## Deleting blocks removes the paragraphs and tables of a span of whole
+## blocks, what the paragraphs leave behind joining the paragraph after;
+## tracked, their content, marks and rows are deleted, so accepting gives
+## the silent deletion and rejecting the blocks before.
+expect {
+	parsed = Docx.parse(package_of("<w:p><w:r><w:t>one</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>c</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>two</w:t></w:r></w:p><w:p><w:r><w:t>three</w:t></w:r></w:p>")?)?
+	before = Docx.text(parsed.document)
+	morgan = Tracked({ author: "Morgan", date: Date("2026-11-10T09:00:00Z") })
+	silent = Docx.delete_blocks(parsed.document, { start: 4, end: 10 }, Untracked)?
+	tracked = Docx.delete_blocks(parsed.document, { start: 4, end: 10 }, morgan)?
+	failed = |result| result.map_ok(|_| {})
+	Docx.text(silent) == "one\nthree\n"
+		and Docx.final_text(tracked) == Docx.text(silent)
+		and Docx.original_text(tracked) == before
+		and Docx.body(Docx.accept(tracked, All)?) == Docx.body(silent)
+		and Docx.body(Docx.reject(tracked, All)?) == Docx.body(parsed.document)
+		and failed(Docx.delete_blocks(parsed.document, { start: 0, end: 6 }, morgan)) == Err(NoParagraphToJoin(0))
+		and failed(Docx.delete_blocks(parsed.document, { start: 0, end: 5 }, Untracked)) == Err(NotABlockBoundary(5))
+		and failed(Docx.delete_blocks(parsed.document, { start: 10, end: 16 }, Untracked)) == Err(NoParagraphToJoin(10))
+		and Docx.text(Docx.delete_blocks(parsed.document, { start: 6, end: 10 }, Untracked)?) == "one\nc\nthree\n"
 }
 
 ## Setting tracking on gives a document without settings a settings part
@@ -1530,4 +1697,74 @@ expect {
 		and Styles.get(styles.styles, "Heading1").map_ok(|style| style.name) == Ok(Named("heading 1"))
 		and Docx.numbering(parsed.document).diagnostics.is_empty()
 		and (properties.title, properties.creator, properties.created, properties.modified) == (Text("Lease"), Text("Ada Reviewer"), Date("2026-11-10T09:00:00Z"), Unset)
+}
+# A package whose body, header, footnotes and comment each hold a tracked
+# insertion and deletion, by Ada in the body and by Grace elsewhere.
+revised_parts : {} -> Try(List(U8), Opc.WriteError)
+revised_parts = |{}| {
+	relationships = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+	declarations = "xmlns:w='http://schemas.openxmlformats.org/wordprocessingml/2006/main' xmlns:r='${relationships}'"
+	part = |name, kind| { name, content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.${kind}+xml", relationships: [] }
+	graph = {
+		relationships: [{ id: "rId1", kind: Opc.officedocument_relationship, target: "/word/document.xml", mode: Internal }],
+		parts: [
+			{
+				name: "/word/document.xml",
+				content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml",
+				relationships: [
+					{ id: "rId7", kind: "${relationships}/header", target: "/word/header1.xml", mode: Internal },
+					{ id: "rId8", kind: "${relationships}/footnotes", target: "/word/footnotes.xml", mode: Internal },
+					{ id: "rId9", kind: "${relationships}/comments", target: "/word/comments.xml", mode: Internal },
+				],
+			},
+			part("/word/header1.xml", "header"),
+			part("/word/footnotes.xml", "footnotes"),
+			part("/word/comments.xml", "comments"),
+		],
+	}
+	changes = |author| "<w:p><w:ins w:author='${author}'><w:r><w:t>new</w:t></w:r></w:ins><w:del w:author='${author}'><w:r><w:delText>old</w:delText></w:r></w:del></w:p>"
+	anchored = "<w:p><w:commentRangeStart w:id='0'/><w:r><w:t>body</w:t></w:r><w:commentRangeEnd w:id='0'/><w:r><w:commentReference w:id='0'/></w:r></w:p>"
+	body = "${changes("Ada")}${anchored}<w:sectPr><w:headerReference w:type='default' r:id='rId7'/></w:sectPr>"
+	Opc.to_bytes(
+		graph,
+		|name|
+			Bytes(
+				(
+					if name == "/word/document.xml" {
+						"<w:document ${declarations}><w:body>${body}</w:body></w:document>"
+					} else if name == "/word/header1.xml" {
+						"<w:hdr ${declarations}>${changes("Grace")}</w:hdr>"
+					} else if name == "/word/footnotes.xml" {
+						"<w:footnotes ${declarations}><w:footnote w:id='1'>${changes("Grace")}</w:footnote></w:footnotes>"
+					} else {
+						"<w:comments ${declarations}><w:comment w:id='0' w:author='Ada'>${changes("Grace")}</w:comment></w:comments>"
+					}
+				).to_utf8(),
+			),
+	)
+}
+
+## Accepting and rejecting resolve the changes of notes, headers, footers
+## and comments too, except a selection by id, which names the body's.
+expect {
+	parsed = Docx.parse(revised_parts({})?)?
+	texts = |document| {
+		blocks = List.join([
+			Docx.header_footer(document, "/word/header1.xml"),
+			List.join(Docx.footnotes(document).map(|note| note.content)),
+			List.join(Docx.comments(document).comments.map(|anchored| anchored.comment.content)),
+		])
+		(Revisions.text(blocks, Current), Revisions.list(blocks).len())
+	}
+	accepted = Docx.accept_all(parsed.document)?
+	rejected = Docx.reject_all(parsed.document)?
+	by_grace = Docx.accept(parsed.document, By("Grace"))?
+	by_id = Docx.accept(parsed.document, Ids([0, 1]))?
+	texts(parsed.document) == ("new\nnew\nnew\n", 6)
+		and texts(accepted) == ("new\nnew\nnew\n", 0)
+		and texts(rejected) == ("old\nold\nold\n", 0)
+		and texts(by_grace) == ("new\nnew\nnew\n", 0)
+		and Docx.revisions(by_grace).len() == 2
+		and texts(by_id) == ("new\nnew\nnew\n", 6)
+		and Docx.revisions(by_id).is_empty()
 }

@@ -5,6 +5,7 @@
   "keys": ["blocks.kind", "blocks.level", "blocks.list", "blocks.text", "blocks.rows", "blocks.runs.bold", "blocks.runs.italic", "blocks.runs.underline", "blocks.runs.strike", "blocks.runs.superscript", "blocks.runs.subscript", "blocks.runs.link", "notes.kind", "notes.text", "comments.author", "comments.date", "comments.text", "comments.anchor", "comments.thread", "comments.resolved", "revisions.kind", "revisions.author", "revisions.date", "revisions.text", "sections.page_width", "sections.page_height", "sections.orientation", "sections.margin_top", "sections.margin_bottom", "sections.margin_left", "sections.margin_right", "sections.header", "sections.footer", "properties.title", "properties.subject", "properties.creator", "properties.keywords", "properties.description", "properties.last_modified_by", "properties.created", "properties.modified"],
   "blocks": [
     {"kind": "paragraph", "level": 0, "list": "", "text": "Revised Agreement (Reviewed) (as agreed)", "runs": [{"text": "Revised Agreement (Reviewed) (as agreed)", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Both parties confirm this amendment.", "runs": [{"text": "Both parties confirm this amendment.", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
     {"kind": "paragraph", "level": 0, "list": "", "text": "Grace", "runs": [{"text": "Grace", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
     {"kind": "heading", "level": 1, "list": "", "text": "Consulting Agreement", "runs": [{"text": "Consulting Agreement", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
     {"kind": "heading", "level": 2, "list": "", "text": "1. Engagement", "runs": [{"text": "1. Engagement", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
@@ -24,7 +25,7 @@
   "revisions": [
     {"kind": "deletion", "author": "Morgan Reviewer", "date": "2026-11-10T10:00:00Z", "text": "Consulting"},
     {"kind": "insertion", "author": "Morgan Reviewer", "date": "2026-11-10T10:00:00Z", "text": "Revised"},
-    {"kind": "insertion", "author": "Morgan Reviewer", "date": "2026-11-10T10:00:00Z", "text": " (as agreed)"},
+    {"kind": "insertion", "author": "Morgan Reviewer", "date": "2026-11-10T10:00:00Z", "text": " (as agreed)\nBoth parties confirm this amendment."},
     {"kind": "deletion", "author": "Morgan Reviewer", "date": "2026-11-10T10:00:00Z", "text": " Author"}
   ],
   "sections": [

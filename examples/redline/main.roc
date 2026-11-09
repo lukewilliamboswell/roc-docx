@@ -43,8 +43,8 @@ main! = |args| {
 
 # A redline: turn tracking on, accept Ada Reviewer's changes and reject
 # Grace Author's, then, as Morgan Reviewer, replace the first word of the
-# first line of text, add to the end of that line, and delete the last word
-# of the next line. The edits are made from the last to the first, so each
+# first line of text, add to the end of that line and a new paragraph after
+# it, and delete the last word of the next line. The edits are made from the last to the first, so each
 # span, found in the text before them, still names the same text.
 redline : Document -> Try(Document, Docx.EditError)
 redline = |document| {
@@ -60,7 +60,7 @@ redline = |document| {
 	}
 	match lines.first() {
 		Ok(line) => {
-			extended = Docx.insert_text(trimmed, line.end, " (as agreed)", morgan)?
+			extended = Docx.insert_text(trimmed, line.end, " (as agreed)\nBoth parties confirm this amendment.", morgan)?
 			Docx.replace_text(extended, first_word(text, line), "Revised", morgan)
 		}
 

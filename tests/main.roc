@@ -61,7 +61,8 @@ import docx.XmlTree
 ##
 ## Redline: the fixture edited by the session of `examples/redline`, which
 ## turns tracking on, accepts one reviewer's changes and rejects another's,
-## then replaces, inserts and deletes text as tracked changes. The edited
+## then replaces, inserts and deletes text as tracked changes, the inserted
+## text ending its paragraph and beginning a new one. The edited
 ## document's current text must be the same edits made silently; rejecting
 ## the new changes must give the text before them and accepting them the
 ## silent edits' text; it must write twice to the same bytes and read back
@@ -241,7 +242,8 @@ morgan : Revisions.Context
 morgan = Tracked({ author: "Morgan Reviewer", date: Date("2026-11-10T10:00:00Z") })
 
 # Then the first word of the first line of text replaced, text added to the
-# end of that line and the last word of the next line deleted, last first.
+# end of that line with a new paragraph after it and the last word of the
+# next line deleted, last first.
 redline : Document, Revisions.Context -> Try(Document, Docx.EditError)
 redline = |document, context| {
 	text = Docx.text(document)
@@ -252,7 +254,7 @@ redline = |document, context| {
 	}
 	match lines.first() {
 		Ok(line) => {
-			extended = Docx.insert_text(trimmed, line.end, " (as agreed)", context)?
+			extended = Docx.insert_text(trimmed, line.end, " (as agreed)\nBoth parties confirm this amendment.", context)?
 			Docx.replace_text(extended, first_word(text, line), "Revised", context)
 		}
 

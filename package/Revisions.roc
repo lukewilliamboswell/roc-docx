@@ -1,8 +1,8 @@
 ## A body's tracked changes: each change with its authorship, what it
 ## changed and the move it is part of, and the body's text as it stands, with
 ## every change accepted or with every change rejected; the algebra that
-## accepts and rejects them; and edits of the text made silently or as
-## tracked changes.
+## accepts and rejects them; and edits of the text, its paragraphs and its
+## tables made silently or as tracked changes.
 ##
 ## A tracked change is a [Document.Revision] in a paragraph's content, an
 ## insertion, a deletion, or a move's source or destination; a change of a
@@ -179,38 +179,118 @@ Revisions :: [].{
 	## inside the insertion; deleting all of an insertion's text untracked
 	## removes the insertion.
 	##
+	## A span may run over the line feeds that end paragraphs. Each such
+	## paragraph's mark goes: untracked, the paragraph joins the next one, as
+	## [Revisions.accept] joins a paragraph whose mark is deleted, so the
+	## next paragraph keeps its own properties and the end of a section the
+	## mark held goes with it; tracked, the mark is deleted. A line feed in
+	## the replacement ends a paragraph there: the paragraph is split in two,
+	## the part before taking a copy of its properties and a new mark,
+	## inserted when tracked, and the part after keeping its mark, so
+	## rejecting the insertion joins them again. A hyperlink, field, content
+	## control or change the line feed falls in is split in two with it.
+	##
 	## An empty span inserts and an empty replacement deletes. A span that
 	## does not lie within the text, ends before it starts, or inserts where
-	## no line continues fails, and so does one that holds a line feed, which
-	## ends a paragraph or a table's row or cell; one that starts or ends
-	## inside a character; a replacement holding a line feed; and a date that
-	## is not a date and time.
-	replace : List(Document.Block), { start : U64, end : U64 }, Str, Context -> Try(List(Document.Block), [OutsideText({ start : U64, end : U64 }), NotACharacterBoundary(U64), LineFeedInSpan({ start : U64, end : U64 }), LineFeedInText(Str), NotADate(Str)])
+	## no line continues fails, and so does one that starts or ends inside a
+	## character; one that holds a line feed that ends a table's row or cell,
+	## or a paragraph with no paragraph after it to join before a table, the
+	## end of its cell or the end of the blocks; and a date that is not a
+	## date and time.
+	replace : List(Document.Block), { start : U64, end : U64 }, Str, Context -> Try(List(Document.Block), [OutsideText({ start : U64, end : U64 }), NotACharacterBoundary(U64), LineFeedInSpan({ start : U64, end : U64 }), NotADate(Str)])
 	replace = |blocks, span, replacement, context| {
-		if replacement.to_utf8().contains(10) {
-			return Err(LineFeedInText(replacement))
-		}
-		made = match context {
-			Untracked => Untracked
-			Tracked({ author, date }) =>
-				match date {
-					Unset => Tracked({ author, date: Unset, preserved: [] })
-					Date(written) => Tracked({ author, date: Date(WmlRead.date_time(written) ? |_| NotADate(written)), preserved: [] })
-				}
-		}
+		made = made_by(context)?
 		if span.start > span.end {
 			return Err(OutsideText(span))
 		}
-		start = { at: 0, joining: Bool.False, fresh: Bool.True, start: span.start, end: span.end, text: replacement, made, placed: replacement == "", pending: Bool.False, properties: Document.no_run_properties, problem: Fine }
+		start = { ..no_edit, start: span.start, end: span.end, text: replacement, made, placed: replacement == "" }
 		walked = edit_blocks(blocks, start)
 		ended = edit_line(walked.state)
-		if span.end > ended.at or !ended.placed {
+		if span.end > ended.at {
 			return Err(OutsideText(span))
 		}
 		match ended.problem {
 			Boundary(at) => Err(NotACharacterBoundary(at))
 			LineFeed => Err(LineFeedInSpan(span))
-			Fine => Ok(walked.blocks)
+			Fine if !ended.placed => Err(OutsideText(span))
+			Fine => {
+				joined = match made {
+					Untracked if !ended.joined.is_empty() => joined_marks(walked.blocks, ended.joined)
+					_ => walked.blocks
+				}
+				Ok(broken_lines(joined, span.start, replacement, made))
+			}
+		}
+	}
+
+	## The blocks with `new` blocks inserted where a paragraph or table begins
+	## at byte `at` of the current text, or at the end of the text, before
+	## the end of the body's last section. Where a table begins, the new
+	## blocks go before the table, not into its first cell.
+	##
+	## Untracked, the blocks are inserted as they are. Tracked, by the
+	## context's author at its date, each new paragraph's content is an
+	## insertion and its mark is inserted, and each new table's rows are
+	## inserted and their cells' content is an insertion, so rejecting the
+	## changes takes the blocks away again: an inserted mark rejected joins
+	## its paragraph into the next, which must be the paragraph the new
+	## blocks go before. Where they go before a table or at the end of the
+	## blocks, the mark of the paragraph before them is inserted instead, the
+	## last new paragraph keeping its own mark, and that paragraph's
+	## properties, where they differ from those of the paragraph before, are
+	## a tracked change of them from those, so rejecting gives back the
+	## paragraph before as it was.
+	##
+	## A position where no paragraph or table begins fails, and so do new
+	## blocks holding a paragraph that rejecting could not join: with no
+	## paragraph directly after them, no paragraph without changes of its
+	## mark directly before them, or a table between a new paragraph and the
+	## paragraph it would join. The same insertion fails tracked or not.
+	insert_blocks : List(Document.Block), U64, List(Document.Block), Context -> Try(List(Document.Block), [NotABlockBoundary(U64), NoParagraphToJoin(U64), NotADate(Str)])
+	insert_blocks = |blocks, at, new, context| {
+		made = made_by(context)?
+		placed = at_block(blocks, { text: List.with_capacity(1024), joining: Bool.False }, at, |items, index, _| inserted_at(items, index, new, made, at))
+		match placed.outcome {
+			Applied(edited) => Ok(edited)
+			Failed(problem) => Err(problem)
+			Pending if line_start(placed.state) and placed.state.text.len() == at => {
+				index = match blocks.last() {
+					Ok(Section(_)) => blocks.len() - 1
+					_ => blocks.len()
+				}
+				inserted_at(blocks, index, new, made, at)
+			}
+
+			Pending => Err(NotABlockBoundary(at))
+		}
+	}
+
+	## The blocks without the paragraphs and tables from byte `start` of the
+	## current text, where one begins, up to byte `end`, where one ends with
+	## its line feed, in the same list of blocks: the body's, a cell's or a
+	## content control's.
+	##
+	## Untracked, they go, with the ends of sections among them; comment
+	## boundaries and content the model does not hold stay, and a content
+	## control among them stays without them. Tracked, by the context's
+	## author at its date, each paragraph's content and mark are deleted, as
+	## [Revisions.replace] deletes text, and each table's rows are deleted
+	## with their cells' content, so accepting the changes gives the
+	## untracked edit: the deleted paragraphs join the paragraph after them,
+	## which keeps its own properties.
+	##
+	## A span that does not begin and end where blocks of one list begin and
+	## end fails, and so does one holding a paragraph with no paragraph
+	## directly after the span to join, or a table after a paragraph in it.
+	## The same deletion fails tracked or not.
+	delete_blocks : List(Document.Block), { start : U64, end : U64 }, Context -> Try(List(Document.Block), [NotABlockBoundary(U64), NoParagraphToJoin(U64), NotADate(Str)])
+	delete_blocks = |blocks, span, context| {
+		made = made_by(context)?
+		placed = at_block(blocks, { text: List.with_capacity(1024), joining: Bool.False }, span.start, |items, index, state| deleted_at(items, index, state, span, made))
+		match placed.outcome {
+			Applied(edited) => Ok(edited)
+			Failed(problem) => Err(problem)
+			Pending => Err(NotABlockBoundary(span.start))
 		}
 	}
 }
@@ -516,11 +596,14 @@ cell_taken = |revision, view|
 		_ => Bool.False
 	}
 
-# A selection with its dates read as instants and its ids as a set.
-Chosen : [All, By(Str), Between(I64, I64), Ids(Set(U64))]
+# A selection with its dates read as instants and its ids as a set, or, for
+# an untracked edit, the paragraphs by their place in reading order whose
+# marks the edit took away, which no change is.
+Chosen : [All, By(Str), Between(I64, I64), Ids(Set(U64)), Joined(Set(U64))]
 
 # Resolving changes: whether the selected ones are accepted or rejected,
-# which are selected, the id the next change has, the names of the moves'
+# which are selected, the id the next change has, the place of the next
+# paragraph in reading order, the names of the moves'
 # ranges open where they end, innermost last, as [Revisions.list] pairs
 # changes with them, and the ranges, by side and name, paired with a
 # resolved change and with one that stays.
@@ -528,6 +611,7 @@ Resolving : {
 	action : [Accept, Reject],
 	chosen : Chosen,
 	next : U64,
+	paragraphs : U64,
 	sources : List(Str),
 	destinations : List(Str),
 	resolved : Set(Str),
@@ -546,12 +630,23 @@ resolve = |blocks, action, selection| {
 		Between({ from, until }) => Between((WmlRead.date_time(from) ? |_| NotADate(from)).utc_seconds, (WmlRead.date_time(until) ? |_| NotADate(until)).utc_seconds)
 		Ids(ids) => Ids(ids.fold(Set.with_capacity(ids.len()), |set, id| set.insert(id)))
 	}
-	start = { action, chosen, next: 0, sources: [], destinations: [], resolved: Set.with_capacity(4), kept: Set.with_capacity(4) }
+	Ok(resolved_with(blocks, action, chosen))
+}
+
+# Blocks with the chosen changes resolved.
+resolved_with : List(Document.Block), [Accept, Reject], Chosen -> List(Document.Block)
+resolved_with = |blocks, action, chosen| {
+	start = { action, chosen, next: 0, paragraphs: 0, sources: [], destinations: [], resolved: Set.with_capacity(4), kept: Set.with_capacity(4) }
 	done = resolve_blocks(blocks, start, Nothing, Bool.True)
 	resolved = carry_out(done.blocks, done.carried)
 	gone = done.state.resolved.keep_if(|range| !done.state.kept.contains(range))
-	Ok(if (gone.is_empty()) resolved else resolved.map(|block| inlines_of_block(block, |content| without_ranges(content, gone))))
+	if (gone.is_empty()) resolved else resolved.map(|block| inlines_of_block(block, |content| without_ranges(content, gone)))
 }
+
+# Blocks with the paragraphs at these places in reading order joined into
+# the next, as accepting a deletion of their marks joins them.
+joined_marks : List(Document.Block), List(U64) -> List(Document.Block)
+joined_marks = |blocks, places| resolved_with(blocks, Accept, Joined(places.fold(Set.with_capacity(places.len()), |set, place| set.insert(place))))
 
 # Whether a change is selected, and the state with the next id taken.
 take : Resolving, Str, [Unset, Date(Document.Timestamp)] -> { state : Resolving, chosen : Bool }
@@ -566,6 +661,7 @@ take = |state, author, date| {
 			}
 
 		Ids(ids) => ids.contains(state.next)
+		Joined(_) => Bool.False
 	}
 	{ state: { ..state, next: state.next + 1 }, chosen }
 }
@@ -709,7 +805,7 @@ resolve_blocks = |blocks, state, carried, body| {
 # A paragraph resolved, and whether its mark went.
 resolve_paragraph : Document.Paragraph, Resolving -> { paragraph : Document.Paragraph, joins : Bool, state : Resolving }
 resolve_paragraph = |paragraph, state| {
-	formatted = property_of(state, paragraph.properties.change)
+	formatted = property_of({ ..state, paragraphs: state.paragraphs + 1 }, paragraph.properties.change)
 	properties = match formatted.outcome {
 		Stays => paragraph.properties
 		Accepted => { ..paragraph.properties, change: [] }
@@ -718,7 +814,10 @@ resolve_paragraph = |paragraph, state| {
 	content = resolve_inlines(paragraph.content, formatted.state)
 	var $state = content.state
 	var $mark = List.with_capacity(properties.mark.len())
-	var $joins = Bool.False
+	var $joins = match state.chosen {
+		Joined(places) => places.contains(state.paragraphs)
+		_ => Bool.False
+	}
 	for change in properties.mark {
 		taken = take($state, change.author, change.date)
 		$state = paired(taken.state, change.kind, taken.chosen)
@@ -1071,7 +1170,11 @@ range_key = |side, name|
 # nothing of the current line has been passed; the span and the text that
 # replaces it; how the edit is made; whether the text is placed, or is to be
 # placed before whatever follows the character before the span's end; the
-# properties of the last run passed; and a problem with the span.
+# properties of the last run passed; a problem with the span; whether the
+# last paragraph's mark was in the span, so that a paragraph must follow to
+# join; the places in reading order of the paragraphs whose marks were, and
+# of the next paragraph; and the offsets of the line feeds where paragraphs
+# are to be split, with the mark the part before each takes.
 Editing : {
 	at : U64,
 	joining : Bool,
@@ -1084,7 +1187,42 @@ Editing : {
 	pending : Bool,
 	properties : Document.RunProperties,
 	problem : [Fine, Boundary(U64), LineFeed],
+	removing : Bool,
+	joined : List(U64),
+	paragraphs : U64,
+	breaks : List(U64),
+	mark : List(Document.MarkChange),
 }
+
+# An edit that changes nothing, from the start of the text.
+no_edit : Editing
+no_edit = {
+	at: 0,
+	joining: Bool.False,
+	fresh: Bool.True,
+	start: 0,
+	end: 0,
+	text: "",
+	made: Untracked,
+	placed: Bool.True,
+	pending: Bool.False,
+	properties: Document.no_run_properties,
+	problem: Fine,
+	removing: Bool.False,
+	joined: [],
+	paragraphs: 0,
+	breaks: [],
+	mark: [],
+}
+
+# How an edit is made, its date read as an instant.
+made_by : Revisions.Context -> Try([Untracked, Tracked(Document.Change)], [NotADate(Str)])
+made_by = |context|
+	match context {
+		Untracked => Ok(Untracked)
+		Tracked({ author, date: Unset }) => Ok(Tracked({ author, date: Unset, preserved: [] }))
+		Tracked({ author, date: Date(written) }) => Ok(Tracked({ author, date: Date(WmlRead.date_time(written) ? |_| NotADate(written)), preserved: [] }))
+	}
 
 # A run's content split where the span starts and ends, each piece kept,
 # gone, or followed by the new text.
@@ -1097,9 +1235,16 @@ line_feed = |state| {
 	{ ..state, at: state.at + 1, fresh: Bool.True, problem }
 }
 
-# The line feed a joining paragraph owes where nothing follows it to join.
+# The line feed a joining paragraph owes where nothing follows it to join,
+# and a problem where a paragraph whose mark was in the span has nothing to
+# join: before a table, a row's or cell's end or the end of the blocks.
 edit_line : Editing -> Editing
-edit_line = |state| if (state.joining) line_feed({ ..state, joining: Bool.False }) else state
+edit_line = |state| {
+	ended = if (state.joining) line_feed({ ..state, joining: Bool.False }) else state
+	if ended.removing and ended.problem == Fine {
+		{ ..ended, removing: Bool.False, problem: LineFeed }
+	} else ended
+}
 
 edit_blocks : List(Document.Block), Editing -> { blocks : List(Document.Block), state : Editing }
 edit_blocks = |blocks, state| {
@@ -1109,7 +1254,7 @@ edit_blocks = |blocks, state| {
 		match block {
 			Paragraph(paragraph) => {
 				edited = edit_paragraph(paragraph, $state)
-				$out = List.append($out, Paragraph(edited.paragraph))
+				$out = List.concat($out, edited.blocks)
 				$state = edited.state
 			}
 
@@ -1191,20 +1336,178 @@ edit_row_content = |item, state|
 
 # A paragraph edited. New text placed where a line begins goes first, with
 # the properties of the paragraph's first run; new text still to be placed
-# when the paragraph's content ends goes last.
-edit_paragraph : Document.Paragraph, Editing -> { paragraph : Document.Paragraph, state : Editing }
+# when the paragraph's content ends goes last. A mark in the span is
+# deleted when the edit is tracked, and its paragraph's place recorded; the
+# paragraph is split at the line feeds of new text in it.
+edit_paragraph : Document.Paragraph, Editing -> { blocks : List(Document.Block), state : Editing }
 edit_paragraph = |paragraph, state| {
-	starts = !state.placed and !state.pending and state.fresh and state.at == state.end
-	edited = edit_inlines(paragraph.content, if (starts) { ..state, placed: Bool.True } else state, Bool.True)
-	var $content = if (starts) List.prepend(edited.inlines, added(first_properties(paragraph.content) ?? Document.no_run_properties, state)) else edited.inlines
+	place = state.paragraphs
+	entered = { ..state, removing: Bool.False, paragraphs: place + 1 }
+	starts = !entered.placed and !entered.pending and entered.fresh and entered.at == entered.end
+	edited = edit_inlines(paragraph.content, if (starts) { ..entered, placed: Bool.True } else entered, Bool.True)
+	var $content = if (starts) List.prepend(edited.inlines, added(first_properties(paragraph.content) ?? Document.no_run_properties, entered)) else edited.inlines
 	var $state = edited.state
 	if $state.pending {
 		$content = List.append($content, added($state.properties, $state))
 		$state = { ..$state, pending: Bool.False, placed: Bool.True }
 	}
 	joins = Document.joins_next(paragraph)
-	ended = if (joins) $state else line_feed($state)
-	{ paragraph: { ..paragraph, content: $content }, state: { ..ended, joining: joins } }
+	removed = !joins and $state.start <= $state.at and $state.at < $state.end
+	properties = match $state.made {
+		Tracked(change) if removed => { ..paragraph.properties, mark: with_mark(paragraph.properties.mark, Deletion, change) }
+		_ => paragraph.properties
+	}
+	ended = if joins {
+		$state
+	} else if removed {
+		{ ..$state, at: $state.at + 1, fresh: Bool.True, removing: Bool.True, joined: List.append($state.joined, place) }
+	} else {
+		line_feed($state)
+	}
+	breaks = $state.breaks.keep_if(|offset| offset >= entered.at and offset < $state.at).map(|offset| offset - entered.at)
+	blocks = if (breaks.is_empty()) [Paragraph({ properties, content: $content })] else broken({ properties, content: $content }, breaks, $state.mark)
+	{ blocks, state: { ..ended, joining: joins } }
+}
+
+# A mark with a change of this kind added in the order a mark's changes
+# take: inserted, deleted, moved away, moved here.
+with_mark : List(Document.MarkChange), Document.RevisionKind, Document.Change -> List(Document.MarkChange)
+with_mark = |mark, kind, change| {
+	added_change = { kind, author: change.author, date: change.date, preserved: change.preserved }
+	List.join([mark.keep_if(|other| rank(other.kind) < rank(kind)), [added_change], mark.keep_if(|other| rank(other.kind) > rank(kind))])
+}
+
+# A mark change's place in the order a mark's changes take.
+rank : Document.RevisionKind -> U8
+rank = |kind|
+	match kind {
+		Insertion => 0
+		Deletion => 1
+		MoveSource => 2
+		MoveDestination => 3
+	}
+
+# Blocks with the paragraphs split where new text from `start` holds line
+# feeds, the part before each taking `made`'s new mark.
+broken_lines : List(Document.Block), U64, Str, [Untracked, Tracked(Document.Change)] -> List(Document.Block)
+broken_lines = |blocks, start, text, made| {
+	var $breaks = List.with_capacity(4)
+	var $offset = start
+	for byte in text.to_utf8() {
+		if byte == 10 {
+			$breaks = List.append($breaks, $offset)
+		}
+		$offset = $offset + 1
+	}
+	if $breaks.is_empty() {
+		return blocks
+	}
+	mark = match made {
+		Untracked => []
+		Tracked(change) => with_mark([], Insertion, change)
+	}
+	edit_blocks(blocks, { ..no_edit, breaks: $breaks, mark }).blocks
+}
+
+# A paragraph split at the line feeds at these offsets of its current text,
+# in order, each removed: every part but the last has the paragraph's
+# properties with `mark` as its mark's changes, and the last its own.
+broken : Document.Paragraph, List(U64), List(Document.MarkChange) -> List(Document.Block)
+broken = |paragraph, offsets, mark| {
+	var $blocks = List.with_capacity(offsets.len() + 1)
+	var $rest = paragraph.content
+	var $passed = 0.U64
+	for offset in offsets {
+		split = split_inlines($rest, offset - $passed)
+		$blocks = List.append($blocks, Paragraph({ properties: { ..paragraph.properties, mark }, content: split.before }))
+		$rest = split.after
+		$passed = offset + 1
+	}
+	List.append($blocks, Paragraph({ ..paragraph, content: $rest }))
+}
+
+# Inlines split at the character at `offset` of their current text, which
+# is removed: what comes before it and what comes after it, each hyperlink,
+# field, content control or change that holds it split in two, a part left
+# empty left out.
+split_inlines : List(Document.Inline), U64 -> { before : List(Document.Inline), after : List(Document.Inline) }
+split_inlines = |inlines, offset| {
+	var $before = List.with_capacity(inlines.len())
+	var $after = List.with_capacity(inlines.len())
+	var $at = 0.U64
+	var $found = Bool.False
+	for inline in inlines {
+		if $found {
+			$after = List.append($after, inline)
+		} else {
+			width = inline_bytes(List.with_capacity(16), inline, Current).len()
+			if offset < $at + width {
+				split = split_inline(inline, offset - $at)
+				$before = List.concat($before, split.before)
+				$after = List.concat($after, split.after)
+				$found = Bool.True
+			} else {
+				$before = List.append($before, inline)
+				$at = $at + width
+			}
+		}
+	}
+	{ before: $before, after: $after }
+}
+
+split_inline : Document.Inline, U64 -> { before : List(Document.Inline), after : List(Document.Inline) }
+split_inline = |inline, offset|
+	match inline {
+		Run(run) => {
+			var $before = List.with_capacity(run.content.len())
+			var $after = List.with_capacity(run.content.len())
+			var $at = 0.U64
+			for item in run.content {
+				size = Document.inline_text(Run({ properties: run.properties, content: [item] })).to_utf8().len()
+				if $at > offset {
+					$after = List.append($after, item)
+				} else if offset < $at + size {
+					match item {
+						Text(text) => {
+							bytes = text.to_utf8()
+							head = bytes.sublist({ start: 0, len: offset - $at })
+							tail = bytes.drop_first(offset - $at + 1)
+							if !head.is_empty() {
+								$before = List.append($before, Text(Str.from_utf8(head) ?? ""))
+							}
+							if !tail.is_empty() {
+								$after = List.append($after, Text(Str.from_utf8(tail) ?? ""))
+							}
+						}
+
+						_ => {
+							$before = List.append($before, item)
+						}
+					}
+				} else {
+					$before = List.append($before, item)
+				}
+				$at = $at + size
+			}
+			{
+				before: if ($before.is_empty()) [] else [Run({ properties: run.properties, content: $before })],
+				after: if ($after.is_empty()) [] else [Run({ properties: run.properties, content: $after })],
+			}
+		}
+
+		Hyperlink({ target, preserved, content }) => split_around(content, offset, |part| Hyperlink({ target, preserved, content: part }))
+		SimpleField({ code, preserved, content }) => split_around(content, offset, |part| SimpleField({ code, preserved, content: part }))
+		Container({ element, content }) => split_around(content, offset, |part| Container({ element, content: part }))
+		Revision(revision) => split_around(revision.content, offset, |part| Revision({ ..revision, content: part }))
+		_ => { before: [inline], after: [] }
+	}
+
+# Content split as [split_inlines] splits it, each part not empty wrapped
+# as the content was.
+split_around : List(Document.Inline), U64, (List(Document.Inline) -> Document.Inline) -> { before : List(Document.Inline), after : List(Document.Inline) }
+split_around = |content, offset, wrap| {
+	split = split_inlines(content, offset)
+	{ before: if (split.before.is_empty()) [] else [wrap(split.before)], after: if (split.after.is_empty()) [] else [wrap(split.after)] }
 }
 
 # The properties of the first run in content, through hyperlinks, fields
@@ -1417,3 +1720,445 @@ runs_of = |pieces, properties, state| {
 	)
 	flush(ended).out
 }
+
+# Why a block edit cannot be made where it was asked.
+BlockProblem : [NotABlockBoundary(U64), NoParagraphToJoin(U64)]
+
+# A block edit still to be made, made, giving what holds it, or failed.
+Found(a) : [Pending, Applied(a), Failed(BlockProblem)]
+
+# What a block edit does to the list of blocks it applies to, given the
+# place in the list where it applies and the current text before it.
+BlockEdit : List(Document.Block), U64, TextState -> Try(List(Document.Block), BlockProblem)
+
+# Blocks with `apply` made to the list holding the first paragraph or table
+# that begins a line at byte `at` of the current text, through tables, cells
+# and content controls, a table before the paragraphs in its cells; and the
+# current text up to where the edit applied or, when no block begins there,
+# of all the blocks.
+at_block : List(Document.Block), TextState, U64, BlockEdit -> { state : TextState, outcome : Found(List(Document.Block)) }
+at_block = |blocks, state, at, apply| {
+	var $state = state
+	var $index = 0.U64
+	for block in blocks {
+		if begins(block) and line_start($state) and $state.text.len() == at {
+			outcome = match apply(blocks, $index, $state) {
+				Ok(edited) => Applied(edited)
+				Err(problem) => Failed(problem)
+			}
+			return { state: $state, outcome }
+		}
+		inner = match block {
+			Table(table) => {
+				found = at_table(table.content, line_end($state), at, apply)
+				{ state: line_end(found.state), outcome: found_in(found.outcome, |content| Table({ ..table, content })) }
+			}
+
+			Container({ element, content }) => {
+				found = at_block(content, $state, at, apply)
+				{ state: found.state, outcome: found_in(found.outcome, |inner_blocks| Container({ element, content: inner_blocks })) }
+			}
+
+			_ => { state: block_text($state, block, Current), outcome: Pending }
+		}
+		match inner.outcome {
+			Applied(edited) => return { state: inner.state, outcome: Applied(spliced(blocks, $index, 1, [edited])) }
+			Failed(problem) => return { state: inner.state, outcome: Failed(problem) }
+			Pending => {
+				$state = inner.state
+			}
+		}
+		$index = $index + 1
+	}
+	{ state: $state, outcome: Pending }
+}
+
+at_table : List(Document.TableContent), TextState, U64, BlockEdit -> { state : TextState, outcome : Found(List(Document.TableContent)) }
+at_table = |items, state, at, apply| {
+	var $state = state
+	var $index = 0.U64
+	for item in items {
+		inner = match item {
+			Row(row) => {
+				found = at_row(row.content, line_end($state), at, apply)
+				{ state: line_end(found.state), outcome: found_in(found.outcome, |content| Row({ ..row, content })) }
+			}
+
+			Container({ element, content }) => {
+				found = at_table(content, $state, at, apply)
+				{ state: found.state, outcome: found_in(found.outcome, |inner_items| Container({ element, content: inner_items })) }
+			}
+
+			_ => { state: $state, outcome: Pending }
+		}
+		match inner.outcome {
+			Applied(edited) => return { state: inner.state, outcome: Applied(spliced(items, $index, 1, [edited])) }
+			Failed(problem) => return { state: inner.state, outcome: Failed(problem) }
+			Pending => {
+				$state = inner.state
+			}
+		}
+		$index = $index + 1
+	}
+	{ state: $state, outcome: Pending }
+}
+
+at_row : List(Document.RowContent), TextState, U64, BlockEdit -> { state : TextState, outcome : Found(List(Document.RowContent)) }
+at_row = |items, state, at, apply| {
+	var $state = state
+	var $index = 0.U64
+	for item in items {
+		inner = match item {
+			Cell(cell) => {
+				found = at_block(cell.content, line_end($state), at, apply)
+				{ state: line_end(found.state), outcome: found_in(found.outcome, |content| Cell({ ..cell, content })) }
+			}
+
+			Container({ element, content }) => {
+				found = at_row(content, $state, at, apply)
+				{ state: found.state, outcome: found_in(found.outcome, |inner_items| Container({ element, content: inner_items })) }
+			}
+
+			_ => { state: $state, outcome: Pending }
+		}
+		match inner.outcome {
+			Applied(edited) => return { state: inner.state, outcome: Applied(spliced(items, $index, 1, [edited])) }
+			Failed(problem) => return { state: inner.state, outcome: Failed(problem) }
+			Pending => {
+				$state = inner.state
+			}
+		}
+		$index = $index + 1
+	}
+	{ state: $state, outcome: Pending }
+}
+
+# An edit's outcome inside what holds it.
+found_in : Found(a), (a -> b) -> Found(b)
+found_in = |found, wrap|
+	match found {
+		Applied(edited) => Applied(wrap(edited))
+		Failed(problem) => Failed(problem)
+		Pending => Pending
+	}
+
+# A list with `count` items from `index` replaced by `new` ones.
+spliced : List(a), U64, U64, List(a) -> List(a)
+spliced = |items, index, count, new| List.join([items.sublist({ start: 0, len: index }), new, items.drop_first(index + count)])
+
+# Whether a block begins a line of its own: a paragraph or a table.
+begins : Document.Block -> Bool
+begins = |block|
+	match block {
+		Paragraph(_) => Bool.True
+		Table(_) => Bool.True
+		_ => Bool.False
+	}
+
+# Whether the current text so far ends a line, with no paragraph to join.
+line_start : TextState -> Bool
+line_start = |state|
+	!state.joining
+		and (
+			match state.text.last() {
+				Ok(byte) => byte == 10
+				Err(_) => Bool.True
+			}
+		)
+
+# The paragraphs and tables of blocks in reading order, through content
+# controls but not into tables.
+Shape : List([Para, Tab])
+
+shape_of : List(Document.Block) -> Shape
+shape_of = |blocks|
+	blocks.fold(
+		[],
+		|kinds, block|
+			match block {
+				Paragraph(_) => List.append(kinds, Para)
+				Table(_) => List.append(kinds, Tab)
+				Container({ element: _, content }) => List.concat(kinds, shape_of(content))
+				_ => kinds
+			},
+	)
+
+# Whether a shape has a `later` after a `first`.
+after_one : Shape, [Para, Tab], [Para, Tab] -> Bool
+after_one = |shape, first, later| {
+	var $seen = Bool.False
+	for kind in shape {
+		if $seen and kind == later {
+			return Bool.True
+		}
+		if kind == first {
+			$seen = Bool.True
+		}
+	}
+	Bool.False
+}
+
+# A list with new blocks inserted at `index`. Tracked, the paragraphs among
+# them join the paragraph after them once rejected, or, where there is none,
+# the paragraph before them joins them.
+inserted_at : List(Document.Block), U64, List(Document.Block), [Untracked, Tracked(Document.Change)], U64 -> Try(List(Document.Block), BlockProblem)
+inserted_at = |items, index, new, made, at| {
+	shape = shape_of(new)
+	holds_paragraph = shape.contains(Para)
+	forward = match items.get(index) {
+		Ok(Paragraph(_)) => !after_one(shape, Para, Tab)
+		_ => Bool.False
+	}
+	backward = match items.get(if (index == 0) items.len() else index - 1) {
+		Ok(Paragraph(before)) if before.properties.mark.is_empty() and !after_one(shape, Tab, Para) => Ok(before)
+		_ => Err(NoParagraph)
+	}
+	if holds_paragraph and !forward and backward == Err(NoParagraph) {
+		return Err(NoParagraphToJoin(at))
+	}
+	match (made, backward) {
+		(Untracked, _) => Ok(spliced(items, index, 0, new))
+		(Tracked(change), _) if !holds_paragraph or forward => Ok(spliced(items, index, 0, inserting(new, change, Every, 0).blocks))
+		(Tracked(change), Ok(before)) => {
+			last = shape.keep_if(|kind| kind == Para).len() - 1
+			marked = Paragraph({ ..before, properties: { ..before.properties, mark: with_mark([], Insertion, change) } })
+			Ok(spliced(items, index - 1, 1, List.prepend(inserting(new, change, Restoring(last, before.properties), 0).blocks, marked)))
+		}
+
+		(Tracked(_), Err(_)) => Err(NoParagraphToJoin(at))
+	}
+}
+
+# New blocks as tracked insertions from the paragraph at place `place` in
+# reading order: each paragraph's content inserted and its mark inserted,
+# except the last when the paragraph before them is to be restored, which
+# keeps its mark and changes its properties from those; each table's rows
+# inserted with their cells' content.
+inserting : List(Document.Block), Document.Change, [Every, Restoring(U64, Document.ParagraphProperties)], U64 -> { blocks : List(Document.Block), place : U64 }
+inserting = |blocks, change, ending, place| {
+	var $place = place
+	var $out = List.with_capacity(blocks.len())
+	for block in blocks {
+		match block {
+			Paragraph(paragraph) => {
+				properties = match ending {
+					Restoring(last, before) if $place == last => restored_from(paragraph.properties, before, change)
+					_ => { ..paragraph.properties, mark: with_mark([], Insertion, change) }
+				}
+				$out = List.append($out, Paragraph({ properties, content: changed(paragraph.content, Insertion, change) }))
+				$place = $place + 1
+			}
+
+			Table(table) => {
+				$out = List.append($out, Table(tracked_table(table, Insertion, change)))
+			}
+
+			Container({ element, content }) => {
+				inner = inserting(content, change, ending, $place)
+				$place = inner.place
+				$out = List.append($out, Container({ element, content: inner.blocks }))
+			}
+
+			_ => {
+				$out = List.append($out, block)
+			}
+		}
+	}
+	{ blocks: $out, place: $place }
+}
+
+# Content inside one change of this kind, or nothing.
+changed : List(Document.Inline), Document.RevisionKind, Document.Change -> List(Document.Inline)
+changed = |content, kind, change|
+	if content.is_empty() {
+		[]
+	} else {
+		[Revision({ kind, author: change.author, date: change.date, content, preserved: change.preserved })]
+	}
+
+# A table with each row inserted or deleted, as `kind` says, and its cells'
+# paragraphs' content inside a change of that kind, through nested tables.
+tracked_table : Document.Table, Document.RevisionKind, Document.Change -> Document.Table
+tracked_table = |table, kind, change| {
+	cell_block = |block|
+		match block {
+			Paragraph(paragraph) => Paragraph({ ..paragraph, content: if (kind == Insertion) changed(paragraph.content, Insertion, change) else deleted_content(paragraph.content, change) })
+			Table(inner) => Table(tracked_table(inner, kind, change))
+			_ => block
+		}
+	row_item = |item|
+		match item {
+			Cell(cell) => Cell({ ..cell, content: cell.content.map(cell_block) })
+			_ => item
+		}
+	table_item = |item|
+		match item {
+			Row(row) => {
+				properties = if (kind == Insertion) { ..row.properties, inserted: Tracked(change) } else if (row.properties.deleted == Unset) { ..row.properties, deleted: Tracked(change) } else row.properties
+				Row({ properties, content: row.content.map(row_item) })
+			}
+
+			_ => item
+		}
+	{ ..table, content: table.content.map(table_item) }
+}
+
+# The last new paragraph's properties when the paragraph before the new
+# blocks is to be restored: its own mark, and its properties changed from
+# that paragraph's where they differ.
+restored_from : Document.ParagraphProperties, Document.ParagraphProperties, Document.Change -> Document.ParagraphProperties
+restored_from = |properties, before, change| {
+	previous = previous_of(before)
+	if previous_of(properties) == previous {
+		properties
+	} else {
+		{ ..properties, change: [{ author: change.author, date: change.date, preserved: change.preserved, previous }] }
+	}
+}
+
+# A paragraph's properties as the properties before a change of them.
+previous_of : Document.ParagraphProperties -> Document.ParagraphPropertiesOf([Unset])
+previous_of = |properties| {
+	style: properties.style,
+	alignment: properties.alignment,
+	indentation: properties.indentation,
+	spacing: properties.spacing,
+	keep_next: properties.keep_next,
+	keep_lines: properties.keep_lines,
+	page_break_before: properties.page_break_before,
+	widow_control: properties.widow_control,
+	outline_level: properties.outline_level,
+	borders: properties.borders,
+	shading: properties.shading,
+	tabs: properties.tabs,
+	numbering: properties.numbering,
+	preserved: properties.preserved,
+	mark: [],
+	change: Unset,
+}
+
+# A list without the blocks from `index`, where the current text so far is
+# `state`, up to the block whose line ends at the span's end, and the ends
+# of sections and other content without text up to the next block.
+deleted_at : List(Document.Block), U64, TextState, { start : U64, end : U64 }, [Untracked, Tracked(Document.Change)] -> Try(List(Document.Block), BlockProblem)
+deleted_at = |items, index, state, span, made| {
+	var $state = state
+	var $last = Err(NotFound)
+	var $at = index
+	for block in items.drop_first(index) {
+		if $last == Err(NotFound) {
+			$state = block_text($state, block, Current)
+			ends = match block {
+				Paragraph(_) | Table(_) | Container(_) => !$state.joining and $state.text.len() == span.end
+				_ => Bool.False
+			}
+			if ends {
+				$last = Ok($at)
+			} else if $state.text.len() > span.end {
+				return Err(NotABlockBoundary(span.end))
+			}
+			$at = $at + 1
+		}
+	}
+	last = $last ? |_| NotABlockBoundary(span.end)
+	next = items.drop_first(last + 1).find_first_index(|block| begins(block) or is_container(block)).map_ok(|found| last + 1 + found)
+	until = next ?? (last + 1)
+	range = items.sublist({ start: index, len: until - index })
+	shape = shape_of(range)
+	if shape.contains(Para) {
+		joinable = match next.map_ok(|found| items.get(found)) {
+			Ok(Ok(Paragraph(_))) => !after_one(shape, Para, Tab)
+			_ => Bool.False
+		}
+		if !joinable {
+			return Err(NoParagraphToJoin(span.start))
+		}
+	}
+	match made {
+		Tracked(change) => Ok(spliced(items, index, until - index, deleting(range, change)))
+		Untracked => {
+			removed = removing(range, { kept: List.with_capacity(2), carried: [], carrying: Bool.False })
+			rest = items.drop_first(until)
+			joined = match rest.first() {
+				Ok(Paragraph(paragraph)) if !removed.carried.is_empty() => List.prepend(rest.drop_first(1), Paragraph({ ..paragraph, content: List.concat(removed.carried, paragraph.content) }))
+				_ => rest
+			}
+			Ok(List.join([items.sublist({ start: 0, len: index }), removed.kept, joined]))
+		}
+	}
+}
+
+is_container : Document.Block -> Bool
+is_container = |block|
+	match block {
+		Container(_) => Bool.True
+		_ => Bool.False
+	}
+
+# Blocks as tracked deletions: each paragraph's content deleted and its
+# mark deleted, each table's rows deleted with their cells' content.
+deleting : List(Document.Block), Document.Change -> List(Document.Block)
+deleting = |blocks, change|
+	blocks.map(
+		|block|
+			match block {
+				Paragraph(paragraph) => {
+					mark = if (Document.joins_next(paragraph)) paragraph.properties.mark else with_mark(paragraph.properties.mark, Deletion, change)
+					Paragraph({ properties: { ..paragraph.properties, mark }, content: deleted_content(paragraph.content, change) })
+				}
+
+				Table(table) => Table(tracked_table(table, Deletion, change))
+				Container({ element, content }) => Container({ element, content: deleting(content, change) })
+				_ => block
+			},
+	)
+
+# A paragraph's content deleted: what is current inside deletions, a run of
+# them in one, inserted content with its own content deleted inside it, and
+# content already deleted and range boundaries as they are.
+deleted_content : List(Document.Inline), Document.Change -> List(Document.Inline)
+deleted_content = |content, change| {
+	var $out = List.with_capacity(content.len())
+	var $gone = List.with_capacity(content.len())
+	for inline in content {
+		kept = match inline {
+			Revision(revision) if revision.kind == Deletion or revision.kind == MoveSource => Ok(inline)
+			Revision(revision) => Ok(Revision({ ..revision, content: deleted_content(revision.content, change) }))
+			BookmarkStart(_) | BookmarkEnd(_) | CommentStart(_) | CommentEnd(_) | MoveStart(_) | MoveEnd(_) => Ok(inline)
+			_ => Err(Gone)
+		}
+		match kept {
+			Ok(item) => {
+				$out = List.append(List.concat($out, changed($gone, Deletion, change)), item)
+				$gone = []
+			}
+
+			Err(Gone) => {
+				$gone = List.append($gone, inline)
+			}
+		}
+	}
+	List.concat($out, changed($gone, Deletion, change))
+}
+
+# Blocks removed untracked as accepting their tracked deletion removes them:
+# paragraphs and tables go, what a paragraph's content leaves behind is
+# carried to the paragraph after them, the end of a section goes once a
+# paragraph is carried past it, and everything else stays.
+removing : List(Document.Block), { kept : List(Document.Block), carried : List(Document.Inline), carrying : Bool } -> { kept : List(Document.Block), carried : List(Document.Inline), carrying : Bool }
+removing = |blocks, start|
+	blocks.fold(
+		start,
+		|state, block|
+			match block {
+				Paragraph(paragraph) => { ..state, carried: List.concat(state.carried, left_behind(paragraph.content)), carrying: Bool.True }
+				Table(_) => state
+				Section(_) if state.carrying => state
+				Container({ element, content }) => {
+					inner = removing(content, { ..state, kept: [] })
+					{ ..inner, kept: List.append(state.kept, Container({ element, content: inner.kept })) }
+				}
+
+				_ => { ..state, kept: List.append(state.kept, block) }
+			},
+	)

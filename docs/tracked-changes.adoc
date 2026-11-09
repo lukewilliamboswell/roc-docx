@@ -148,8 +148,9 @@ read, in the grid and the row, and written back unchanged.
 
 == Accept and reject changes
 
-`Docx.accept_all` accepts every tracked change of the body and
-`Docx.reject_all` rejects every one, each giving a new document:
+`Docx.accept_all` accepts every tracked change and `Docx.reject_all` rejects
+every one, in the body, the notes, the headers and footers and the comments,
+each giving a new document:
 
 [source,roc]
 ----
@@ -175,10 +176,11 @@ first = Docx.accept(earlier, Ids([0]))?
 * `Between({ from, until })` selects the changes made from `from` up to but
   not including `until`, both XML Schema dates and times compared as
   instants, so a change without a date is in no range.
-* `Ids(ids)` selects the changes with these `id`s from `Docx.revisions`.
-  Accepting or rejecting changes takes them out of the list, so the `id`s of
-  the changes after them change: read `Docx.revisions` again before selecting
-  by `id` once more.
+* `Ids(ids)` selects the changes with these `id`s from `Docx.revisions`,
+  which lists the body's changes, so it selects none in the notes, headers,
+  footers and comments. Accepting or rejecting changes takes them out of the
+  list, so the `id`s of the changes after them change: read `Docx.revisions`
+  again before selecting by `id` once more.
 
 What accepting and rejecting do, change by change:
 
@@ -209,10 +211,11 @@ join before a table, the end of its cell or the end of the body stays as it
 is. These are the rules `Revisions.text` follows, so the text of an accepted
 document is always the final text, and of a rejected one the original text.
 
-Only the body's changes are accepted or rejected, those `Docx.revisions`
-lists; changes in notes, headers, footers and comments stay. Each edit gives
-the document as `Docx.to_bytes` writes it. `Revisions.accept` and
-`Revisions.reject` do the same to any blocks.
+The changes of each note, header, footer and comment are resolved as the
+body's are, each part on its own: a paragraph joins only the next paragraph
+of its own note, header, footer or comment. Each edit gives the document as
+`Docx.to_bytes` writes it. `Revisions.accept` and `Revisions.reject` do the
+same to any blocks.
 
 == Edit text as tracked changes
 
@@ -237,6 +240,26 @@ text follows it as an insertion, so accepting both gives the text edited
 silently and rejecting both gives the text before the edit. Deleting text
 that was inserted earlier puts a deletion inside that insertion.
 
+An edit can run over the ends of paragraphs, and new text can end one and
+begin another:
+
+[source,roc]
+----
+joined = Docx.delete_text(document, { start: end_of_first, end: start_of_second }, morgan)?
+split = Docx.insert_text(document, end_of_first, " (as agreed)\nBoth parties confirm this amendment.", morgan)?
+----
+
+* A paragraph whose line feed is in the span joins the next paragraph, which
+  keeps its own properties, as when a deleted paragraph mark is accepted;
+  tracked, the paragraph's mark is deleted. If the mark ended a section, the
+  section's end goes with it.
+* A line feed in the new text splits the paragraph it lands in. The part
+  before takes a copy of the paragraph's properties, so new paragraphs after
+  a heading are headings too, and a new mark, inserted when tracked; the
+  part after keeps the paragraph's own mark. Rejecting the inserted mark
+  joins the parts again. A hyperlink, field or change the line feed lands
+  in is split in two with the paragraph.
+
 === Where a text edit applies
 
 A span, a `Comments.Span` as comments use, is `{ start, end }`: byte offsets
@@ -258,17 +281,63 @@ nothing.
   after it move by the difference in length. Making several edits from the
   last to the first keeps every offset taken from one text valid.
 
-A span must lie within one line: one that holds a line feed, which ends a
-paragraph or a table's row or cell, fails with `LineFeedInSpan(span)`, and
-new text holding a line feed with `LineFeedInText(text)`. A span that is not
-within the text, ends before it starts, or inserts after the last line fails
-with `OutsideText(span)`, one that starts or ends inside a character with
-`NotACharacterBoundary(offset)`, and a context whose date is not a date and
-time with `NotADate(text)`.
+A line feed in a span must end a paragraph that has a paragraph after it to
+join: a span holding the end of a table's row or cell, or the line feed of
+a paragraph followed by a table or ending its cell or the body, fails with
+`LineFeedInSpan(span)`. A span that is not within the text, ends before it
+starts, or inserts after the last line fails with `OutsideText(span)`, one
+that starts or ends inside a character with `NotACharacterBoundary(offset)`,
+and a context whose date is not a date and time with `NotADate(text)`.
 
 The `redline` example accepts one reviewer's changes and rejects another's,
-then replaces, inserts and deletes text as tracked changes and writes the
-document with tracking on.
+then replaces, inserts and deletes text as tracked changes, one insertion
+adding a paragraph, and writes the document with tracking on.
+
+== Insert and delete paragraphs and tables
+
+`Docx.insert_blocks` inserts blocks of the model where a paragraph or table
+begins, at a byte offset of `Docx.text` that starts a line, or at the end of
+the text, and `Docx.delete_blocks` deletes the paragraphs and tables from
+where one begins to where one ends, with its line feed. Both take a
+`Revisions.Context`:
+
+[source,roc]
+----
+clause = Paragraph({ properties: Document.no_paragraph_properties, content: [Run({ properties: Document.no_run_properties, content: [Text("Either party may end this agreement.")] })] })
+added = Docx.insert_blocks(document, Docx.text(document).to_utf8().len(), [clause], morgan)?
+removed = Docx.delete_blocks(added, { start: heading_start, end: table_end }, morgan)?
+----
+
+Where a table begins, new blocks go before the table, not into its first
+cell; to insert into a cell, give the offset where one of its paragraphs
+begins.
+
+Tracked, a new paragraph's content is an insertion and its mark is inserted,
+and a new table's rows are inserted with their cells' content. A deleted
+paragraph's content and mark are deleted, and a deleted table's rows with
+their cells' content. Rejecting takes inserted blocks away and accepting
+takes deleted ones away, by the rules of <<accept-and-reject-changes>>, so
+accepting a tracked block edit gives the same edit made silently and
+rejecting it gives the document before:
+
+* Rejecting an inserted mark joins its paragraph into the next, so new
+  paragraphs need the paragraph they go before. At the end of the body, or
+  before a table, the mark of the paragraph before them is inserted
+  instead, as Word records a paragraph added at the end, and the last new
+  paragraph, if its properties differ from that paragraph's, records them
+  as a tracked change from them, so rejecting restores the paragraph before
+  as it was.
+* Accepting a deleted mark joins the paragraph into the next, so deleted
+  paragraphs need a paragraph directly after them, which keeps its own
+  properties and receives the comment and bookmark boundaries and comment
+  references they held. Deleted untracked, they leave the same.
+
+An insertion or deletion whose paragraphs would have no paragraph to join,
+because the paragraph before has changes of its mark, there is none, or a
+table stands between them, fails with `NoParagraphToJoin(offset)`, whether
+tracked or not, so the same edit never succeeds one way and fails the other.
+An offset where no block begins or ends fails with
+`NotABlockBoundary(offset)`.
 
 == Write tracked changes
 
