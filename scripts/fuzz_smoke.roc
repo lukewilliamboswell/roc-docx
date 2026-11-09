@@ -57,12 +57,15 @@ main! = |_args| {
 		executable = ".roc-docx/fuzz/${name}"
 		corpus = ".roc-docx/fuzz/corpus/${name}"
 		report = ".roc-docx/fuzz/reports/${name}"
+		check_report = ".roc-docx/fuzz/reports/${name}-check"
 		Path.create_all!(Path.utf8(corpus))?
-		match Path.delete_all!(Path.utf8(report)) {
-			_ => {}
+		for stale in [report, check_report] {
+			match Path.delete_all!(Path.utf8(stale)) {
+				_ => {}
+			}
 		}
 		steps = [
-			[executable, "check"],
+			[executable, "check", "--report-dir=${check_report}"],
 			[executable, "run", corpus, "--time=1", "--runs=64", "--max-input-size=4096", "--timeout=10", "--report-dir=${report}"],
 		]
 		var $ok = built
