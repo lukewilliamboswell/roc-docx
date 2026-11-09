@@ -1,0 +1,108 @@
+= Write a document
+
+This chapter writes a document's body from the model that
+<<read-a-documents-text>> reads, and says what the written markup looks like
+and how the identifiers in it are chosen. It continues from
+<<read-and-write-the-parts-of-a-document>>, which passes a whole document
+through.
+
+== Write the body from its model
+
+`Docx.to_bytes` writes the main document part from the model `Docx.body`
+reads, not from the tree it was read as:
+
+[source,roc]
+----
+{ document, diagnostics: _ } = Docx.parse(bytes)?
+written = Docx.to_bytes(document)?
+----
+
+Everything the body holds is in the model: what the model represents as
+typed values, and everything else as the XML it was read as, in its place.
+So the body that comes back when the written bytes are read is the body that
+was written, and writing that again gives the same bytes. The main document
+root keeps its declarations, its attributes and whatever it holds beside the
+body, such as a page background. The other parts, the footnotes and
+endnotes, headers and footers, styles and numbering among them, are written
+from the trees they were read as, as
+<<read-and-write-the-parts-of-a-document>> describes.
+
+`WmlWrite.document` is the writer on its own. It takes the main document
+part's tree as it was read, the blocks to write into its body and a
+`WmlWrite.Context` with the part's relationships and its notes'
+identifiers, and gives the part's tree and its relationships with any it
+needed added:
+
+[source,roc]
+----
+{ tree, relationships } = WmlWrite.document(shell, blocks, { relationships: [], footnotes: [], endnotes: [] })?
+----
+
+A tree whose root is not a WordprocessingML document is not a main document
+part, and comes back as it is. A note reference names its note by its place
+among the document's footnotes or endnotes; one whose place the context does
+not have cannot be written, and fails with `MissingNote({ kind, note })`.
+
+== The canonical form
+
+Producers spell the same document in many ways. The writer spells it one
+way, so that the same model always gives the same bytes and every part it
+writes is valid against the ECMA-376 Transitional schema:
+
+* The elements of a paragraph's, run's, table's, row's, cell's and section's
+  properties come in the order the schema's sequence gives them, and so do
+  the edges of borders. A property element the model keeps as it was read,
+  in `preserved`, is written at its place in that order; one the schema does
+  not name, such as an extension, stays after the kept element it followed.
+* Each element's attributes come in a fixed order.
+* A property that is on is the element alone, `<w:b/>`; one that is off says
+  `w:val="0"`. A document that wrote `true`, `on`, `1`, `false` or `off` reads
+  to the same model and is written this way.
+* Numbers are whole decimal numbers. A measure written with a fraction is
+  already whole when it is read, as <<read-and-write-the-parts-of-a-document>>
+  says, and a table width finer than the fiftieths of a per cent the model
+  holds is rounded when it is read.
+* Text says `xml:space="preserve"` exactly where its whitespace would
+  otherwise be read as layout: where it begins or ends with a space, a tab or
+  a line end, or holds a tab or a line end.
+* What the model reads as the schema's default where the document leaves it
+  out is left out: one column, 720 twips between columns and no line between
+  them, and a portrait page. Required attributes are always written, such as
+  all seven of a page's margins, and so is a line spacing's rule.
+* A table always has its properties and its grid, which the schema
+  requires, even when both are empty.
+* A section's end is written where the schema puts it: in the properties of
+  the paragraph whose mark ends it, or, for the body's last section, at the
+  end of the body. A section in a table cell, or one that no paragraph comes
+  before, is written where it stands.
+* Table property exceptions at the start of a row are written before the
+  row's properties, where the schema puts them.
+
+== Identifiers
+
+The model names what it refers to by meaning: a bookmark by its name, a
+hyperlink by its address, a note reference by its note's place, a picture by
+its image part and a header or footer by its part. The writer chooses the
+identifiers the markup needs, as a function of the model and the part's
+relationships alone:
+
+* A bookmark takes the lowest number that no other bookmark and no element
+  kept as it was read uses as its `w:id`, in the order the bookmarks begin,
+  so that bookmarks, comments and revisions share one space of identifiers
+  without colliding. A bookmark's end takes its start's identifier.
+* A hyperlink, picture, header or footer uses the part's relationship to its
+  target, in the same mode, internal or external; a header or footer needs
+  one of the header or footer kind. When the part has none, a relationship
+  is added as `rId` with the lowest number, from the count of relationships
+  up, that no relationship uses. A picture's drawing embeds that
+  relationship and takes its size from the model.
+* A note reference takes the identifier of the note at its place.
+* Word's paragraph and row identifiers, `w14:paraId` and `w14:textId`, are
+  not part of the model and are not written: nothing in the body refers to
+  them.
+
+An identifier written by the package therefore need not be the one the
+document was read with, which is why two documents are compared with
+`Docx.equivalent`: the main document parts are the same when each is
+written from its model, so a document and the document its written bytes
+read back as are equivalent.

@@ -117,8 +117,8 @@ check_linear = |stats, nodes| {
 }
 
 # Measured on nightly-2026-11-07: the declared tables, of 261 and 4,041
-# nodes, take 3.4 allocations and 350 bytes live per node, compatibility
-# processing included.
+# nodes, took 3.4 allocations and 350 bytes live per node while
+# compatibility processing came first; 2.7 and 235 without it.
 linear_allocation_ceiling : U64 -> U64
 linear_allocation_ceiling = |nodes| 64 + 4 * nodes
 
@@ -138,17 +138,18 @@ size = |node|
 exact_ceiling : List(U8) -> Try(U64, [NotDeclared])
 exact_ceiling = |program|
 	if program == small_program {
-		Ok(880)
+		Ok(705)
 	} else if program == large_program {
-		Ok(13_551)
+		Ok(10_969)
 	} else {
 		Err(NotDeclared)
 	}
 
 # The small and large declared tables repeat one program, the large one
-# sixteen times as often. Reading them takes 880 and 13,551 allocations and
-# requests 272,983 and 4,079,103 bytes, ratios of 15.4 and 14.9 against the
-# sixteen the test allows.
+# sixteen times as often. Reading them takes 705 and 10,969 allocations and
+# requests 95,520 and 1,494,484 bytes, ratios of 15.6 and 15.6 against the
+# sixteen the test allows. Reading the part as written, without markup
+# compatibility processing first (G2.7a), lowered them from 880 and 13,551.
 small_program : List(U8)
 small_program = List.join(List.repeat(program_unit, 4))
 

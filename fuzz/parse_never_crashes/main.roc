@@ -15,8 +15,8 @@ import "../../tests/fixtures/libreoffice/basics.docx" as libreoffice_basics : Li
 ## Any bytes parse to `Ok` or a structured `Err`, never a crash, and parsing
 ## the same bytes twice gives the same result. A document that parses passes
 ## through: it writes, writing it twice gives the same bytes, the written
-## bytes parse to an equivalent document with nothing left to drop, and
-## writing that gives the same bytes again.
+## bytes parse to a document `Docx.equivalent` finds equivalent, with
+## nothing left to drop, and writing that gives the same bytes again.
 ##
 ## Inputs are arbitrary bytes, or packages generated from a small program of
 ## bytes whose main document mixes WordprocessingML with an extension
@@ -58,7 +58,7 @@ test! = |input| {
 				crash "writing a document twice gave different bytes"
 			}
 			again = Docx.parse(written) ?? crash "a written document did not parse"
-			if !Document.equivalent(document, again.document) {
+			if !Docx.equivalent(document, again.document) {
 				crash "a written document is not equivalent to the one written"
 			}
 			if !again.diagnostics.is_empty() {
@@ -148,19 +148,25 @@ inflated = |bytes|
 # LibreOffice document, which examines its page margins for a missing gutter
 # and the names of its elements with a value holding a point; the repaired
 # example costs the small one's, its paragraphs' properties and the repairs.
+# Writing the main document from the model (G2.7a) reads its body and writes
+# it again as a tree, linear in the part: 44 more for the small example, 275
+# for the large, 140 for the repaired one, whose paragraphs have properties,
+# and 1,161 to 10,945 for the fixtures, most for the Google Docs export,
+# whose 40 paragraphs each state many run and paragraph properties and
+# whose comments' identifiers are read to write their ranges.
 exact_ceiling : Input -> Try(U64, [NotDeclared])
 exact_ceiling = |input|
 	match input {
-		Generated(program) if program == small_program => Ok(1_189)
-		Generated(program) if program == large_program => Ok(9_273)
-		Generated(program) if program == undeclared_program => Ok(1_298)
-		Generated(program) if program == repaired_program => Ok(1_354)
+		Generated(program) if program == small_program => Ok(1_233)
+		Generated(program) if program == large_program => Ok(9_548)
+		Generated(program) if program == undeclared_program => Ok(1_342)
+		Generated(program) if program == repaired_program => Ok(1_494)
 		Fixture(index) => fixtures.get(index).map_ok(|fixture| fixture.allocations).map_err(|_| NotDeclared)
 		_ => Err(NotDeclared)
 	}
 
 # The small and large generated examples repeat one program, the large one
-# sixteen times as often; their ceilings, 1,189 and 9,273, keep the growth
+# sixteen times as often; their ceilings, 1,233 and 9,548, keep the growth
 # linear, the small one mostly the constant cost of a package and of one
 # DEFLATE compressor.
 small_program : List(U8)
@@ -188,9 +194,9 @@ program_unit = [7, 4, 3, 5, 1, 2, 6, 2, 0]
 
 fixtures : List({ name : Str, bytes : List(U8), allocations : U64 })
 fixtures = [
-	{ name: "gdocs-resume", bytes: gdocs_resume, allocations: 25_936 },
-	{ name: "pandoc-basics", bytes: pandoc_basics, allocations: 16_296 },
-	{ name: "libreoffice-basics", bytes: libreoffice_basics, allocations: 14_655 },
+	{ name: "gdocs-resume", bytes: gdocs_resume, allocations: 36_881 },
+	{ name: "pandoc-basics", bytes: pandoc_basics, allocations: 17_589 },
+	{ name: "libreoffice-basics", bytes: libreoffice_basics, allocations: 15_816 },
 ]
 
 wordprocessingml : Str

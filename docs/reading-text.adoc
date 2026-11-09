@@ -41,9 +41,9 @@ a space.
 == The blocks
 
 `Docx.body` gives the body as a list of `Document.Block` values in reading
-order, read from the main document part after the markup compatibility
-rules have been applied, so an extension the package does not understand is
-skipped and alternative content is read as the branch it understands:
+order, read from the main document part as it is written, extensions and
+alternative content included, so that the model holds everything the part
+says and <<write-a-document>> can write it back from the model:
 
 [source,roc]
 ----
@@ -82,6 +82,17 @@ control is still text.
 A break of a type the schema does not define, a symbol without a character
 code and text holding markup are kept as `Preserved` run content rather than
 guessed at.
+
+Extensions are kept the same way. An element in a namespace the package does
+not understand, such as Word's newer shapes, is `Preserved` where it stands,
+and so is alternative content (`mc:AlternateContent`) as a whole, which is
+how LibreOffice writes a horizontal line: its text, if it has any, is not
+part of the body's text. A paragraph, run, table, row, cell or piece of run
+content with an attribute the model cannot hold, such as an extension's, is
+kept whole as `Preserved` rather than read without it. The exceptions are the
+identifiers Word gives paragraphs and rows (`w14:paraId` and `w14:textId`):
+they are not part of the model, which names what it refers to by meaning,
+and nothing in the body refers to them.
 
 == Links and bookmarks
 

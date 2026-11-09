@@ -1,6 +1,6 @@
-written: 7825 bytes, FNV-1a 64 167aab0479eea954
+written: 7822 bytes, FNV-1a 64 7e0fad64a881c8ec
 part: /_rels/.rels 735 bytes application/vnd.openxmlformats-package.relationships+xml
-part: /word/document.xml 2767 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml
+part: /word/document.xml 2655 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml
 part: /word/_rels/document.xml.rels 678 bytes application/vnd.openxmlformats-package.relationships+xml
 part: /docProps/core.xml 641 bytes application/vnd.openxmlformats-package.core-properties+xml
 part: /docProps/app.xml 509 bytes application/vnd.openxmlformats-officedocument.extended-properties+xml

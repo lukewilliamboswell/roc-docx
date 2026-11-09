@@ -39,5 +39,7 @@ The package is under development and claims no document capability yet. What
 it can do so far is open a package, list its parts, read their XML, and
 write a document back with its parts and XML trees kept, which
 xref:getting-started.adoc#read-and-write-the-parts-of-a-document[the next chapter]
-shows, and read the text of its body as paragraphs and runs, which
-xref:reading-text.adoc#read-a-documents-text[the chapter after it] shows.
+shows, read the text of its body as paragraphs and runs, which
+xref:reading-text.adoc#read-a-documents-text[the chapter after it] shows, and
+write the body back from that model, which
+xref:writing.adoc#write-a-document[the chapter after that] shows.

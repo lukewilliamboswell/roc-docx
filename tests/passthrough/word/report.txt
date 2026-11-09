@@ -1,4 +1,4 @@
-written: 15732 bytes, FNV-1a 64 bf69a5e10bf0f3d6
+written: 15586 bytes, FNV-1a 64 78cc16e4241433cd
 dropped: /word/document.xml 28 revision save identifiers
 dropped: /word/document.xml 1 rendered page breaks
 dropped: /word/footnotes.xml 6 revision save identifiers
@@ -8,7 +8,7 @@ dropped: /word/footer1.xml 2 revision save identifiers
 dropped: /word/header2.xml 2 revision save identifiers
 dropped: /word/footer2.xml 2 revision save identifiers
 part: /_rels/.rels 588 bytes application/vnd.openxmlformats-package.relationships+xml
-part: /word/document.xml 5428 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml
+part: /word/document.xml 4828 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml
 part: /word/_rels/document.xml.rels 2030 bytes application/vnd.openxmlformats-package.relationships+xml
 part: /docProps/app.xml 624 bytes application/vnd.openxmlformats-officedocument.extended-properties+xml
 part: /docProps/core.xml 635 bytes application/vnd.openxmlformats-package.core-properties+xml

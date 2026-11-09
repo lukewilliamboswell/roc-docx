@@ -131,7 +131,7 @@ pass_through = |bytes| {
 		return Err("writing the document twice gave different bytes")
 	}
 	again = Docx.parse(written) ? |problem| "the written document does not parse: ${Str.inspect(problem)}"
-	if !Document.equivalent(parsed.document, again.document) {
+	if !Docx.equivalent(parsed.document, again.document) {
 		return Err("the written document is not equivalent to the fixture")
 	}
 	if !again.diagnostics.is_empty() {

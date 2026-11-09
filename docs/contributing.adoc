@@ -133,7 +133,7 @@ blueprint run cases-update   # rewrite the expectations, then review the diff
 
 The pass-through cases parse every fixture with `Docx.parse`, write it with
 `Docx.to_bytes`, and require that the written document parses to one
-`Document.equivalent` to the original with nothing left to drop, and that
+`Docx.equivalent` to the original with nothing left to drop, and that
 writing it twice, or writing what was written, gives the same bytes. Each
 expectation under `tests/passthrough/` records what reading dropped, the
 written package's size and FNV-1a digest, and its parts with their sizes and

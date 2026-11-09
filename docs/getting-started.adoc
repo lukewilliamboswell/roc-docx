@@ -223,8 +223,8 @@ extension namespace a part uses without declaring it ignorable to the root's
 `mc:Ignorable`, after what is there, so the written part says what the reader
 assumed and a reader that does not know the namespace, the ECMA schemas
 included, skips it rather than rejecting the part. The extension content
-itself is kept. A Google Docs paragraph identifier is written back with
-`mc:Ignorable="w14"` on the document's root. Packaging parts, such as the
+itself is kept. A Google Docs comment's paragraph identifier is written back with
+`mc:Ignorable="w14"` on the comments part's root. Packaging parts, such as the
 core properties, and parts whose root is in a namespace the package does not
 understand, such as custom XML, are left as they are.
 
@@ -239,14 +239,16 @@ limits, and `Docx.to_bytes` writes a document back:
 written = Docx.to_bytes(document)?
 ----
 
-Until the package writes its model of WordprocessingML, a document is its
-package and the tree of each XML part, which is every part whose content type
-is `application/xml`, `text/xml` or ends in `+xml`; <<read-a-documents-text>>
-reads the body's model from the main document's tree. Writing renders each tree
-with `XmlTree.render`, its extensions declared ignorable by
-`Mce.declare_extensions`, and copies every other part, such as an image, exactly
-as the archive stored it; the parts, their content types and their
-relationships are those of the original, in the order `Opc.writer` fixes.
+A document is its package and the tree of each XML part, which is every
+part whose content type is `application/xml`, `text/xml` or ends in `+xml`;
+<<read-a-documents-text>> reads the body's model from the main document's
+tree. Writing writes the main document from that model, in the canonical
+form <<write-a-document>> describes, renders every other tree with
+`XmlTree.render`, its extensions declared ignorable by
+`Mce.declare_extensions`, and copies every other part, such as an image,
+exactly as the archive stored it; the parts, their content types and their
+relationships are those of the original, with any relationship the main
+document needs added, in the order `Opc.writer` fixes.
 The same document always gives the same bytes. A document holds the
 archive's bytes and the trees of its XML parts; reading and writing it hold
 one part's bytes beyond them. `Document.from_package` reads a package you
@@ -283,10 +285,14 @@ Everything else is kept. A part that is not well-formed XML, breaks a
 namespace rule or exceeds a limit fails the parse with
 `XmlPartUnreadable({ part, problem })`.
 
-`Document.equivalent` says whether two documents are the same in the sense a
-document keeps when it is written and read again: the same parts with the same
-content types and relationships, every part that is not XML byte for byte the
-same, and the trees of the XML parts equal by `Document.equivalent_xml`. Two
+`Docx.equivalent` says whether two documents are the same in the sense a
+document keeps when it is written and read again: the main document parts
+the same when each is written from its model, so that spellings the model
+reads alike and identifiers the writer allocates make no difference, and
+every other part as `Document.equivalent` compares them. That is the same
+parts with the same content types and relationships, every part that is not
+XML byte for byte the same, and the trees of the XML parts equal by
+`Document.equivalent_xml`. Two
 trees are equivalent when they are equal after namespace prefixes and
 declarations, the order of attributes and whitespace-only text between
 elements are set aside, the dropped content is removed, repaired attributes

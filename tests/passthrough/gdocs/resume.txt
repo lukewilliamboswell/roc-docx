@@ -1,4 +1,4 @@
-written: 8368 bytes, FNV-1a 64 f96c18396f9226ed
+written: 8145 bytes, FNV-1a 64 652d97aa1627b087
 dropped: /word/comments.xml 16 revision save identifiers
 rounded: /word/styles.xml top w 100.0
 rounded: /word/styles.xml left w 100.0
@@ -27,7 +27,7 @@ rounded: /word/document.xml pgMar left 863.9999999999999
 rounded: /word/document.xml pgMar right 863.9999999999999
 defaulted: /word/document.xml pgMar gutter 0
 part: /_rels/.rels 297 bytes application/vnd.openxmlformats-package.relationships+xml
-part: /word/document.xml 32159 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml
+part: /word/document.xml 30071 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml
 part: /word/_rels/document.xml.rels 942 bytes application/vnd.openxmlformats-package.relationships+xml
 part: /word/theme/theme1.xml 7642 bytes application/vnd.openxmlformats-officedocument.theme+xml
 part: /word/comments.xml 3156 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml

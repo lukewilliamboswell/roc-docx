@@ -4,9 +4,10 @@
 ## `Docx.parse` opens the package within the default `Limits` and reads it as
 ## a [Document]; `Docx.body` and `Docx.text` read what its body says,
 ## `Docx.footnotes` and `Docx.endnotes` its notes, `Docx.comments` its
-## comments and `Docx.fields` its fields;
-## `Docx.to_bytes` writes a document as a package. What reading drops comes
-## back as diagnostics beside the document, never printed.
+## comments and `Docx.fields` its fields; `Docx.to_bytes` writes a document as
+## a package, its body written from the model, and `Docx.equivalent` says
+## whether two documents write the same. What reading drops comes back as
+## diagnostics beside the document, never printed.
 import Comments
 import Document
 import Mce
@@ -14,6 +15,7 @@ import Numbering
 import Opc
 import Styles
 import WmlRead
+import WmlWrite
 import XmlTree
 
 Docx :: [].{
@@ -46,10 +48,45 @@ Docx :: [].{
 	parse : List(U8) -> Try({ document : Document, diagnostics : List(Document.Diagnostic) }, ParseError)
 	parse = |bytes| Ok(Document.from_package(Opc.open(bytes, {})?, {})?)
 
-	## Write a document as the bytes of a `.docx`. The same document always
-	## gives the same bytes.
-	to_bytes : Document -> Try(List(U8), Document.WriteError)
-	to_bytes = |document| Document.to_bytes(document)
+	## Why a document cannot be written: the errors of [Document.to_bytes],
+	## and a note or comment that a reference or range names and the document
+	## does not have, as [WmlWrite.document] reports it.
+	WriteError : [
+		InvalidPartName(Str),
+		DuplicatePart(Str),
+		InvalidContentType(Str),
+		InvalidRelationship({ source : Str, id : Str }),
+		DuplicateRelationshipId({ source : Str, id : Str }),
+		NothingPending,
+		NotWritten(Str),
+		MissingPart(Str),
+		TruncatedArchive,
+		PartSizeMismatch({ name : Str, declared : U64 }),
+		XmlPartUnwritable({ part : Str, problem : XmlTree.WriteError }),
+		MissingNote({ kind : Document.NoteKind, note : U64 }),
+		MissingComment(U64),
+	]
+
+	## Write a document as the bytes of a `.docx`. The main document part is
+	## written from the model, as [Docx.body] reads it, by
+	## [WmlWrite.document], with the relationships it needs; every other part
+	## as [Document.to_bytes] writes it. The same document always gives the
+	## same bytes.
+	to_bytes : Document -> Try(List(U8), WriteError)
+	to_bytes = |document| Ok(Document.to_bytes(as_written(document)?)?)
+
+	## Whether two documents are the same document: the same parts with the
+	## same relationships, every part but the main document equivalent as
+	## [Document.equivalent] says, and the main document the same when each is
+	## written from its model, so that two spellings the model reads alike,
+	## and identifiers the writer allocates, make no difference. A document
+	## and the document its bytes read back as are equivalent.
+	equivalent : Document, Document -> Bool
+	equivalent = |one, other|
+		match (as_written(one), as_written(other)) {
+			(Ok(written), Ok(other_written)) => Document.equivalent(written, other_written)
+			_ => Bool.False
+		}
 
 	## The body of a document's main part as the typed model, block by block
 	## in reading order, as [WmlRead.body] reads it. A document without a main
@@ -62,15 +99,7 @@ Docx :: [].{
 	read_body : Document -> { blocks : List(Document.Block), diagnostics : List(WmlRead.Diagnostic) }
 	read_body = |document|
 		match Document.related(document, "/", Opc.officedocument_relationship) {
-			Ok(main) => {
-				ids = |kind|
-					match Document.related(document, main.name, kind) {
-						Ok(notes) => WmlRead.note_ids(notes.tree)
-						Err(NotFound) => []
-					}
-				WmlRead.read_body(main.tree, { relationships: main.relationships, footnotes: ids(footnotes_relationship), endnotes: ids(endnotes_relationship), comments: comment_ids(document) })
-			}
-
+			Ok(main) => WmlRead.read_body(main.tree, main_context(document, main))
 			Err(NotFound) => { blocks: [], diagnostics: [] }
 		}
 
@@ -190,6 +219,32 @@ Docx :: [].{
 		Str.from_utf8(line_end($state).text) ?? ""
 	}
 }
+
+# What reading and writing the main document part need from the rest of the
+# package: its relationships and its notes' and comments' identifiers.
+main_context : Document, Document.XmlPart -> WmlRead.Context
+main_context = |document, main| {
+	ids = |kind|
+		match Document.related(document, main.name, kind) {
+			Ok(part) => WmlRead.note_ids(part.tree)
+			Err(NotFound) => []
+		}
+	{ relationships: main.relationships, footnotes: ids(footnotes_relationship), endnotes: ids(endnotes_relationship), comments: comment_ids(document) }
+}
+
+# The document as it is written: its main document part written from the
+# model, with the relationships writing it needs.
+as_written : Document -> Try(Document, WmlWrite.WriteError)
+as_written = |document|
+	match Document.related(document, "/", Opc.officedocument_relationship) {
+		Ok(main) => {
+			context = main_context(document, main)
+			written = WmlWrite.document(main.tree, WmlRead.body(main.tree, context), context)?
+			Ok(Document.with_part(document, main.name, written.tree, written.relationships))
+		}
+
+		Err(NotFound) => Ok(document)
+	}
 
 footnotes_relationship : Str
 footnotes_relationship = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes"
@@ -338,9 +393,11 @@ expect {
 	Docx.body(parsed.document) == [] and Docx.text(parsed.document) == ""
 }
 
-## A paragraph identifier in an extension namespace that is not declared
-## ignorable, as Google Docs exports write `w14:paraId`, passes through and is
-## written declared ignorable, so the written part reads without a diagnostic.
+## An element in an extension namespace that is not declared ignorable, as
+## Google Docs exports use `w14`, passes through in its place and is written
+## declared ignorable, so the written part reads without a diagnostic; the
+## paragraph's `w14:paraId`, an identifier the writer allocates and nothing
+## refers to, is not written.
 expect {
 	w14 = "http://schemas.microsoft.com/office/word/2010/wordml"
 	main = "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"
@@ -348,14 +405,14 @@ expect {
 		relationships: [{ id: "rId1", kind: Opc.officedocument_relationship, target: "/word/document.xml", mode: Internal }],
 		parts: [{ name: "/word/document.xml", content_type: main, relationships: [] }],
 	}
-	xml = "<w:document xmlns:w='http://schemas.openxmlformats.org/wordprocessingml/2006/main' xmlns:w14='${w14}'><w:body><w:p w14:paraId='1A2B3C4D'><w:r><w:t>a</w:t></w:r></w:p></w:body></w:document>"
+	xml = "<w:document xmlns:w='http://schemas.openxmlformats.org/wordprocessingml/2006/main' xmlns:w14='${w14}'><w:body><w:p w14:paraId='1A2B3C4D'><w:r><w:t>a</w:t><w14:mark/></w:r></w:p></w:body></w:document>"
 	parsed = Docx.parse(Opc.to_bytes(graph, |_| Bytes(xml.to_utf8()))?)?
 	written = Docx.to_bytes(parsed.document)?
 	again = Docx.parse(written)?
 	part = Opc.part_bytes(Opc.open(written, {})?, "/word/document.xml")?
-	declared = "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" xmlns:mc=\"http://schemas.openxmlformats.org/markup-compatibility/2006\" xmlns:w14=\"${w14}\" mc:Ignorable=\"w14\"><w:body><w:p w14:paraId=\"1A2B3C4D\">"
+	declared = "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" xmlns:mc=\"http://schemas.openxmlformats.org/markup-compatibility/2006\" xmlns:w14=\"${w14}\" mc:Ignorable=\"w14\"><w:body><w:p><w:r><w:t>a</w:t><w14:mark/></w:r></w:p></w:body>"
 	undeclared = |document| Document.main_document(document).map_ok(|tree| Mce.process(tree).diagnostics.len())
-	Document.equivalent(parsed.document, again.document)
+	Docx.equivalent(parsed.document, again.document)
 		and Str.from_utf8(part).map_ok(|text| text.contains(declared)) == Ok(Bool.True)
 		and undeclared(parsed.document) == Ok(1)
 		and undeclared(again.document) == Ok(0)

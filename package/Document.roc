@@ -12,9 +12,9 @@
 ## The body's model, [Document.Block] and what it holds, is read from the
 ## main document's tree by [Docx.body], its notes from the footnotes and
 ## endnotes parts by [Docx.footnotes] and [Docx.endnotes], and its comments
-## from the comments part by [Docx.comments]. Until the model is
-## written, the trees are what a document writes, so the model is a reading
-## of them rather than a copy kept beside them.
+## from the comments part by [Docx.comments]. [Docx.to_bytes] writes the main
+## document from that model and every other part from its tree, so the model
+## is a reading of the trees rather than a copy kept beside them.
 import Lenient
 import Limits
 import Mce
@@ -642,6 +642,19 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 		relationship = document.graph.relationships.find_first(|rel| rel.kind == Opc.officedocument_relationship and rel.mode == Internal) ? |_| NoMainDocument
 		part = Opc.part(document.pkg, relationship.target) ? |_| NoMainDocument
 		Ok(document.trees.get(part.name) ? |_| NoMainDocument)
+	}
+
+	## The document with the XML part named `name` holding `tree` and the
+	## relationships whose source it is, as a writer gives them; every other
+	## part stays as it is. A name that is not a part of the document changes
+	## nothing.
+	with_part : Document, Str, XmlTree.Node, List(Opc.Relationship) -> Document
+	with_part = |document, name, tree, relationships| {
+		if document.trees.get(name).is_err() {
+			return document
+		}
+		parts = document.graph.parts.map(|part| if (part.name == name) { name: part.name, content_type: part.content_type, relationships: relationships } else part)
+		{ pkg: document.pkg, graph: { relationships: document.graph.relationships, parts }, trees: document.trees.insert(name, tree) }
 	}
 
 	## An XML part as reading left it: its name, its tree, and the

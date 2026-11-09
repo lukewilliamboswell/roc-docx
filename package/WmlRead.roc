@@ -10,6 +10,15 @@
 ## through the part's [WmlRead.Context], so the model holds what is named
 ## rather than the part's identifiers for it. Whitespace-only text between
 ## elements is not content and is not kept.
+##
+## A body, its notes and its headers and footers are read as they are
+## written, without [Mce.process] first, so that the model holds everything
+## [WmlWrite] writes back: an extension element or
+## alternative content (`mc:AlternateContent`) is kept whole in its place,
+## and a paragraph, run, table, row, cell, piece of run content or property
+## list with an attribute the model cannot hold is kept whole rather than
+## read without it. Word's paragraph and row identifiers, `w14:paraId` and
+## `w14:textId`, are not part of the model.
 import Document
 import Lenient
 import Mce
@@ -28,9 +37,7 @@ WmlRead :: [].{
 	Context : { relationships : List(Opc.Relationship), footnotes : List(Str), endnotes : List(Str), comments : List(Str) }
 
 	## The body of a main document part, block by block in reading order, from
-	## the part's tree as [Docx.parse] read it. The tree is interpreted by
-	## [Mce.process] first, so extensions are skipped and each alternative is
-	## read as the branch the package understands. A tree whose root is not a
+	## the part's tree as [Docx.parse] read it. A tree whose root is not a
 	## WordprocessingML document, or that has no body, has no blocks.
 	##
 	## A paragraph's first `w:pPr` holds its properties and a run's first
@@ -70,29 +77,26 @@ WmlRead :: [].{
 	## The body as [WmlRead.body] reads it, with what reading it noticed, in
 	## document order.
 	read_body : XmlTree.Node, Context -> { blocks : List(Document.Block), diagnostics : List(WmlRead.Diagnostic) }
-	read_body = |tree, context| {
-		interpreted = Mce.process(tree).interpreted
-		match interpreted {
+	read_body = |tree, context|
+		match tree {
 			Element(root) if is_w(root.name, "document") =>
 				match root.children.find_first(|child| is_element(child, "body")) {
-					Ok(Element(element)) => blocks(element.children, reading(interpreted, context), [])
+					Ok(Element(element)) => blocks(element.children, reading(tree, context), [])
 					_ => { blocks: [], diagnostics: [] }
 				}
 
 			_ => { blocks: [], diagnostics: [] }
 		}
-	}
 
 	## The notes of a footnotes or endnotes part, in the part's order, from
-	## the part's tree as [Docx.parse] read it, interpreted by [Mce.process]
-	## first. A note's content is read as a body's blocks are, and `w:type`
-	## says what kind of note it is. A tree whose root is not a
-	## WordprocessingML footnotes or endnotes part has no notes.
+	## the part's tree as [Docx.parse] read it. A note's content is read as a
+	## body's blocks are, and `w:type` says what kind of note it is. A tree
+	## whose root is not a WordprocessingML footnotes or endnotes part has no
+	## notes.
 	notes : XmlTree.Node, Context -> List(Document.Note)
 	notes = |tree, context| {
-		interpreted = Mce.process(tree).interpreted
-		within = reading(interpreted, context)
-		note_elements(interpreted).map(
+		within = reading(tree, context)
+		note_elements(tree).map(
 			|element| {
 				kind = match value_of(element, "type") {
 					Ok("separator") => Separator
@@ -108,7 +112,7 @@ WmlRead :: [].{
 	## The identifiers of a footnotes or endnotes part's notes, in the order
 	## [WmlRead.notes] reads them; a note without one has the empty string.
 	note_ids : XmlTree.Node -> List(Str)
-	note_ids = |tree| note_elements(Mce.process(tree).interpreted).map(|element| value_of(element, "id") ?? "")
+	note_ids = |tree| note_elements(tree).map(|element| value_of(element, "id") ?? "")
 
 	## The comments of a comments part, in the part's order, from the part's
 	## tree as [Docx.parse] read it, interpreted by [Mce.process] first, with
@@ -167,17 +171,14 @@ WmlRead :: [].{
 	comment_ids = |tree| comment_elements(Mce.process(tree).interpreted).map(|element| value_of(element, "id") ?? "")
 
 	## The blocks of a header or footer part, from the part's tree as
-	## [Docx.parse] read it, interpreted by [Mce.process] first and read as a
-	## body's blocks are. A tree whose root is not a WordprocessingML header
+	## [Docx.parse] read it, read as a body's blocks are. A tree whose root is not a WordprocessingML header
 	## or footer has no blocks.
 	header_footer : XmlTree.Node, Context -> List(Document.Block)
-	header_footer = |tree, context| {
-		interpreted = Mce.process(tree).interpreted
-		match interpreted {
-			Element(root) if is_w(root.name, "hdr") or is_w(root.name, "ftr") => blocks(root.children, reading(interpreted, context), []).blocks
+	header_footer = |tree, context|
+		match tree {
+			Element(root) if is_w(root.name, "hdr") or is_w(root.name, "ftr") => blocks(root.children, reading(tree, context), []).blocks
 			_ => []
 		}
-	}
 
 	## The core properties of a core properties part, from the part's tree,
 	## interpreted by [Mce.process] first. A property is read from the first
@@ -348,12 +349,12 @@ Reading : {
 }
 
 reading : XmlTree.Node, WmlRead.Context -> Reading
-reading = |interpreted, context| {
+reading = |tree, context| {
 	var $relationships = Dict.with_capacity(context.relationships.len())
 	for relationship in context.relationships {
 		$relationships = $relationships.insert(relationship.id, relationship)
 	}
-	{ relationships: $relationships, bookmarks: bookmark_names(interpreted), footnotes: places(context.footnotes), endnotes: places(context.endnotes), comments: places(context.comments) }
+	{ relationships: $relationships, bookmarks: bookmark_names(tree), footnotes: places(context.footnotes), endnotes: places(context.endnotes), comments: places(context.comments) }
 }
 
 places : List(Str) -> Dict(Str, U64)
@@ -859,7 +860,7 @@ blocks = |nodes, within, diagnostics| {
 		if is_content(node) {
 			read = block(node, within, $diagnostics)
 			match read.block {
-				Paragraph(read_paragraph) if read_paragraph.properties.preserved.any(|property| is_element(property, "sectPr")) => {
+				Paragraph(read_paragraph) if read_paragraph.properties.preserved.any(is_plain_section) => {
 					ended = section_end(read_paragraph, within, read.diagnostics)
 					$out = List.append(List.append($out, Paragraph(ended.paragraph)), Section(ended.section))
 					$diagnostics = ended.diagnostics
@@ -883,7 +884,7 @@ section_end = |paragraph, within, diagnostics| {
 	var $properties = Err(Missing)
 	for property in paragraph.properties.preserved {
 		match ($properties, property) {
-			(Err(Missing), Element(element)) if is_w(element.name, "sectPr") => {
+			(Err(Missing), Element(element)) if is_w(element.name, "sectPr") and element.attributes.is_empty() => {
 				$properties = Ok(element.children)
 			}
 
@@ -1329,8 +1330,8 @@ natural = |text| {
 block : XmlTree.Node, Reading, List(WmlRead.Diagnostic) -> { block : Document.Block, diagnostics : List(WmlRead.Diagnostic) }
 block = |node, within, diagnostics|
 	match node {
-		Element(element) if is_w(element.name, "p") => { block: Paragraph(paragraph(element.children, within)), diagnostics: diagnostics }
-		Element(element) if is_w(element.name, "tbl") => {
+		Element(element) if is_w(element.name, "p") and identified_only(element) and plain_first(element.children, "pPr") => { block: Paragraph(paragraph(element.children, within)), diagnostics: diagnostics }
+		Element(element) if is_w(element.name, "tbl") and element.attributes.is_empty() and plain_first(element.children, "tblPr") and plain_first(element.children, "tblGrid") => {
 			read = table(element.children, within, diagnostics)
 			{ block: Table(read.table), diagnostics: read.diagnostics }
 		}
@@ -1340,7 +1341,7 @@ block = |node, within, diagnostics|
 			{ block: Container({ element: without_children(element), content: read.blocks }), diagnostics: read.diagnostics }
 		}
 
-		Element(element) if is_w(element.name, "sectPr") => {
+		Element(element) if is_w(element.name, "sectPr") and element.attributes.is_empty() => {
 			read = section(element.children, within, diagnostics)
 			{ block: Section(read.section), diagnostics: read.diagnostics }
 		}
@@ -1386,7 +1387,7 @@ table = |children, within, diagnostics| {
 table_content : XmlTree.Node, Reading, List(WmlRead.Diagnostic) -> { content : Document.TableContent, diagnostics : List(WmlRead.Diagnostic) }
 table_content = |node, within, diagnostics|
 	match node {
-		Element(element) if is_w(element.name, "tr") => {
+		Element(element) if is_w(element.name, "tr") and identified_only(element) and plain_first(element.children, "trPr") => {
 			read = row(element.children, within, diagnostics)
 			{ content: Row(read.row), diagnostics: read.diagnostics }
 		}
@@ -1438,7 +1439,7 @@ row = |children, within, diagnostics| {
 row_content : XmlTree.Node, Reading, List(WmlRead.Diagnostic) -> { content : Document.RowContent, diagnostics : List(WmlRead.Diagnostic) }
 row_content = |node, within, diagnostics|
 	match node {
-		Element(element) if is_w(element.name, "tc") => {
+		Element(element) if is_w(element.name, "tc") and element.attributes.is_empty() and plain_first(element.children, "tcPr") => {
 			read = cell(element.children, within, diagnostics)
 			{ content: Cell(read.cell), diagnostics: read.diagnostics }
 		}
@@ -1952,7 +1953,7 @@ inlines = |nodes, within| {
 inline : XmlTree.Node, Reading -> Document.Inline
 inline = |node, within|
 	match node {
-		Element(element) if is_w(element.name, "r") => Run(run(element.children, within))
+		Element(element) if is_w(element.name, "r") and element.attributes.is_empty() and plain_first(element.children, "rPr") => Run(run(element.children, within))
 		Element(element) if is_w(element.name, "hyperlink") => hyperlink(element, within) ?? container(element, within)
 		Element(element) if is_w(element.name, "fldSimple") => simple_field(element, within) ?? container(element, within)
 		Element(element) if is_w(element.name, "bookmarkStart") => bookmark_start(element) ?? Preserved(node)
@@ -2054,16 +2055,16 @@ run_content = |node, within|
 		Element(element) if element.name.namespace == Uri(wordprocessingml) =>
 			match element.name.local {
 				"t" => text(element).map_ok(|value| Text(value)) ?? Preserved(node)
-				"tab" => Tab
-				"br" => break_of(element) ?? Preserved(node)
-				"cr" => Break({ kind: Line, clear: NoClear })
-				"sym" => symbol(element) ?? Preserved(node)
-				"softHyphen" => SoftHyphen
-				"noBreakHyphen" => NonBreakingHyphen
+				"tab" if element.attributes.is_empty() => Tab
+				"br" if only(element, ["type", "clear"]) => break_of(element) ?? Preserved(node)
+				"cr" if element.attributes.is_empty() => Break({ kind: Line, clear: NoClear })
+				"sym" if only(element, ["font", "char"]) => symbol(element) ?? Preserved(node)
+				"softHyphen" if element.attributes.is_empty() => SoftHyphen
+				"noBreakHyphen" if element.attributes.is_empty() => NonBreakingHyphen
 				"footnoteReference" => note_reference(element, Footnote, within.footnotes) ?? Preserved(node)
 				"endnoteReference" => note_reference(element, Endnote, within.endnotes) ?? Preserved(node)
-				"footnoteRef" => NoteMark(Footnote)
-				"endnoteRef" => NoteMark(Endnote)
+				"footnoteRef" if element.attributes.is_empty() => NoteMark(Footnote)
+				"endnoteRef" if element.attributes.is_empty() => NoteMark(Endnote)
 				"commentReference" => comment_place(element, within).map_ok(|place| CommentReference(place)) ?? Preserved(node)
 				"fldChar" => field_mark(element, node) ?? Preserved(node)
 				"instrText" => text(element).map_ok(|code| FieldCode(code)) ?? Preserved(node)
@@ -2154,6 +2155,9 @@ emus = |value| natural(value ? |_| NotLength).map_err(|_| NotLength)
 # removed, and each tab, carriage return and line feed left is a space.
 text : Element -> Try(Str, [NotText])
 text = |element| {
+	if !element.attributes.all(|attribute| attribute.name.local == "space" and attribute.name.namespace == Uri(xml_namespace)) {
+		return Err(NotText)
+	}
 	var $value = List.with_capacity(16)
 	for child in element.children {
 		match child {
@@ -2258,6 +2262,33 @@ is_content = |node|
 		Element(_) => Bool.True
 		Text(content) => !content.to_utf8().all(|byte| byte == 32 or byte == 9 or byte == 10 or byte == 13)
 	}
+
+# Whether an element's attributes are at most the identifiers of a paragraph
+# or row in Word's extension, `w14:paraId` and `w14:textId`, which the model
+# does not hold and the writer allocates.
+identified_only : Element -> Bool
+identified_only = |element| element.attributes.all(|attribute| (attribute.name.local == "paraId" or attribute.name.local == "textId") and attribute.name.namespace == Uri(word_2010))
+
+# Whether the first child element of a WordprocessingML name, where there is
+# one, has no attributes, as the property elements the model reads have none.
+plain_first : List(XmlTree.Node), Str -> Bool
+plain_first = |children, local|
+	match children.find_first(|child| is_element(child, local)) {
+		Ok(Element(element)) => element.attributes.is_empty()
+		_ => Bool.True
+	}
+
+# Whether a node is section properties as the model reads them, without
+# attributes of their own.
+is_plain_section : XmlTree.Node -> Bool
+is_plain_section = |node|
+	match node {
+		Element(element) => is_w(element.name, "sectPr") and element.attributes.is_empty()
+		Text(_) => Bool.False
+	}
+
+word_2010 : Str
+word_2010 = "http://schemas.microsoft.com/office/word/2010/wordml"
 
 kept : List(XmlTree.Node) -> List(XmlTree.Node)
 kept = |nodes| nodes.keep_if(is_content)
@@ -2691,15 +2722,23 @@ expect {
 	}
 }
 
-## Markup compatibility is applied first: an alternative is read as the
-## branch the package understands and ignorable extensions are skipped.
+## Extensions and alternatives are kept as they were read, in their place;
+## Word's paragraph and row identifiers are not part of the model, and an
+## element with any other attribute the model cannot hold, such as an
+## extension's, is kept whole.
 expect {
-	mc = "xmlns:mc='http://schemas.openxmlformats.org/markup-compatibility/2006' xmlns:x='urn:example:x' mc:Ignorable='x'"
+	mc = "xmlns:mc='http://schemas.openxmlformats.org/markup-compatibility/2006' xmlns:x='urn:example:x' xmlns:w14='${word_2010}' mc:Ignorable='x w14'"
 	choice = "<mc:AlternateContent><mc:Choice Requires='x'><x:shape/></mc:Choice><mc:Fallback><w:t>fallback</w:t></mc:Fallback></mc:AlternateContent>"
-	xml = "<w:document xmlns:w='${wordprocessingml}' ${mc}><w:body><x:block/><w:p x:id='1'><w:r>${choice}</w:r></w:p></w:body></w:document>"
+	paragraphs = "<w:p w14:paraId='1A2B3C4D' w14:textId='77777777'><w:r>${choice}<w:t>a</w:t><w:tab x:id='1'/></w:r></w:p><w:p x:id='1'><w:r><w:t>b</w:t></w:r></w:p>"
+	xml = "<w:document xmlns:w='${wordprocessingml}' ${mc}><w:body><x:block/>${paragraphs}</w:body></w:document>"
 	tree = XmlTree.parse(xml.to_utf8(), {}) ?? Text("")
 	match WmlRead.body(tree, { relationships: [], footnotes: [], endnotes: [], comments: [] }) {
-		[Paragraph({ properties: _, content: [Run(r)] })] => r.content == [Text("fallback")]
+		[Preserved(_), Paragraph({ properties: _, content: [Run(r)] }), Preserved(_)] =>
+			match r.content {
+				[Preserved(_), Text("a"), Preserved(_)] => Bool.True
+				_ => Bool.False
+			}
+
 		_ => Bool.False
 	}
 }
