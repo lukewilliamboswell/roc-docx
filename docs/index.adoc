@@ -27,7 +27,9 @@ adds, replies to, resolves and removes them, and writes them back as threads;
 with every change accepted or rejected, and whether it tracks changes,
 accepts and rejects changes, edits its text silently or as tracked changes,
 turns tracking on or off, and writes every change back;
-<<write-a-document>> writes the body from that model, in one canonical form.
+<<write-a-document>> writes the body from that model, in one canonical form;
+<<generate-a-document>> starts a new document with a minimal set of styles
+and lists that Word and LibreOffice recognise.
 Understanding the design:: <<architecture>> is the enduring design: the
 pipeline, the document model, fidelity rules, the oracles and the tests.
 Changing the package:: <<contribute-to-roc-docx>> covers the checks, the
@@ -47,6 +49,8 @@ include::comments.adoc[leveloffset=+1]
 include::tracked-changes.adoc[leveloffset=+1]
 
 include::writing.adoc[leveloffset=+1]
+
+include::generating.adoc[leveloffset=+1]
 
 include::architecture.adoc[leveloffset=+1]
 

@@ -196,6 +196,12 @@ Opc :: [].{
 		Ok({ archive: bytes, parts: $parts, index: $index, limits })
 	}
 
+	## A package with no parts, which a document built rather than read
+	## stands on: it has no stored bytes to copy, so every part of such a
+	## document is written from its tree.
+	empty : Package
+	empty = { archive: [], parts: [], index: Dict.empty(), limits: {} }
+
 	## Every part, in archive order.
 	parts : Package -> List(Part)
 	parts = |pkg| pkg.parts.map(|located| located.part)

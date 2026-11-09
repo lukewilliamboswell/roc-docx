@@ -11,9 +11,11 @@ import cli.Stdout
 import docx.Comments
 import docx.Docx
 import docx.Document
+import docx.Numbering
 import docx.Opc
 import docx.Revisions
 import docx.Snapshot
+import docx.Styles
 import docx.WmlWrite
 import docx.XmlTree
 
@@ -40,12 +42,13 @@ import docx.XmlTree
 ## as the `package` adapter.
 ##
 ## Generated: documents built from the model rather than read, for content
-## the fixtures do not hold together, such as every kind of tracked change.
-## Each is written under `.roc-docx/generated/`, must read back as the model
-## it was built from, without anything to drop or repair, and pass through
-## as a fixture does; its snapshot goes beside the fixtures' and its report,
-## the pass-through report with the tracked changes read back, is compared
-## with `tests/generated/<name>.txt`.
+## the fixtures do not hold together, such as every kind of tracked change,
+## and a new document from the default document kit. Each is written under
+## `.roc-docx/generated/`, must read back as what it was built from, without
+## anything to drop or repair, and pass through as a fixture does; its
+## snapshot goes beside the fixtures' and its report, the pass-through
+## report with what it reads back (its tracked changes, or the kit's styles,
+## lists and properties), is compared with `tests/generated/<name>.txt`.
 ##
 ## Review: the fixture edited by the reviewer's pass of
 ## `examples/review_contract`, which adds a comment on the first line of
@@ -350,7 +353,7 @@ run_generated! = |update| {
 	var $updated = 0.U64
 	for document in generated {
 		path = ".roc-docx/generated/${document.name}.docx"
-		status = match built(document.content) {
+		status = match (document.build)() {
 			Ok({ written, report, document: read }) => {
 				Path.write_bytes!(Path.utf8(path), written)?
 				Path.write_utf8!(Path.utf8(".roc-docx/snapshots/generated/${document.name}.json"), Snapshot.json(read, { path, version: "working tree" }))?
@@ -414,8 +417,48 @@ built = |content| {
 }
 
 # Documents built from the model, by name.
-generated : List({ name : Str, content : List(Document.Block) })
-generated = [{ name: "revisions", content: every_revision }]
+generated : List({ name : Str, build : () -> Try({ written : List(U8), report : Str, document : Document }, Str) })
+generated = [{ name: "revisions", build: || built(every_revision) }, { name: "kit", build: new_document }]
+
+# A new document from the default document kit, with every core property
+# the kit takes, written and passed through as a fixture is; its report
+# adds the built-in styles and list levels the written document reads back
+# with, and its properties.
+new_document : () -> Try({ written : List(U8), report : Str, document : Document }, Str)
+new_document = || {
+	created = Docx.new_document({ title: Text("Generated document"), creator: Text("Ada Reviewer"), created: Date(stamp.written), modified: Date(stamp.written) }) ? |problem| "the kit refuses its properties: ${Str.inspect(problem)}"
+	passed = pass_through(Docx.to_bytes(created) ? |problem| "the new document does not write: ${Str.inspect(problem)}")?
+	again = Docx.parse(passed.written) ? |problem| "the written document does not parse: ${Str.inspect(problem)}"
+	if !Docx.equivalent(created, again.document) {
+		return Err("the new document reads back differently from what was built")
+	}
+	read_styles = Docx.styles(again.document)
+	read_lists = Docx.numbering(again.document)
+	if !read_styles.diagnostics.is_empty() or !read_lists.diagnostics.is_empty() {
+		return Err("the written styles or lists are not read as written: ${Str.inspect(read_styles.diagnostics)} ${Str.inspect(read_lists.diagnostics)}")
+	}
+	styles = kit_styles.map(
+		|id|
+			match Styles.get(read_styles.styles, id) {
+				Ok(style) => "style: ${id} ${Str.inspect(style.kind)} ${Str.inspect(style.name)} ${Str.inspect(style.usage)} based on ${Str.inspect(style.based_on)}"
+				Err(NotFound) => "style: ${id} missing"
+			},
+	)
+	levels = [(1, 0), (1, 1), (1, 2), (2, 0), (2, 1), (2, 2)].map(
+		|(instance, level)|
+			match Numbering.level(read_lists.numbering, read_styles.styles, { instance: Instance(instance), level: Level(level) }) {
+				Ok(found) => "list: ${instance.to_str()} level ${level.to_str()} ${Str.inspect(found.format)} ${Str.inspect(found.text)}"
+				Err(problem) => "list: ${instance.to_str()} level ${level.to_str()} ${Str.inspect(problem)}"
+			},
+	)
+	properties = Docx.core_properties(again.document)
+	lines = List.join([styles, levels, ["properties: ${Str.inspect((properties.title, properties.creator, properties.created, properties.modified))}"]])
+	Ok({ written: passed.written, report: Str.concat(passed.report, Str.join_with(lines.map(|line| "${line}\n"), "")), document: again.document })
+}
+
+# The identifiers of the kit's styles, as Word and LibreOffice know them.
+kit_styles : List(Str)
+kit_styles = ["Normal", "DefaultParagraphFont", "TableNormal", "NoList", "Heading1", "Heading2", "Heading3", "Heading4", "Heading5", "Heading6", "ListParagraph", "TableGrid", "Hyperlink", "FootnoteText", "FootnoteReference", "EndnoteText", "EndnoteReference", "CommentText", "CommentReference"]
 
 # A body with every kind of tracked change the model holds: insertions,
 # deletions, a deleted field's instruction, a move's source and destination

@@ -1,0 +1,35 @@
+written: 4208 bytes, FNV-1a 64 f3583c72f5c6c363
+part: /_rels/.rels 442 bytes application/vnd.openxmlformats-package.relationships+xml
+part: /word/document.xml 340 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml
+part: /word/_rels/document.xml.rels 679 bytes application/vnd.openxmlformats-package.relationships+xml
+part: /docProps/core.xml 558 bytes application/vnd.openxmlformats-package.core-properties+xml
+part: /word/styles.xml 5865 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml
+part: /word/numbering.xml 3569 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml
+part: /word/settings.xml 359 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml
+part: /word/fontTable.xml 296 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.fontTable+xml
+style: Normal Paragraph Named("Normal") KindDefault based on NoBase
+style: DefaultParagraphFont Character Named("Default Paragraph Font") KindDefault based on NoBase
+style: TableNormal Table Named("Normal Table") KindDefault based on NoBase
+style: NoList Numbering Named("No List") KindDefault based on NoBase
+style: Heading1 Paragraph Named("heading 1") Ordinary based on BasedOn("Normal")
+style: Heading2 Paragraph Named("heading 2") Ordinary based on BasedOn("Normal")
+style: Heading3 Paragraph Named("heading 3") Ordinary based on BasedOn("Normal")
+style: Heading4 Paragraph Named("heading 4") Ordinary based on BasedOn("Normal")
+style: Heading5 Paragraph Named("heading 5") Ordinary based on BasedOn("Normal")
+style: Heading6 Paragraph Named("heading 6") Ordinary based on BasedOn("Normal")
+style: ListParagraph Paragraph Named("List Paragraph") Ordinary based on BasedOn("Normal")
+style: TableGrid Table Named("Table Grid") Ordinary based on BasedOn("TableNormal")
+style: Hyperlink Character Named("Hyperlink") Ordinary based on BasedOn("DefaultParagraphFont")
+style: FootnoteText Paragraph Named("footnote text") Ordinary based on BasedOn("Normal")
+style: FootnoteReference Character Named("footnote reference") Ordinary based on BasedOn("DefaultParagraphFont")
+style: EndnoteText Paragraph Named("endnote text") Ordinary based on BasedOn("Normal")
+style: EndnoteReference Character Named("endnote reference") Ordinary based on BasedOn("DefaultParagraphFont")
+style: CommentText Paragraph Named("annotation text") Ordinary based on BasedOn("Normal")
+style: CommentReference Character Named("annotation reference") Ordinary based on BasedOn("DefaultParagraphFont")
+list: 1 level 0 Bullet Text("•")
+list: 1 level 1 Bullet Text("◦")
+list: 1 level 2 Bullet Text("▪")
+list: 2 level 0 Number("decimal") Text("%1.")
+list: 2 level 1 Number("lowerLetter") Text("%2.")
+list: 2 level 2 Number("lowerRoman") Text("%3.")
+properties: (Text("Generated document"), Text("Ada Reviewer"), Date("2026-05-07T09:00:00Z"), Date("2026-05-07T09:00:00Z"))

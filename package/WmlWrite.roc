@@ -17,7 +17,9 @@
 ## relationship that leads to its target, found among the part's
 ## relationships or added to them.
 import Document
+import Numbering
 import Opc
+import Styles
 import XmlTree
 
 WmlWrite :: [].{
@@ -340,6 +342,41 @@ WmlWrite :: [].{
 		}
 		tree
 	}
+
+	## The tree of a styles part: `defaults`, the document's default
+	## paragraph and run properties, and `styles` in order. Each style is
+	## written with its kind, whether it is its kind's default, whether it
+	## is a custom style, and its identifier; then its name, base, next and
+	## linked styles and its paragraph and run properties from the model,
+	## and the elements it kept, such as its user-interface priority or a
+	## table style's table properties, each in the place the schema's
+	## sequence gives it. A tracked change of a style's properties is
+	## written with the lowest identifier the kept elements of the part do
+	## not use. [Styles.read] reads the tree as these styles and defaults.
+	styles : { defaults : { paragraph : Document.ParagraphProperties, run : Document.RunProperties }, styles : List(Styles.Style) } -> XmlTree.Node
+	styles = |part| styles_tree(part)
+
+	## The tree of a numbering part: `definitions`, each by its identifier,
+	## then `instances`, each by its identifier, as the schema orders them.
+	## A definition is written with its kind, the numbering style it stands
+	## for or uses and its levels; a level with the number it starts from,
+	## its format, paragraph style, text, alignment and paragraph and run
+	## properties; an instance with its definition and its overrides; each
+	## with the attributes and elements it kept in the place the schema's
+	## sequence gives them. A level whose format is `Unset` is written
+	## without one. [Numbering.read] reads the tree as these definitions and
+	## instances.
+	numbering : { definitions : List({ id : U32, definition : Numbering.Definition }), instances : List({ id : U32, instance : Numbering.Instance }) } -> XmlTree.Node
+	numbering = |part| numbering_tree(part)
+
+	## The tree of a core properties part holding `properties`: its title,
+	## subject, author, keywords, description, who last modified it, its
+	## revision number, and when it was created and last modified, each date
+	## typed as the W3C date and time format, each where it is not `Unset`;
+	## then every property it kept, in order. [WmlRead.core_properties]
+	## reads the tree as these properties.
+	core_properties : Document.CoreProperties -> XmlTree.Node
+	core_properties = |properties| core_properties_tree(properties)
 }
 
 # The settings the schema's sequence puts before `w:trackRevisions`.
@@ -1951,6 +1988,271 @@ header_relationship = "http://schemas.openxmlformats.org/officeDocument/2006/rel
 
 footer_relationship : Str
 footer_relationship = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer"
+
+styles_tree : { defaults : { paragraph : Document.ParagraphProperties, run : Document.RunProperties }, styles : List(Styles.Style) } -> XmlTree.Node
+styles_tree = |part| {
+	var $state = { ..blank_state, used: WmlWrite.taken(part.styles.map(|style| element("style", [], List.join([style.preserved, style.paragraph.preserved, style.run.preserved])))).ids }
+	run_default = run_properties_node(part.defaults.run, $state)
+	paragraph_default = paragraph_properties_node(part.defaults.paragraph, run_default.state)
+	$state = paragraph_default.state
+	defaults = List.join([
+		if (run_default.nodes.is_empty()) [] else [element("rPrDefault", [], run_default.nodes)],
+		if (paragraph_default.nodes.is_empty()) [] else [element("pPrDefault", [], paragraph_default.nodes)],
+	])
+	var $children = List.with_capacity(part.styles.len() + 1)
+	if !defaults.is_empty() {
+		$children = List.append($children, element("docDefaults", [], defaults))
+	}
+	for style in part.styles {
+		written = style_node(style, $state)
+		$children = List.append($children, written.node)
+		$state = written.state
+	}
+	element("styles", [], $children)
+}
+
+# A style as a `w:style`.
+style_node : Styles.Style, State -> Written
+style_node = |style, state| {
+	paragraph_written = paragraph_properties_node(style.paragraph, state)
+	run_written = run_properties_node(style.run, paragraph_written.state)
+	kind = match style.kind {
+		Paragraph => "paragraph"
+		Character => "character"
+		Table => "table"
+		Numbering => "numbering"
+	}
+	usage = if (style.usage == KindDefault) [attribute("default", "1")] else []
+	origin = if (style.origin == Custom) [attribute("customStyle", "1")] else []
+	attributes = List.join([[attribute("type", kind)], usage, origin, [attribute("styleId", style.id)]])
+	typed = List.join([
+		match style.name {
+			Named(name) => [value("name", name)]
+			Unnamed => []
+		},
+		match style.based_on {
+			BasedOn(base) => [value("basedOn", base)]
+			NoBase => []
+		},
+		match style.next {
+			Next(next) => [value("next", next)]
+			NoNext => []
+		},
+		match style.link {
+			Linked(link) => [value("link", link)]
+			NoLink => []
+		},
+		paragraph_written.nodes,
+		run_written.nodes,
+	])
+	{ node: element("style", attributes, ordered(style_order, typed, style.preserved)), state: run_written.state }
+}
+
+numbering_tree : { definitions : List({ id : U32, definition : Numbering.Definition }), instances : List({ id : U32, instance : Numbering.Instance }) } -> XmlTree.Node
+numbering_tree = |part| {
+	kept_levels = |levels| levels.map(|level| element("lvl", [], kept_in_level(level)))
+	kept = List.join([
+		part.definitions.map(|entry| element("abstractNum", [], List.concat(entry.definition.preserved, kept_levels(entry.definition.levels)))),
+		part.instances.map(|entry| element("num", [], List.concat(entry.instance.preserved, kept_levels(entry.instance.overrides.keep_oks(replaced))))),
+	])
+	var $state = { ..blank_state, used: WmlWrite.taken(kept).ids }
+	var $children = List.with_capacity(part.definitions.len() + part.instances.len())
+	for entry in part.definitions {
+		written = definition_node(entry.id, entry.definition, $state)
+		$children = List.append($children, written.node)
+		$state = written.state
+	}
+	for entry in part.instances {
+		written = instance_node(entry.id, entry.instance, $state)
+		$children = List.append($children, written.node)
+		$state = written.state
+	}
+	element("numbering", [], $children)
+}
+
+# A numbering definition as a `w:abstractNum`.
+definition_node : U32, Numbering.Definition, State -> Written
+definition_node = |id, definition, state| {
+	levels = definition.levels.fold(
+		{ nodes: List.with_capacity(definition.levels.len()), state },
+		|out, level| {
+			written = level_node(level, out.state)
+			{ nodes: List.append(out.nodes, written.node), state: written.state }
+		},
+	)
+	typed = List.join([
+		match definition.kind {
+			SingleLevel => [value("multiLevelType", "singleLevel")]
+			Multilevel => [value("multiLevelType", "multilevel")]
+			HybridMultilevel => [value("multiLevelType", "hybridMultilevel")]
+			Unset => []
+		},
+		match definition.style {
+			Style(style) => [value("styleLink", style)]
+			Unset => []
+		},
+		match definition.uses_style {
+			Style(style) => [value("numStyleLink", style)]
+			Unset => []
+		},
+		levels.nodes,
+	])
+	{ node: element("abstractNum", List.prepend(definition.preserved_attributes, attribute("abstractNumId", id.to_str())), ordered(definition_order, typed, definition.preserved)), state: levels.state }
+}
+
+# A numbering instance as a `w:num`, each override a `w:lvlOverride`.
+instance_node : U32, Numbering.Instance, State -> Written
+instance_node = |id, instance, state| {
+	Definition(definition) = instance.definition
+	overrides = instance.overrides.fold(
+		{ nodes: List.with_capacity(instance.overrides.len()), state },
+		|out, override| {
+			start = match override.start {
+				Start(number) => [value("startOverride", number.to_str())]
+				Unset => []
+			}
+			replacement = match override.replacement {
+				Replaced(level) => {
+					written = level_node({ ..level, level: override.level }, out.state)
+					{ nodes: [written.node], state: written.state }
+				}
+
+				Unset => { nodes: [], state: out.state }
+			}
+			{ nodes: List.append(out.nodes, element("lvlOverride", [attribute("ilvl", override.level.to_str())], List.concat(start, replacement.nodes))), state: replacement.state }
+		},
+	)
+	typed = List.prepend(overrides.nodes, value("abstractNumId", definition.to_str()))
+	{ node: element("num", List.prepend(instance.preserved_attributes, attribute("numId", id.to_str())), ordered(instance_order, typed, instance.preserved)), state: overrides.state }
+}
+
+core_properties_tree : Document.CoreProperties -> XmlTree.Node
+core_properties_tree = |properties| {
+	text = |namespace, local, given|
+		match given {
+			Text(content) => [in_namespace(namespace, local, [], [Text(content)])]
+			Unset => []
+		}
+	date = |local, given|
+		match given {
+			Date(written) => [in_namespace(dc_terms, local, [{ name: { namespace: Uri(schema_instance), local: "type", prefix: Prefix("xsi") }, value: "dcterms:W3CDTF" }], [Text(written)])]
+			Unset => []
+		}
+	children = List.join([
+		text(dublin_core, "title", properties.title),
+		text(dublin_core, "subject", properties.subject),
+		text(dublin_core, "creator", properties.creator),
+		text(core_namespace, "keywords", properties.keywords),
+		text(dublin_core, "description", properties.description),
+		text(core_namespace, "lastModifiedBy", properties.last_modified_by),
+		match properties.revision {
+			Number(number) => [in_namespace(core_namespace, "revision", [], [Text(number.to_str())])]
+			Unset => []
+		},
+		date("created", properties.created),
+		date("modified", properties.modified),
+		properties.preserved,
+	])
+	Element({ name: { namespace: Uri(core_namespace), local: "coreProperties", prefix: Prefix("cp") }, bindings: [{ prefix: Prefix("dcterms"), namespace: Uri(dc_terms) }, { prefix: Prefix("xsi"), namespace: Uri(schema_instance) }], attributes: [], children })
+}
+
+# The state of writing a part that holds no body: no relationships, notes,
+# comments or bookmarks, and identifiers from 0 up.
+blank_state : State
+blank_state = { relationships: [], footnotes: [], endnotes: [], comments: [], bookmarks: Dict.empty(), kept_bookmarks: Dict.empty(), started: Set.empty(), used: Set.empty(), next: 0, move_sources: Dict.empty(), move_destinations: Dict.empty(), deleted: Bool.False }
+
+# A style's, level's or the defaults' paragraph properties as a `w:pPr`,
+# with the tracked change of them, or nothing where they state nothing.
+paragraph_properties_node : Document.ParagraphProperties, State -> Out
+paragraph_properties_node = |properties, state| {
+	changed = property_change("pPrChange", "pPr", properties.change, |previous| ordered(paragraph_order, paragraph_properties(previous), previous.preserved), state)
+	nodes = ordered(paragraph_order, followed_by(paragraph_properties(properties), changed.nodes), properties.preserved)
+	{ nodes: if (nodes.is_empty()) [] else [element("pPr", [], nodes)], state: changed.state }
+}
+
+# A style's, level's or the defaults' run properties as a `w:rPr`, as
+# [paragraph_properties_node] writes paragraph properties.
+run_properties_node : Document.RunProperties, State -> Out
+run_properties_node = |properties, state| {
+	changed = property_change("rPrChange", "rPr", properties.change, |previous| ordered(run_order, run_properties(previous), previous.preserved), state)
+	nodes = ordered(run_order, followed_by(run_properties(properties), changed.nodes), properties.preserved)
+	{ nodes: if (nodes.is_empty()) [] else [element("rPr", [], nodes)], state: changed.state }
+}
+
+# A list level as a `w:lvl`.
+level_node : Numbering.Level, State -> Written
+level_node = |level, state| {
+	paragraph_written = paragraph_properties_node(level.paragraph, state)
+	run_written = run_properties_node(level.run, paragraph_written.state)
+	typed = List.join([
+		match level.start {
+			Start(number) => [value("start", number.to_str())]
+			Unset => []
+		},
+		match level.format {
+			Bullet => [value("numFmt", "bullet")]
+			NoNumber => [value("numFmt", "none")]
+			Number(format) => [value("numFmt", format)]
+			Unset => []
+		},
+		match level.paragraph_style {
+			Style(style) => [value("pStyle", style)]
+			Unset => []
+		},
+		match level.text {
+			Text(shown) => [value("lvlText", shown)]
+			Unset => []
+		},
+		match level.alignment {
+			Aligned(alignment) => [value("lvlJc", alignment_name(alignment))]
+			Unset => []
+		},
+		paragraph_written.nodes,
+		run_written.nodes,
+	])
+	{ node: element("lvl", List.prepend(level.preserved_attributes, attribute("ilvl", level.level.to_str())), ordered(level_order, typed, level.preserved)), state: run_written.state }
+}
+
+# What a level keeps as it was read, whose identifiers a written change of
+# its properties avoids.
+kept_in_level : Numbering.Level -> List(XmlTree.Node)
+kept_in_level = |level| List.join([level.preserved, level.paragraph.preserved, level.run.preserved])
+
+# The level an override replaces the definition's with, where it has one.
+replaced : Numbering.Override -> Try(Numbering.Level, [NotReplaced])
+replaced = |override|
+	match override.replacement {
+		Replaced(level) => Ok(level)
+		Unset => Err(NotReplaced)
+	}
+
+# An element in a package-level namespace, written with its fixed prefix.
+in_namespace : Str, Str, List(XmlTree.Attribute), List(XmlTree.Node) -> XmlTree.Node
+in_namespace = |namespace, local, attributes, children| Element({ name: { namespace: Uri(namespace), local, prefix: Unprefixed }, bindings: [], attributes, children })
+
+style_order : List(Str)
+style_order = ["name", "aliases", "basedOn", "next", "link", "autoRedefine", "hidden", "uiPriority", "semiHidden", "unhideWhenUsed", "qFormat", "locked", "personal", "personalCompose", "personalReply", "rsid", "pPr", "rPr", "tblPr", "trPr", "tcPr", "tblStylePr"]
+
+definition_order : List(Str)
+definition_order = ["nsid", "multiLevelType", "tmpl", "name", "styleLink", "numStyleLink", "lvl"]
+
+level_order : List(Str)
+level_order = ["start", "numFmt", "lvlRestart", "pStyle", "isLgl", "suff", "lvlText", "lvlPicBulletId", "legacy", "lvlJc", "pPr", "rPr"]
+
+instance_order : List(Str)
+instance_order = ["abstractNumId", "lvlOverride"]
+
+core_namespace : Str
+core_namespace = "http://schemas.openxmlformats.org/package/2006/metadata/core-properties"
+
+dublin_core : Str
+dublin_core = "http://purl.org/dc/elements/1.1/"
+
+dc_terms : Str
+dc_terms = "http://purl.org/dc/terms/"
+
+schema_instance : Str
+schema_instance = "http://www.w3.org/2001/XMLSchema-instance"
 
 # A main document part with no body.
 shell : XmlTree.Node

@@ -1,0 +1,103 @@
+= Generate a document
+
+This chapter starts a new document instead of reading one: what a new
+document holds, which styles and lists it has, and how its properties are
+given. It continues from <<write-a-document>>, which says how a document is
+written.
+
+== Start a new document
+
+`Docx.new_document` builds a document from the default document kit:
+
+[source,roc]
+----
+document = Docx.new_document({ title: Text("Lease"), creator: Text("Ada Reviewer"), created: Date("2026-11-10T09:00:00Z") })?
+bytes = Docx.to_bytes(document)?
+----
+
+Its argument names the document's title, its author (`creator`), and when it
+was created and last modified (`modified`), and each can be left out:
+`Docx.new_document({})` is a document without properties. The package reads
+no clock, so a document has only the dates its caller gives it, and the same
+properties always give the same bytes. A date is in the W3C date and time
+format: a year, a month or a day, or a day and a time with its time zone,
+such as `2026-11-10T09:00:00Z` or `2026-11-10T19:00:00+10:00`; any other is
+refused with `NotADate` and the date as given.
+
+The new document is an empty page: one empty paragraph on A4 paper, portrait,
+with one-inch margins and the header and footer half an inch from the edge
+of the page. Word and LibreOffice open it as a blank document, and it reads
+back like any other: `Docx.text` gives one empty line, `Docx.styles` the
+styles below, `Docx.numbering` the lists, and `Docx.core_properties` the
+properties it was given.
+
+== The styles
+
+The document's text is Calibri at 11 points, with 8 points after each
+paragraph and lines at 1.08 times their height, as Word sets its own
+defaults. Each style has the identifier and the name Word gives its
+built-in style, which is how Word and LibreOffice recognise it as their
+own: they show it under its name in their own language, and LibreOffice
+maps it onto its corresponding style, such as _Heading 1_ or
+_Internet link_.
+
+[cols="2,2,4",options="header"]
+|===
+|Identifier |Name |For
+|`Normal` |Normal |Every paragraph without a style of its own; the default
+|`Heading1` to `Heading6` |heading 1 to heading 6 |Headings at outline levels 1 to 6, kept with the next paragraph, followed by a normal paragraph
+|`ListParagraph` |List Paragraph |A list item, indented half an inch
+|`DefaultParagraphFont` |Default Paragraph Font |Text without a character style; the default
+|`Hyperlink` |Hyperlink |A link's text, blue and underlined
+|`TableNormal` |Normal Table |Every table without a style of its own; the default
+|`TableGrid` |Table Grid |A table with a thin line around every cell
+|`NoList` |No List |The default numbering style
+|`FootnoteText`, `EndnoteText` |footnote text, endnote text |A note's text, single-spaced at 10 points
+|`FootnoteReference`, `EndnoteReference` |footnote reference, endnote reference |A note's number, superscript
+|`CommentText` |annotation text |A comment's text, single-spaced at 10 points
+|`CommentReference` |annotation reference |Where a comment is marked in the text
+|===
+
+A paragraph or run names a style by its identifier, as
+`Document.ParagraphProperties` and `Document.RunProperties` hold it.
+
+== The lists
+
+The document has two lists, each of nine levels, the levels indented half an
+inch apiece with the bullet or number hanging a quarter inch before the
+text:
+
+* numbering instance 1 is bulleted, with `•`, `◦` and `▪` in turn from the
+  first level down;
+* numbering instance 2 is numbered `1.`, `a.`, `i.` in turn from the first
+  level down, each level counting from 1.
+
+A paragraph is an item of a list when its properties name the instance and
+the level, from 0 for the first, as `Document.Numbering` holds them.
+
+== The parts of a new document
+
+A new document's package has the parts a WordprocessingML package needs and
+no others: the main document, the styles, the numbering definitions, the
+settings (tab stops every half inch, and Word's current layout rather than
+an earlier version's compatibility mode), the font table, and the core
+properties, each with its relationship and content type.
+
+The styles, the list definitions and the core properties are written from
+the model by `WmlWrite.styles`, `WmlWrite.numbering` and
+`WmlWrite.core_properties`, in the canonical form <<write-a-document>>
+describes, so what they hold is what `Styles.read`, `Numbering.read` and
+`WmlRead.core_properties` read back. Each writer takes model values on its
+own and gives the part's tree:
+
+[source,roc]
+----
+tree = WmlWrite.styles({ defaults, styles })
+----
+
+A style keeps the elements the model does not hold, such as its place in
+the style gallery or a table style's table properties, and a level and a
+numbering definition theirs, each written in the place the schema gives it.
+The settings and the font table have no model, and are built as trees. Once
+the document is built, every part but the main document is written from its
+tree, as in any document that was read.

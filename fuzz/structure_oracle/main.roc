@@ -47,8 +47,9 @@ import "../../tests/fixtures/word/tables.docx" as word_tables : List(U8)
 ## * every element of a table grounded in the Transitional schema carries
 ##   the attributes the schema requires of it.
 ##
-## Inputs are every fixture, written as `Docx.to_bytes` writes what
-## `Docx.parse` reads, and packages generated from a program of bytes whose
+## Inputs are every fixture and a new document from the default document
+## kit, written as `Docx.to_bytes` writes what `Docx.parse` reads, and
+## packages generated from a program of bytes whose
 ## main document, footnotes, header and comments hold bookmarks whose
 ## identifiers collide across parts and with comments', links, note references, comment ranges, pictures,
 ## insertions, tables and sections, which the writer gives identifiers and
@@ -70,6 +71,8 @@ test! = |input| {
 				Ok(fixture) => fixture.bytes
 				Err(_) => return Fuzz.reject
 			}
+
+		New => new_document
 	}
 	cost = check!(source)
 	allocations = cost.stats.allocs + cost.stats.reallocs
@@ -125,7 +128,7 @@ check! = |source| {
 held : Fuzz.Stats -> U64
 held = |stats| stats.peak_live_bytes - stats.entry_live_bytes
 
-Input : [Generated(List(U8)), Fixture(U64)]
+Input : [Generated(List(U8)), Fixture(U64), New]
 
 generator : Fuzz.Generator(Input)
 generator = Fuzz.map(Fuzz.bytes, |bytes| Generated(bytes))
@@ -145,13 +148,15 @@ inflated = |bytes|
 # the comments part, which the check reads: 15 more for the generated
 # examples, 18 for pandoc's comments and 15 for its review; the Word
 # comments and Google Docs documents lost the identifiers on every other
-# paragraph and fell by 19 and 6.
+# paragraph and fell by 19 and 6. The new document from the default
+# document kit (G5.1) takes 2,028, set when it was declared.
 exact_ceiling : Input -> Try(U64, [NotDeclared])
 exact_ceiling = |input|
 	match input {
 		Generated(program) if program == small_program => Ok(1_348)
 		Generated(program) if program == large_program => Ok(9_117)
 		Fixture(index) => fixtures.get(index).map_ok(|fixture| fixture.allocations).map_err(|_| NotDeclared)
+		New => Ok(2_028)
 		_ => Err(NotDeclared)
 	}
 
@@ -181,6 +186,14 @@ large_program = List.join(List.repeat(program_unit, 64))
 # reference, a comment, a picture, an insertion, a table, a section.
 program_unit : List(U8)
 program_unit = [1, 2, 18, 3, 19, 4, 5, 6, 7, 9, 8, 10, 0]
+
+# A new document from the default document kit, as it is written.
+new_document : List(U8)
+new_document =
+	match Docx.new_document({}) {
+		Ok(created) => Docx.to_bytes(created) ?? []
+		Err(_) => []
+	}
 
 fixtures : List({ name : Str, bytes : List(U8), allocations : U64 })
 fixtures = [
@@ -627,6 +640,7 @@ target = Fuzz.target_with!({
 	examples: [
 		Fuzz.example({ name: "small-document", revision: "1", make: || Generated(small_program) }),
 		Fuzz.example({ name: "large-document", revision: "1", make: || Generated(large_program) }),
+		Fuzz.example({ name: "new-document", revision: "1", make: || New }),
 	].concat(fixtures.map_with_index(|fixture, index| Fuzz.example({ name: fixture.name, revision: "1", make: || Fixture(index) }))),
 	generator,
 	test!,

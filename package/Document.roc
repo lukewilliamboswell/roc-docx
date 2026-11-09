@@ -867,6 +867,22 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 		{ pkg: document.pkg, graph: { relationships: document.graph.relationships, parts: added }, trees: document.trees.insert(new.name, tree), body: document.body }
 	}
 
+	## A document built rather than read: the parts and relationships of
+	## `graph`, each part holding its tree in `trees`, and `blocks` the body
+	## of the main document part, the target of the graph's `officeDocument`
+	## relationship, whose tree is the shell the body is written into, as
+	## [Document.from_package_with_body] keeps it. Every part is written from
+	## its tree; a part without one has no bytes, and writing the document
+	## fails with `MissingPart`. A graph without a main document has no body.
+	from_trees : Opc.Graph, Dict(Str, XmlTree.Node), List(Block) -> Document
+	from_trees = |graph, trees, blocks| {
+		body = match graph.relationships.find_first(|rel| rel.kind == Opc.officedocument_relationship and rel.mode == Internal) {
+			Ok(main) => Blocks({ part: main.target, body: { blocks, diagnostics: [] } })
+			Err(_) => Whole
+		}
+		{ pkg: Opc.empty, graph, trees, body }
+	}
+
 	## Every XML part of the document, in the order of its part graph.
 	xml_parts : Document -> List(XmlPart)
 	xml_parts = |document|

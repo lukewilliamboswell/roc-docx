@@ -2,7 +2,8 @@
 ## text, comments and tracked changes, and write it back.
 ##
 ## `Docx.parse` opens the package within the default `Limits` and reads it as
-## a [Document]; `Docx.body` and `Docx.text` read what its body says,
+## a [Document], and `Docx.new_document` builds a new one from the default
+## document kit; `Docx.body` and `Docx.text` read what its body says,
 ## `Docx.final_text`, `Docx.original_text` and `Docx.revisions` its tracked
 ## changes, `Docx.footnotes` and `Docx.endnotes` its notes, `Docx.comments`
 ## its comments, `Docx.people` their authors, `Docx.fields` its fields and
@@ -19,6 +20,7 @@
 ## printed.
 import Comments
 import Document
+import Kit
 import Mce
 import Numbering
 import Opc
@@ -80,6 +82,16 @@ Docx :: [].{
 		MissingComment(U64),
 		CommentWithoutParagraph(U64),
 	]
+
+	## A new document from the default document kit, as [Kit.document]
+	## builds it: an empty page, the kit's styles and lists, settings, a font
+	## table, and the title, author and dates `properties` gives as its core
+	## properties; or the date it gives that is not in the W3C date and time
+	## format. `Docx.new_document({})` is a document with no properties, and
+	## `Docx.new_document({ title: Text("Lease"), created: Date("2026-11-10T09:00:00Z") })`
+	## names only what it has.
+	new_document : Kit.New -> Try(Document, [NotADate(Str)])
+	new_document = |properties| Kit.document(properties)
 
 	## Write a document as the bytes of a `.docx`. The main document part is
 	## written from the model, as [Docx.body] reads it, by
@@ -1500,4 +1512,22 @@ expect {
 		and Docx.tracks_revisions(written.document)
 		and !Docx.tracks_revisions(off)
 		and Docx.set_tracking(parsed.document, Off).map_ok(|document| Docx.tracks_revisions(document)) == Ok(Bool.False)
+}
+
+## A new document writes to the same bytes every time, and reads back as an
+## empty page with the kit's styles, lists and the properties it was given.
+expect {
+	created = Docx.new_document({ title: Text("Lease"), creator: Text("Ada Reviewer"), created: Date("2026-11-10T09:00:00Z") })?
+	written = Docx.to_bytes(created)?
+	parsed = Docx.parse(written)?
+	properties = Docx.core_properties(parsed.document)
+	styles = Docx.styles(parsed.document)
+	Docx.to_bytes(created) == Ok(written)
+		and parsed.diagnostics.is_empty()
+		and Docx.equivalent(created, parsed.document)
+		and Docx.text(parsed.document) == "\n"
+		and styles.diagnostics.is_empty()
+		and Styles.get(styles.styles, "Heading1").map_ok(|style| style.name) == Ok(Named("heading 1"))
+		and Docx.numbering(parsed.document).diagnostics.is_empty()
+		and (properties.title, properties.creator, properties.created, properties.modified) == (Text("Lease"), Text("Ada Reviewer"), Date("2026-11-10T09:00:00Z"), Unset)
 }
