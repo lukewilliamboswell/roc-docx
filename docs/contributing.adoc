@@ -146,9 +146,13 @@ deterministic. The written documents go to `.roc-docx/passthrough/`, where
 
 The generated cases build documents from the model in `tests/main.roc`, for
 content no fixture holds together, such as one of every kind of tracked
-change. Each must read back as exactly the model it was built from and then
-pass through as a fixture does; its expectation under `tests/generated/`
-is the pass-through report with the tracked changes read back. The written
+change, and the documents of the `letter`, `agreement`, `minutes` and
+`report` examples, built step for step as each example builds its own, so
+that the documents the oracles read are byte for byte the examples'
+outputs; a change to an example is made in its case too. Each must read
+back as the model it was built from and then pass through as a fixture
+does; its expectation under `tests/generated/` is the pass-through report
+with what it reads back, such as its text, comments and tracked changes. The written
 documents go to `.roc-docx/generated/`, which `oracle-schema-written`
 validates and the LibreOffice lane compares with the package's snapshots.
 

@@ -144,6 +144,39 @@ one left out keeps it; a document without core properties is given them. A
 date that is not in the W3C date and time format is refused with
 `NotADate`, as `Docx.new_document` refuses it.
 
+== Examples
+
+The `letter` example writes a letter: a new document with its title, author
+and date, each address one paragraph with a line break between its lines,
+and aligned paragraphs with bold and italic text:
+
+[source,roc]
+----
+include::../examples/letter/main.roc[]
+----
+
+Run from its directory, `roc main.roc` writes `letter.docx` and prints its
+text.
+
+The `report` example writes a report over two sections: a header with the
+title and a footer with the page number and count, a footnote, a table of
+figures with a header row and a total, and, after a section break, a
+landscape page with a wider table and a header of its own:
+
+[source,roc]
+----
+include::../examples/report/main.roc[]
+----
+
+Run from its directory, `roc main.roc` writes `report.docx` and lists its
+sections' pages, headers and footers. Word and LibreOffice number its pages
+1 and 2 of 2 as they lay it out; the package, which lays out no pages,
+reads each field's result as 1.
+
+The `agreement` example adds comments to a document it generates, as
+<<read-a-documents-comments>> describes, and the `minutes` example amends
+one as tracked changes, as <<read-a-documents-tracked-changes>> describes.
+
 == The styles
 
 The document's text is Calibri at 11 points, with 8 points after each

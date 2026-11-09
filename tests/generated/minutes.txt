@@ -1,0 +1,32 @@
+written: 4665 bytes, FNV-1a 64 b08a6149dd347f13
+part: /_rels/.rels 442 bytes application/vnd.openxmlformats-package.relationships+xml
+part: /word/document.xml 2717 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml
+part: /word/_rels/document.xml.rels 679 bytes application/vnd.openxmlformats-package.relationships+xml
+part: /docProps/core.xml 475 bytes application/vnd.openxmlformats-package.core-properties+xml
+part: /word/styles.xml 5865 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml
+part: /word/numbering.xml 3569 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml
+part: /word/settings.xml 378 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml
+part: /word/fontTable.xml 296 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.fontTable+xml
+text: "Staff meeting"
+text: "Held on 3 November 2026 at the Quay Street shop."
+text: "Present"
+text: "Nora Quill, chair"
+text: "Iris Cole, secretary"
+text: "Tomas Reed"
+text: "Decisions"
+text: "The shop opens at 6.30 a.m. from December."
+text: "Weekend shifts rotate monthly, in pairs."
+text: "A second delivery van is leased."
+text: "Next meeting"
+text: "The next meeting is on 1 December 2026."
+text: ""
+section: Unset Size({ height: 16838, orientation: Portrait, width: 11906 }) Margins({ bottom: 1440, footer: 708, gutter: 0, header: 708, left: 1440, right: 1440, top: 1440 }) header none footer none
+properties: (Text("Staff meeting minutes"), Unset, Text("Iris Cole"), Date("2026-11-03T17:00:00Z"), Unset)
+change: 0 Deletion of Content by Nora Quill "7 a.m."
+change: 1 Insertion of Content by Nora Quill "6.30 a.m."
+change: 2 Insertion of Content by Nora Quill ", in pairs"
+change: 3 Deletion of Content by Nora Quill "The old oven is sold."
+change: 4 Deletion of ParagraphMark by Nora Quill "\n"
+change: 5 Insertion of Content by Nora Quill "A second delivery van is leased."
+change: 6 Insertion of ParagraphMark by Nora Quill "\n"
+tracking: on

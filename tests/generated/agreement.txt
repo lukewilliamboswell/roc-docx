@@ -1,0 +1,26 @@
+written: 5560 bytes, FNV-1a 64 345896dfd2f4ead9
+part: /_rels/.rels 442 bytes application/vnd.openxmlformats-package.relationships+xml
+part: /word/document.xml 2389 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml
+part: /word/_rels/document.xml.rels 944 bytes application/vnd.openxmlformats-package.relationships+xml
+part: /docProps/core.xml 471 bytes application/vnd.openxmlformats-package.core-properties+xml
+part: /word/styles.xml 5865 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml
+part: /word/numbering.xml 3569 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml
+part: /word/settings.xml 359 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml
+part: /word/fontTable.xml 296 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.fontTable+xml
+part: /word/comments.xml 887 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml
+part: /word/commentsExtended.xml 335 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.commentsExtended+xml
+text: "Supply agreement"
+text: "This agreement is made between Harbour Lane Bakery, the buyer, and Orchard Mill Supplies, the supplier."
+text: "The supplier delivers flour to the bakery every Monday."
+text: "The buyer pays each invoice within thirty days."
+text: "Either party may end this agreement with sixty days' notice."
+text: "For the buyer"
+text: "For the supplier"
+text: "Nora Quill"
+text: "Odile Fenwick"
+text: ""
+section: Unset Size({ height: 16838, orientation: Portrait, width: 11906 }) Margins({ bottom: 1440, footer: 708, gutter: 0, header: 708, left: 1440, right: 1440, top: 1440 }) header none footer none
+properties: (Text("Supply agreement"), Unset, Text("Nora Quill"), Date("2026-11-10T09:00:00Z"), Unset)
+comment: 1 Odile Fenwick Unset Date({ utc_seconds: 1794492300, written: "2026-11-12T14:05:00Z" }) on Range("every Monday") ["Could deliveries move to Tuesdays?"]
+comment: 0 Odile Fenwick Unset Date({ utc_seconds: 1794492000, written: "2026-11-12T14:00:00Z" }) on Range("within thirty days") ["We ask for payment within fourteen days."]
+comment: 2 Nora Quill Parent(0) Date({ utc_seconds: 1794562200, written: "2026-11-13T09:30:00Z" }) on Range("within thirty days") ["Twenty-one days would suit us both."]

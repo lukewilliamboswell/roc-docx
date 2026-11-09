@@ -62,6 +62,15 @@
       "reviewed_on": "2026-11-09"
     },
     {
+      "oracle": "libreoffice",
+      "document": ".roc-docx/generated/report.docx",
+      "key": "sections.footer",
+      "message_pattern": "^\"Page [12] of 2\" against \"Page 1 of 1\"$",
+      "cause": "The report example's footer holds a PAGE and a NUMPAGES field, which the builders write with the result 1, because the package lays out no pages. The report has two pages, the second a landscape section after a section break showing the first section's footer. LibreOffice recalculates both fields on import, and its Flat ODT export gives each page style's footer the number of the first page in that style and the page count, 2. As for word/report.docx, a page number in a footer is a value of each page, not a fact of the footer.",
+      "reference": "https://docs.oasis-open.org/office/OpenDocument/v1.3/os/part3-schema/OpenDocument-v1.3-os-part3-schema.html#element-text_page-count (text:page-count displays the number of pages in the document)",
+      "reviewed_on": "2026-11-10"
+    },
+    {
       "oracle": "schema",
       "document": "tests/fixtures/gdocs/resume.docx",
       "part": "word/document.xml",

@@ -1,0 +1,27 @@
+written: 4608 bytes, FNV-1a 64 b19ea2742be605e2
+part: /_rels/.rels 442 bytes application/vnd.openxmlformats-package.relationships+xml
+part: /word/document.xml 1587 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml
+part: /word/_rels/document.xml.rels 679 bytes application/vnd.openxmlformats-package.relationships+xml
+part: /docProps/core.xml 472 bytes application/vnd.openxmlformats-package.core-properties+xml
+part: /word/styles.xml 5865 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml
+part: /word/numbering.xml 3569 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml
+part: /word/settings.xml 359 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml
+part: /word/fontTable.xml 296 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.fontTable+xml
+text: "Harbour Lane Bakery"
+text: "14 Quay Street"
+text: "Portwen"
+text: "10 November 2026"
+text: "Odile Fenwick"
+text: "Orchard Mill Supplies"
+text: "2 Mill Row"
+text: "Ashcombe"
+text: "Dear Ms Fenwick,"
+text: "Flour deliveries for the winter"
+text: "Thank you for a year of reliable deliveries. From December we bake on Sundays too, so we would like two deliveries a week, on Mondays and Thursdays, until the end of February."
+text: "Our agreement for the new year follows separately. Please let me know by Friday whether the new days suit you."
+text: "Yours sincerely,"
+text: "Nora Quill"
+text: "Owner, Harbour Lane Bakery"
+text: ""
+section: Unset Size({ height: 16838, orientation: Portrait, width: 11906 }) Margins({ bottom: 1440, footer: 708, gutter: 0, header: 708, left: 1440, right: 1440, top: 1440 }) header none footer none
+properties: (Text("Winter deliveries"), Unset, Text("Nora Quill"), Date("2026-11-10T09:00:00Z"), Unset)

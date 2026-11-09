@@ -45,13 +45,15 @@ import docx.XmlTree
 ## Generated: documents built from the model rather than read, for content
 ## the fixtures do not hold together, such as every kind of tracked change,
 ## a new document from the default document kit, and documents made by the
-## builders, one on a single page and one of two sections. Each is written under
+## builders, one on a single page and one of two sections, and the example
+## gallery's letter, agreement, minutes and report. Each is written under
 ## `.roc-docx/generated/`, must read back as what it was built from, without
 ## anything to drop or repair, and pass through as a fixture does; its
 ## snapshot goes beside the fixtures' and its report, the pass-through
 ## report with what it reads back (its tracked changes; the kit's styles,
-## lists and properties; or the built text, notes, sections, fields and
-## properties), is compared with `tests/generated/<name>.txt`.
+## lists and properties; or the built text, notes, sections, fields,
+## properties, comments and tracked changes), is compared with
+## `tests/generated/<name>.txt`.
 ##
 ## Review: the fixture edited by the reviewer's pass of
 ## `examples/review_contract`, which adds a comment on the first line of
@@ -423,12 +425,22 @@ built = |content| {
 
 # Documents built from the model, by name.
 generated : List({ name : Str, build : () -> Try({ written : List(U8), report : Str, document : Document }, Str) })
-generated = [{ name: "revisions", build: || built(every_revision) }, { name: "kit", build: new_document }, { name: "builders", build: || authored(every_builder) }, { name: "sections", build: || authored(two_sections) }]
+generated = [
+	{ name: "revisions", build: || built(every_revision) },
+	{ name: "kit", build: new_document },
+	{ name: "builders", build: || authored(every_builder) },
+	{ name: "sections", build: || authored(two_sections) },
+	{ name: "letter", build: || authored(letter_document) },
+	{ name: "agreement", build: || authored(agreement_document) },
+	{ name: "minutes", build: || authored(minutes_document) },
+	{ name: "report", build: || authored(report_document) },
+]
 
 # A document made by the builders, written and passed through as a fixture
 # is, which must read back equivalent to what was built; its report adds
 # what it reads back: its text by line, its footnotes, its sections' pages
-# and their headers' and footers' text, its fields and its properties.
+# and their headers' and footers' text, its fields, its properties, its
+# comments and its tracked changes, and whether it tracks changes.
 authored : (() -> Try(Document, Str)) -> Try({ written : List(U8), report : Str, document : Document }, Str)
 authored = |build| {
 	made = build()?
@@ -451,6 +463,9 @@ authored = |build| {
 		Docx.sections(read).map(|section| "section: ${Str.inspect(section.start)} ${Str.inspect(section.page_size)} ${Str.inspect(section.margins)} header ${region(section.headers)} footer ${region(section.footers)}"),
 		Docx.sections(read).map(|section| List.concat(section.headers, section.footers)).join().map(|reference| Document.fields(Docx.header_footer(read, reference.part))).join().map(|field| "field: ${Str.inspect(field.code)} ${Str.inspect(field.result)}"),
 		["properties: ${Str.inspect((properties.title, properties.subject, properties.creator, properties.created, properties.modified))}"],
+		Docx.comments(read).comments.map(|entry| "comment: ${entry.id.to_str()} ${entry.comment.author} ${Str.inspect(entry.comment.parent)} ${Str.inspect(entry.comment.date)} on ${Str.inspect(entry.anchor)} ${Str.inspect(entry.comment.content.map(block_text))}"),
+		Docx.revisions(read).map(|change| "change: ${change.id.to_str()} ${Str.inspect(change.kind)} of ${Str.inspect(change.of)} by ${change.author} \"${change.text.replace_each("\n", "\\n")}\""),
+		if (Docx.tracks_revisions(read)) ["tracking: on"] else [],
 	])
 	Ok({ written: passed.written, report: Str.concat(passed.report, Str.join_with(lines.map(|line| "${line}\n"), "")), document: read })
 }
@@ -519,6 +534,164 @@ two_sections = || {
 	split = Build.append(Build.new_section(headed, { orientation: Landscape, left: 1080, right: 1080 }), [Build.paragraph({ style: Heading(2) }, [Build.text("Schedule", {})])])
 	Ok(Build.footer(split, [Build.paragraph({}, [Build.text("Schedule of rent", {})])]) ? |problem| "the footer does not write: ${Str.inspect(problem)}")
 }
+
+# The example gallery's documents, as `examples/letter`, `examples/agreement`,
+# `examples/minutes` and `examples/report` build them, step for step.
+
+# The letter of `examples/letter`.
+letter_document : () -> Try(Document, Str)
+letter_document = || {
+	created = Docx.new_document({ title: Text("Winter deliveries"), creator: Text("Nora Quill"), created: Date("2026-11-10T09:00:00Z") }) ? |problem| "the kit refuses its properties: ${Str.inspect(problem)}"
+	plain = |text| Build.paragraph({}, [Build.text(text, {})])
+	Ok(
+		Build.append(
+			created,
+			[
+				Build.paragraph({ alignment: Right }, [Build.text("Harbour Lane Bakery\n14 Quay Street\nPortwen", {})]),
+				Build.paragraph({ alignment: Right }, [Build.text("10 November 2026", {})]),
+				plain("Odile Fenwick\nOrchard Mill Supplies\n2 Mill Row\nAshcombe"),
+				plain("Dear Ms Fenwick,"),
+				Build.paragraph({}, [Build.text("Flour deliveries for the winter", { bold: On })]),
+				Build.paragraph(
+					{ alignment: Justified },
+					[
+						Build.text("Thank you for a year of reliable deliveries. From December we bake on Sundays too, so we would like ", {}),
+						Build.text("two deliveries a week", { bold: On }),
+						Build.text(", on Mondays and Thursdays, until the end of February.", {}),
+					],
+				),
+				Build.paragraph({ alignment: Justified }, [Build.text("Our agreement for the new year follows separately. ", {}), Build.text("Please let me know by Friday", { italic: On }), Build.text(" whether the new days suit you.", {})]),
+				plain("Yours sincerely,"),
+				plain("Nora Quill\nOwner, Harbour Lane Bakery"),
+			],
+		),
+	)
+}
+
+# The agreement of `examples/agreement`: the buyer's draft, the supplier's
+# two comments and the buyer's reply to the first.
+agreement_document : () -> Try(Document, Str)
+agreement_document = || {
+	created = Docx.new_document({ title: Text("Supply agreement"), creator: Text("Nora Quill"), created: Date("2026-11-10T09:00:00Z") }) ? |problem| "the kit refuses its properties: ${Str.inspect(problem)}"
+	clause = |text| Build.list_item({ list: Numbered }, [Build.text(text, {})])
+	cell = |text| Build.cell({}, [Build.paragraph({}, [Build.text(text, {})])])
+	document = Build.append(
+		created,
+		[
+			Build.paragraph({ style: Heading(1) }, [Build.text("Supply agreement", {})]),
+			Build.paragraph({}, [Build.text("This agreement is made between ", {}), Build.text("Harbour Lane Bakery", { bold: On }), Build.text(", the buyer, and ", {}), Build.text("Orchard Mill Supplies", { bold: On }), Build.text(", the supplier.", {})]),
+			clause("The supplier delivers flour to the bakery every Monday."),
+			clause("The buyer pays each invoice within thirty days."),
+			clause("Either party may end this agreement with sixty days' notice."),
+			Build.table({ header_rows: 1 }, [[cell("For the buyer"), cell("For the supplier")], [cell("Nora Quill"), cell("Odile Fenwick")]]),
+		],
+	)
+	text = Docx.text(document)
+	odile = |date, said| { author: "Odile Fenwick", initials: Initials("OF"), date: Date(date), content: Text(said) }
+	failed = |problem| "the review's edits failed: ${Str.inspect(problem)}"
+	payment = Docx.add_comment(document, span_of(text, "within thirty days")?, odile("2026-11-12T14:00:00Z", "We ask for payment within fourteen days.")) ? failed
+	delivery = Docx.add_comment(payment.document, span_of(text, "every Monday")?, odile("2026-11-12T14:05:00Z", "Could deliveries move to Tuesdays?")) ? failed
+	replied = Docx.reply(delivery.document, payment.id, { author: "Nora Quill", initials: Initials("NQ"), date: Date("2026-11-13T09:30:00Z"), content: Text("Twenty-one days would suit us both.") }) ? failed
+	Ok(replied.document)
+}
+
+# The minutes of `examples/minutes`: the secretary's draft, then the
+# chair's corrections as tracked changes, each found in the text as it
+# stands before it.
+minutes_document : () -> Try(Document, Str)
+minutes_document = || {
+	created = Docx.new_document({ title: Text("Staff meeting minutes"), creator: Text("Iris Cole"), created: Date("2026-11-03T17:00:00Z") }) ? |problem| "the kit refuses its properties: ${Str.inspect(problem)}"
+	heading = |text| Build.paragraph({ style: Heading(2) }, [Build.text(text, {})])
+	item = |options, text| Build.list_item(options, [Build.text(text, {})])
+	document = Build.append(
+		created,
+		[
+			Build.paragraph({ style: Heading(1) }, [Build.text("Staff meeting", {})]),
+			Build.paragraph({}, [Build.text("Held on 3 November 2026 at the Quay Street shop.", {})]),
+			heading("Present"),
+			item({}, "Nora Quill, chair"),
+			item({}, "Iris Cole, secretary"),
+			item({}, "Tomas Reed"),
+			heading("Decisions"),
+			item({ list: Numbered }, "The shop opens at 7 a.m. from December."),
+			item({ list: Numbered }, "Weekend shifts rotate monthly."),
+			item({ list: Numbered }, "The old oven is sold."),
+			heading("Next meeting"),
+			Build.paragraph({}, [Build.text("The next meeting is on 1 December 2026.", {})]),
+		],
+	)
+	nora = Tracked({ author: "Nora Quill", date: Date("2026-11-04T08:30:00Z") })
+	failed = |problem| "the amendments failed: ${Str.inspect(problem)}"
+	tracking = Docx.set_tracking(document, On) ? failed
+	earlier = Docx.replace_text(tracking, span_of(Docx.text(tracking), "7 a.m.")?, "6.30 a.m.", nora) ? failed
+	paired = Docx.insert_text(earlier, span_of(Docx.text(earlier), "monthly")?.end, ", in pairs", nora) ? failed
+	van = Build.list_item({ list: Numbered }, [Build.text("A second delivery van is leased.", {})])
+	leased = Docx.insert_blocks(paired, span_of(Docx.text(paired), "Next meeting")?.start, [van], nora) ? failed
+	Ok(Docx.delete_blocks(leased, span_of(Docx.text(leased), "The old oven is sold.\n")?, nora) ? failed)
+}
+
+# The report of `examples/report`.
+report_document : () -> Try(Document, Str)
+report_document = || {
+	failed = |problem| "the report does not build: ${Str.inspect(problem)}"
+	created = Docx.new_document({ title: Text("Quarterly sales"), creator: Text("Iris Cole"), created: Date("2026-10-05T09:00:00Z") }) ? failed
+	described = Build.properties(created, { subject: Text("Sales from July to September 2026"), keywords: Text("sales, quarterly") }) ? failed
+	headed = Build.header(described, [Build.paragraph({ alignment: Right }, [Build.text("Harbour Lane Bakery: quarterly sales", { italic: On })])]) ? failed
+	footed = Build.footer(headed, [Build.paragraph({ alignment: Center }, [Build.text("Page ", {}), Build.page_number, Build.text(" of ", {}), Build.page_count])]) ? failed
+	noted = Build.footnote(footed, [Build.text("Wholesale orders are left out.", {})]) ? failed
+	row = |weight, label, figures| {
+		text = |words| Build.text(words, { bold: if (weight == Bold) On else Unset })
+		List.prepend(figures.map(|figure| Build.cell({}, [Build.paragraph({ alignment: Right }, [text(figure)])])), Build.cell({}, [Build.paragraph({}, [text(label)])]))
+	}
+	summary = Build.append(
+		noted.document,
+		[
+			Build.paragraph({ style: Heading(1) }, [Build.text("Quarterly sales", {})]),
+			Build.paragraph({}, [Build.text("Sales at both shops peaked in August", {}), noted.reference, Build.text(", led by the Quay Street shop.", {})]),
+			Build.paragraph({ style: Heading(2) }, [Build.text("Sales by shop", {})]),
+			Build.table(
+				{ widths: [3026, 2000, 2000, 2000], header_rows: 1 },
+				[
+					row(Bold, "Shop", ["July", "August", "September"]),
+					row(Plain, "Quay Street", ["12,400", "13,150", "11,900"]),
+					row(Plain, "Mill Row", ["8,300", "8,750", "8,100"]),
+					row(Bold, "Total", ["20,700", "21,900", "20,000"]),
+				],
+			),
+			Build.paragraph({ style: Heading(2) }, [Build.text("Highlights", {})]),
+			Build.list_item({}, [Build.text("August was the best month of the quarter.", {})]),
+			Build.list_item({}, [Build.text("Sunday baking starts in December.", {})]),
+		],
+	)
+	detail = Build.append(
+		Build.new_section(summary, { orientation: Landscape }),
+		[
+			Build.paragraph({ style: Heading(2) }, [Build.text("Sales by product", {})]),
+			Build.table(
+				{ widths: [3958, 2000, 2000, 2000, 2000, 2000], header_rows: 1 },
+				[
+					row(Bold, "Product", ["Quay Street", "Mill Row", "Total", "Share", "Change"]),
+					row(Plain, "Bread", ["21,000", "14,200", "35,200", "56%", "+4%"]),
+					row(Plain, "Pastries", ["11,250", "7,600", "18,850", "30%", "+9%"]),
+					row(Plain, "Cakes", ["5,200", "3,350", "8,550", "14%", "-2%"]),
+				],
+			),
+		],
+	)
+	Ok(Build.header(detail, [Build.paragraph({ alignment: Right }, [Build.text("Harbour Lane Bakery: sales by product", { italic: On })])]) ? failed)
+}
+
+# The span of the first `phrase` in `text`.
+span_of : Str, Str -> Try(Comments.Span, Str)
+span_of = |text, phrase|
+	match text.split_first(phrase) {
+		Ok({ before, after: _ }) => {
+			start = before.to_utf8().len()
+			Ok({ start, end: start + phrase.to_utf8().len() })
+		}
+
+		Err(NotFound) => Err("the text does not hold \"${phrase}\"")
+	}
 
 # A new document from the default document kit, with every core property
 # the kit takes, written and passed through as a fixture is; its report

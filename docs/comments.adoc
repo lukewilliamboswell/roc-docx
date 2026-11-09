@@ -294,3 +294,16 @@ comment at, `NotADate(text)` for a date that is not a date and time,
 
 The `review_contract` example makes each edit on a contract and writes the
 result.
+
+The `agreement` example drafts an agreement with the builders of
+<<generate-a-document>>, then reviews it as the other party would: one
+author comments on two clauses, anchoring each comment to the phrase it is
+about, and the drafter replies to one of the comments:
+
+[source,roc]
+----
+include::../examples/agreement/main.roc[]
+----
+
+Run from its directory, `roc main.roc` writes `agreement.docx` and lists its
+comments, the reply under the comment it answers.

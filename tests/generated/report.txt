@@ -1,0 +1,69 @@
+written: 6458 bytes, FNV-1a 64 618badbd946115ef
+part: /_rels/.rels 442 bytes application/vnd.openxmlformats-package.relationships+xml
+part: /word/document.xml 7802 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml
+part: /word/_rels/document.xml.rels 1196 bytes application/vnd.openxmlformats-package.relationships+xml
+part: /docProps/core.xml 570 bytes application/vnd.openxmlformats-package.core-properties+xml
+part: /word/styles.xml 5865 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml
+part: /word/numbering.xml 3569 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml
+part: /word/settings.xml 359 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml
+part: /word/fontTable.xml 296 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.fontTable+xml
+part: /word/header1.xml 268 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml
+part: /word/footer1.xml 423 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml
+part: /word/footnotes.xml 764 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml
+part: /word/header2.xml 269 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml
+text: "Quarterly sales"
+text: "Sales at both shops peaked in August, led by the Quay Street shop."
+text: "Sales by shop"
+text: "Shop"
+text: "July"
+text: "August"
+text: "September"
+text: "Quay Street"
+text: "12,400"
+text: "13,150"
+text: "11,900"
+text: "Mill Row"
+text: "8,300"
+text: "8,750"
+text: "8,100"
+text: "Total"
+text: "20,700"
+text: "21,900"
+text: "20,000"
+text: "Highlights"
+text: "August was the best month of the quarter."
+text: "Sunday baking starts in December."
+text: "Sales by product"
+text: "Product"
+text: "Quay Street"
+text: "Mill Row"
+text: "Total"
+text: "Share"
+text: "Change"
+text: "Bread"
+text: "21,000"
+text: "14,200"
+text: "35,200"
+text: "56%"
+text: "+4%"
+text: "Pastries"
+text: "11,250"
+text: "7,600"
+text: "18,850"
+text: "30%"
+text: "+9%"
+text: "Cakes"
+text: "5,200"
+text: "3,350"
+text: "8,550"
+text: "14%"
+text: "-2%"
+text: ""
+footnote: Separator [""]
+footnote: ContinuationSeparator [""]
+footnote: Note [" Wholesale orders are left out."]
+section: Unset Size({ height: 16838, orientation: Portrait, width: 11906 }) Margins({ bottom: 1440, footer: 708, gutter: 0, header: 708, left: 1440, right: 1440, top: 1440 }) header ["Harbour Lane Bakery: quarterly sales"] footer ["Page 1 of 1"]
+section: NextPage Size({ height: 11906, orientation: Landscape, width: 16838 }) Margins({ bottom: 1440, footer: 708, gutter: 0, header: 708, left: 1440, right: 1440, top: 1440 }) header ["Harbour Lane Bakery: sales by product"] footer none
+field: " PAGE " "1"
+field: " NUMPAGES " "1"
+properties: (Text("Quarterly sales"), Text("Sales from July to September 2026"), Text("Iris Cole"), Date("2026-10-05T09:00:00Z"), Unset)

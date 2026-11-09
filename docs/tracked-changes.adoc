@@ -339,6 +339,20 @@ tracked or not, so the same edit never succeeds one way and fails the other.
 An offset where no block begins or ends fails with
 `NotABlockBoundary(offset)`.
 
+The `minutes` example takes the minutes of a meeting with the builders of
+<<generate-a-document>>, then amends them as another author with tracking
+on: it replaces and inserts text, adds a decision before a heading and
+deletes another, finding each span by the text it holds in `Docx.text` as
+the text stands before that edit:
+
+[source,roc]
+----
+include::../examples/minutes/main.roc[]
+----
+
+Run from its directory, `roc main.roc` writes `minutes.docx` and lists its
+tracked changes and its final text.
+
 == Write tracked changes
 
 `Docx.to_bytes` writes every change the model holds, as <<write-a-document>>
