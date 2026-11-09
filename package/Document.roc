@@ -1,18 +1,108 @@
-## A document as the package holds it, and what it means for two documents
-## to be the same.
+## A document as the package holds it, the typed model of its body, and what
+## it means for two documents to be the same.
 ##
-## Until the WordprocessingML model exists, a document is its package and the
-## namespaced XML tree of each of its XML parts. Reading parses every XML part
-## and drops the editor state the architecture's fidelity rules name, with a
-## diagnostic; writing renders each tree in the canonical form of
-## [XmlTree.render] and copies every other part exactly as its archive stored
-## it. A document therefore holds the archive's bytes and the trees of its XML
-## parts, and while it is read or written, one part's bytes beyond them.
+## A document is its package and the namespaced XML tree of each of its XML
+## parts. Reading parses every XML part and drops the editor state the
+## architecture's fidelity rules name, with a diagnostic; writing renders each
+## tree in the canonical form of [XmlTree.render] and copies every other part
+## exactly as its archive stored it. A document therefore holds the archive's
+## bytes and the trees of its XML parts, and while it is read or written, one
+## part's bytes beyond them.
+##
+## The body's model, [Document.Block] and what it holds, is read from the
+## main document's tree by [Docx.body]. Until the model is written, the trees
+## are what a document writes, so the model is a reading of them rather than
+## a copy kept beside them.
 import Limits
 import Opc
 import XmlTree
 
 Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.Node) }.{
+
+	## A block of the body, in reading order: a paragraph; an element the
+	## model does not represent whose content is still read as blocks, kept
+	## without its children in `element` (a table, its rows and cells, a
+	## content control and its content, custom XML); or any other element,
+	## kept whole as it was read.
+	Block := [
+		Paragraph(Paragraph),
+		Container({ element : XmlTree.Node, content : List(Block) }),
+		Preserved(XmlTree.Node),
+	].{
+
+		## Compare two blocks structurally.
+		is_eq : _
+	}
+
+	## A paragraph: its properties and its content in order.
+	Paragraph : { properties : ParagraphProperties, content : List(Inline) }
+
+	## A paragraph's properties. None is modelled yet: each property element
+	## is kept as it was read, in order.
+	ParagraphProperties : { preserved : List(XmlTree.Node) }
+
+	## A paragraph's content, in order: a run; an element the model does not
+	## represent whose content is still read as paragraph content, kept
+	## without its children in `element` (a hyperlink, an inserted, deleted or
+	## moved range, a simple field, a content control and its content, a smart
+	## tag, custom XML, a bidirectional embedding); or any other element, such
+	## as a bookmark or comment range boundary, kept whole in its place.
+	Inline := [
+		Run(Run),
+		Container({ element : XmlTree.Node, content : List(Inline) }),
+		Preserved(XmlTree.Node),
+	].{
+
+		## Compare two inlines structurally.
+		is_eq : _
+	}
+
+	## A run: text with one set of character properties.
+	Run : { properties : RunProperties, content : List(RunContent) }
+
+	## A run's character properties. None is modelled yet: each property
+	## element is kept as it was read, in order.
+	RunProperties : { preserved : List(XmlTree.Node) }
+
+	## What a run holds, in order: text; a tab; a line, page or column break,
+	## a line break saying which floating objects the next line clears; a
+	## symbol, a character `code` in a named `font`; a soft hyphen, shown only
+	## where a line breaks; a hyphen at which a line never breaks; or any other
+	## element, such as a note reference, a field character or a drawing, kept
+	## whole in its place.
+	RunContent : [
+		Text(Str),
+		Tab,
+		Break({ kind : [Line, Page, Column], clear : [NoClear, Left, Right, All] }),
+		Symbol({ font : Str, code : U16 }),
+		SoftHyphen,
+		NonBreakingHyphen,
+		Preserved(XmlTree.Node),
+	]
+
+	## A paragraph's text as a reader sees it, revisions shown: every run's
+	## text, inserted text included, and nothing from the content the model
+	## keeps without reading, so deleted text, field instructions and note
+	## references contribute none. A tab is a tab character, a break of any
+	## kind a line feed, a symbol its character, a soft hyphen U+00AD and a
+	## non-breaking hyphen U+2011.
+	paragraph_text : Paragraph -> Str
+	paragraph_text = |paragraph| {
+		var $text = List.with_capacity(64)
+		for inline in paragraph.content {
+			$text = inline_text($text, inline)
+		}
+		Str.from_utf8($text) ?? ""
+	}
+
+	## The tree of the main document part, the target of the package's
+	## `officeDocument` relationship, as reading left it.
+	main_document : Document -> Try(XmlTree.Node, [NoMainDocument])
+	main_document = |document| {
+		relationship = document.graph.relationships.find_first(|rel| rel.kind == Opc.officedocument_relationship and rel.mode == Internal) ? |_| NoMainDocument
+		part = Opc.part(document.pkg, relationship.target) ? |_| NoMainDocument
+		Ok(document.trees.get(part.name) ? |_| NoMainDocument)
+	}
 
 	## Something reading did to a document that writing it back shows: a part
 	## lost `count` occurrences of editor state that carries no document
@@ -157,6 +247,40 @@ same_content = |one, other, name|
 	match (Opc.part_bytes(one, name), Opc.part_bytes(other, name)) {
 		(Ok(bytes), Ok(other_bytes)) => bytes == other_bytes
 		_ => Opc.stored(one, name) == Opc.stored(other, name)
+	}
+
+# An inline's text, as [Document.paragraph_text] defines it, appended as UTF-8.
+inline_text : List(U8), Document.Inline -> List(U8)
+inline_text = |text, inline|
+	match inline {
+		Run(run) => run.content.fold(text, run_content_text)
+		Container({ element: _, content }) => content.fold(text, inline_text)
+		Preserved(_) => text
+	}
+
+run_content_text : List(U8), Document.RunContent -> List(U8)
+run_content_text = |text, content|
+	match content {
+		Text(value) => List.concat(text, value.to_utf8())
+		Tab => List.append(text, 9)
+		Break(_) => List.append(text, 10)
+		Symbol({ font: _, code }) => List.concat(text, utf8(code))
+		SoftHyphen => List.concat(text, [0xC2, 0xAD])
+		NonBreakingHyphen => List.concat(text, [0xE2, 0x80, 0x91])
+		Preserved(_) => text
+	}
+
+# A character code as UTF-8; a surrogate, which is no character, is U+FFFD.
+utf8 : U16 -> List(U8)
+utf8 = |code|
+	if code < 0x80 {
+		[code.to_u8_wrap()]
+	} else if code < 0x800 {
+		[(0xC0 + code // 64).to_u8_wrap(), (0x80 + code % 64).to_u8_wrap()]
+	} else if code >= 0xD800 and code < 0xE000 {
+		[0xEF, 0xBF, 0xBD]
+	} else {
+		[(0xE0 + code // 4096).to_u8_wrap(), (0x80 + (code // 64) % 64).to_u8_wrap(), (0x80 + code % 64).to_u8_wrap()]
 	}
 
 is_xml : Str -> Bool
@@ -498,6 +622,23 @@ expect {
 		and !Document.equivalent_xml(base, parse("<w:document ${w_declaration}><w:p w:a='2'><w:t>a</w:t></w:p></w:document>"))
 		and !Document.equivalent_xml(base, parse("<w:document ${w_declaration}><w:p w:a='1' xml:space='preserve'> <w:t>a</w:t></w:p></w:document>"))
 		and !Document.equivalent_xml(base, parse("<w:document ${w_declaration}><w:p w:a='1'><w:t>a </w:t></w:p></w:document>"))
+}
+
+## A paragraph's text takes each kind of run content as its character, reads
+## through containers, and skips preserved content.
+expect {
+	preserved = parse("<w:delText xmlns:w='${wordprocessingml}'>gone</w:delText>")
+	run = |content| Run({ properties: { preserved: [] }, content })
+	paragraph : Document.Paragraph
+	paragraph = {
+		properties: { preserved: [] },
+		content: [
+			run([Text("a"), Tab, Break({ kind: Line, clear: NoClear }), Break({ kind: Page, clear: NoClear }), Symbol({ font: "Symbol", code: 0x3B1 }), SoftHyphen, NonBreakingHyphen, Preserved(preserved)]),
+			Container({ element: preserved, content: [run([Text("b"), Symbol({ font: "", code: 0xD800 }), Symbol({ font: "", code: 0x41 }), Symbol({ font: "Wingdings", code: 0xF0E0 })])] }),
+			Preserved(preserved),
+		],
+	}
+	Document.paragraph_text(paragraph) == "a\t\n\n\u(3B1)\u(AD)\u(2011)b\u(FFFD)A\u(F0E0)"
 }
 
 # A package of a main document with an extension, a style part and a picture.

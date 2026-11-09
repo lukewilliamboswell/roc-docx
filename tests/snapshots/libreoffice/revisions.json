@@ -1,0 +1,20 @@
+{
+  "schema": "roc-docx-snapshot/1",
+  "producer": {"name": "roc-docx", "version": "working tree"},
+  "document": "tests/fixtures/libreoffice/revisions.docx",
+  "keys": ["blocks.text"],
+  "blocks": [
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Lease Amendment", "runs": [], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Lease Amendment", "runs": [], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "The term of the lease is extended by three years from the Expiry Date.", "runs": [], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Rent", "runs": [], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "The rent is increased by 3% on each anniversary of the Commencement Date.", "runs": [], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "", "runs": [], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "All other terms of the lease continue unchanged.", "runs": [], "rows": []}
+  ],
+  "notes": [],
+  "comments": [],
+  "revisions": [],
+  "sections": [],
+  "properties": {"title": "", "subject": "", "creator": "", "keywords": "", "description": "", "last_modified_by": "", "created": "", "modified": ""}
+}

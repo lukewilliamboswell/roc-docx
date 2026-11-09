@@ -1,0 +1,31 @@
+{
+  "schema": "roc-docx-snapshot/1",
+  "producer": {"name": "roc-docx", "version": "working tree"},
+  "document": "tests/fixtures/libreoffice/lists.docx",
+  "keys": ["blocks.text"],
+  "blocks": [
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Board Meeting Agenda", "runs": [], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Agenda", "runs": [], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Welcome and apologies", "runs": [], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Minutes of the previous meeting", "runs": [], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Matters arising", "runs": [], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Office relocation", "runs": [], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Insurance renewal", "runs": [], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Reports", "runs": [], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Finance", "runs": [], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Operations", "runs": [], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "People", "runs": [], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Any other business", "runs": [], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Actions carried forward", "runs": [], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Confirm the relocation timeline", "runs": [], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Obtain two further quotes", "runs": [], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Brief the staff representatives", "runs": [], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Renew the insurance policy before 30 June", "runs": [], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Publish the revised travel policy", "runs": [], "rows": []}
+  ],
+  "notes": [],
+  "comments": [],
+  "revisions": [],
+  "sections": [],
+  "properties": {"title": "", "subject": "", "creator": "", "keywords": "", "description": "", "last_modified_by": "", "created": "", "modified": ""}
+}

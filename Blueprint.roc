@@ -24,7 +24,7 @@ config = [
 	# Oracle adapters: pandoc is fetched; xmllint and python3 come from the host.
 	Environment("oracle", [Programs([Fetch("pandoc", pandoc)]), Expect(["python3", "xmllint"])]),
 	# The LibreOffice lane: LibreOffice is found through SOFFICE or PATH by the adapter that needs it.
-	# It runs the pass-through cases first, with the host's latest nightly, to write the documents LibreOffice reads back.
+	# It runs the cases first, with the host's latest nightly, to write the documents LibreOffice reads back and the package's snapshots.
 	Environment("libreoffice", [Programs([Fetch("pandoc", pandoc)]), Expect(["python3", "roc", "sh"])]),
 	# Everything the check driver runs: the scripts' compiler, the oracle programs and the release utility.
 	Environment("dev", [Extend("tools"), Programs([Fetch("pandoc", pandoc), Fetch("release-package", release_package)]), Expect(["python3", "xmllint"])]),
@@ -46,8 +46,8 @@ config = [
 	Task("oracle-provision", [Use("oracle"), Run(["python3", "-I", "oracle/provision.py"])]),
 	Task("oracle-schema", [Use("oracle"), Run(["python3", "-I", "oracle/validate_schema.py", "tests/fixtures"])]),
 	Task("oracle-schema-written", [Use("oracle"), Run(["python3", "-I", "oracle/validate_schema.py", ".roc-docx/passthrough"])]),
-	Task("oracle-snapshot", [Use("oracle"), Run(["python3", "-I", "oracle/compare_snapshots.py", "--lane", "pandoc", "tests/fixtures"])]),
-	# pandoc and LibreOffice agree on every fixture, and LibreOffice reads every passed-through fixture as it reads the
+	Task("oracle-snapshot", [Use("oracle"), Run(["python3", "-I", "oracle/compare_snapshots.py", "--lane", "pandoc,package", "tests/fixtures"])]),
+	# pandoc, LibreOffice and the package agree on every fixture, and LibreOffice reads every passed-through fixture as it reads the
 	# original: a CI job of its own, because check does not need LibreOffice.
 	Task("libreoffice", [Use("libreoffice"), Run(["sh", "-c", libreoffice_lane])]),
 	Task("fixtures", [Use("oracle"), Run(["python3", "-I", "oracle/make_fixtures.py"])]),
@@ -59,7 +59,7 @@ config = [
 ]
 
 libreoffice_lane : Str
-libreoffice_lane = "roc tests/main.roc && python3 -I oracle/compare_snapshots.py --lane pandoc,libreoffice tests/fixtures && python3 -I oracle/compare_snapshots.py --written libreoffice tests/fixtures .roc-docx/passthrough"
+libreoffice_lane = "roc tests/main.roc && python3 -I oracle/compare_snapshots.py --lane pandoc,libreoffice,package tests/fixtures && python3 -I oracle/compare_snapshots.py --written libreoffice tests/fixtures .roc-docx/passthrough"
 
 release_package : System -> Config.Download
 release_package = Recipes.file("https://github.com/lukewilliamboswell/roc-automation/releases/download/tools-0.10.0/release-package-{system}")

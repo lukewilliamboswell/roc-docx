@@ -1,0 +1,20 @@
+{
+  "schema": "roc-docx-snapshot/1",
+  "producer": {"name": "roc-docx", "version": "working tree"},
+  "document": "tests/fixtures/libreoffice/comments.docx",
+  "keys": ["blocks.text"],
+  "blocks": [
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Draft Services Agreement", "runs": [], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Services Agreement", "runs": [], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "The Provider shall perform the Services with reasonable skill and care.", "runs": [], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Fees", "runs": [], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "The Customer shall pay the Fees within thirty days of receipt of a valid invoice.", "runs": [], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Liability", "runs": [], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Neither party is liable for indirect or consequential loss. The total liability of either party is capped at the Fees paid in the preceding twelve months.", "runs": [], "rows": []}
+  ],
+  "notes": [],
+  "comments": [],
+  "revisions": [],
+  "sections": [],
+  "properties": {"title": "", "subject": "", "creator": "", "keywords": "", "description": "", "last_modified_by": "", "created": "", "modified": ""}
+}

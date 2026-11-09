@@ -11,6 +11,7 @@ import cli.Stdout
 import docx.Docx
 import docx.Document
 import docx.Opc
+import docx.Snapshot
 
 ## The data-driven cases, built once and run together from the repository
 ## root:
@@ -18,22 +19,58 @@ import docx.Opc
 ##     roc tests/main.roc            # every case against its expectation
 ##     roc tests/main.roc --update   # rewrite the expectations, to review as a diff
 ##
-## Pass-through: every `.docx` under `tests/fixtures/` is parsed and written,
-## and the written document must parse to a document equivalent to the
-## original, without anything left to drop; writing it twice, and writing
-## what was written, must give the same bytes. The expectation in
-## `tests/passthrough/` records what reading dropped and the written
-## package's parts and digest, so a change in what the writer produces is a
-## reviewed diff. The written documents go to `.roc-docx/passthrough/`, under
-## the fixture's own path, for the schema and LibreOffice oracles.
+## Each family runs once for every `.docx` under `tests/fixtures/`, writes
+## its output under `.roc-docx/<family>/` at the fixture's own path, and
+## compares a report with the expectation under `tests/<family>/`.
+##
+## Pass-through: the fixture is parsed and written, and the written document
+## must parse to a document equivalent to the original, without anything
+## left to drop; writing it twice, and writing what was written, must give
+## the same bytes. The expectation records what reading dropped and the
+## written package's parts and digest, so a change in what the writer
+## produces is a reviewed diff. The written documents are what the schema
+## and LibreOffice oracles read.
+##
+## Snapshots: the fixture's semantic snapshot, which is its own expectation
+## and what `oracle/compare_snapshots.py` compares with the oracles' readings
+## as the `package` adapter.
 main! : List([Utf8(Str), UnixBytes(List(U8)), WindowsU16s(List(U16))]) => Try({}, _)
 main! = |args| {
 	update = args.any(|arg| is_update(arg))
 	fixtures = sorted(files_under!(Path.utf8("tests/fixtures"))?.map(Path.display).keep_if(|path| path.ends_with(".docx")))
+	var $failed = 0.U64
+	for family in families {
+		$failed = $failed + run_family!(family, fixtures, update)?
+	}
+	if $failed > 0 {
+		Err(Exit(1))
+	} else {
+		Ok({})
+	}
+}
+
+# A family of cases: what one fixture's case writes, and the report its
+# expectation, `tests/<name>/<fixture><extension>`, records.
+Family : {
+	name : Str,
+	extension : Str,
+	run : Str, List(U8) -> Try({ output : List(U8), output_extension : Str, report : Str }, Str),
+}
+
+families : List(Family)
+families = [
+	{ name: "passthrough", extension: ".txt", run: |_, bytes| pass_through(bytes).map_ok(|{ written, report }| { output: written, output_extension: "", report }) },
+	{ name: "snapshots", extension: ".json", run: |fixture, bytes| snapshot(fixture, bytes).map_ok(|json| { output: json.to_utf8(), output_extension: ".json", report: json }) },
+]
+
+# Run a family's case for every fixture and report each; the number that failed.
+run_family! : Family, List(Str), Bool => Try(U64, _)
+run_family! = |family, fixtures, update| {
+	output_root = ".roc-docx/${family.name}"
 	match Path.delete_all!(Path.utf8(output_root)) {
 		_ => {}
 	}
-	Stdout.line!("pass-through: ${fixtures.len().to_str()} cases${if (update) ", updating expectations" else ""}")?
+	Stdout.line!("${family.name}: ${fixtures.len().to_str()} cases${if (update) ", updating expectations" else ""}")?
 	var $failed = 0.U64
 	var $updated = 0.U64
 	var $position = 0.U64
@@ -41,13 +78,13 @@ main! = |args| {
 		$position = $position + 1
 		started = Monotonic.now!()
 		document = Str.drop_prefix(fixture, "tests/fixtures/")
-		outcome = pass_through(Path.read_bytes!(Path.utf8(fixture))?)
+		outcome = (family.run)(fixture, Path.read_bytes!(Path.utf8(fixture))?)
 		status = match outcome {
-			Ok({ written, report }) => {
-				output = "${output_root}/${document}"
-				Path.create_all!(Path.utf8(directory_of(output)))?
-				Path.write_bytes!(Path.utf8(output), written)?
-				expectation = Path.utf8("tests/passthrough/${Str.drop_suffix(document, ".docx")}.txt")
+			Ok({ output, output_extension, report }) => {
+				written = "${output_root}/${document}${output_extension}"
+				Path.create_all!(Path.utf8(directory_of(written)))?
+				Path.write_bytes!(Path.utf8(written), output)?
+				expectation = Path.utf8("tests/${family.name}/${Str.drop_suffix(document, ".docx")}${family.extension}")
 				expected = Path.read_utf8!(expectation) ?? ""
 				if expected == report {
 					"PASS"
@@ -73,15 +110,16 @@ main! = |args| {
 		Stdout.line!(" [${$position.to_str()}/${fixtures.len().to_str()}] ${document} ${status} ${elapsed.to_str()}ms")?
 	}
 	Stdout.line!("Summary: ${fixtures.len().to_str()} cases, ${(fixtures.len() - $failed - $updated).to_str()} passed, ${$updated.to_str()} updated, ${$failed.to_str()} failed, 0 skipped")?
-	if $failed > 0 {
-		Err(Exit(1))
-	} else {
-		Ok({})
-	}
+	Ok($failed)
 }
 
-output_root : Str
-output_root = ".roc-docx/passthrough"
+# A fixture's snapshot, naming it by its path from the repository root as the
+# oracle adapters do.
+snapshot : Str, List(U8) -> Try(Str, Str)
+snapshot = |fixture, bytes| {
+	parsed = Docx.parse(bytes) ? |problem| "the fixture does not parse: ${Str.inspect(problem)}"
+	Ok(Snapshot.json(parsed.document, { path: fixture, version: "working tree" }))
+}
 
 # Parse a document, write it, and check the pass-through properties; the
 # written bytes and the report its expectation records, or what went wrong.

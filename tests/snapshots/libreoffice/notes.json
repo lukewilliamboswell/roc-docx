@@ -1,0 +1,17 @@
+{
+  "schema": "roc-docx-snapshot/1",
+  "producer": {"name": "roc-docx", "version": "working tree"},
+  "document": "tests/fixtures/libreoffice/notes.docx",
+  "keys": ["blocks.text"],
+  "blocks": [
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Policy Note", "runs": [], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Travel policy", "runs": [], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Employees may book economy travel for journeys under six hours. Longer journeys may be booked in premium economy with manager approval.", "runs": [], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Accommodation is reimbursed at the published rate for the destination.", "runs": [], "rows": []}
+  ],
+  "notes": [],
+  "comments": [],
+  "revisions": [],
+  "sections": [],
+  "properties": {"title": "", "subject": "", "creator": "", "keywords": "", "description": "", "last_modified_by": "", "created": "", "modified": ""}
+}

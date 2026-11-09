@@ -1,0 +1,86 @@
+= Read a document's text
+
+This chapter reads what a document's body says: its text, and the typed
+blocks, paragraphs and runs the text comes from. It continues from
+<<read-and-write-the-parts-of-a-document>>, which opens a document with
+`Docx.parse`.
+
+== The text
+
+`Docx.text` gives the body's text: every paragraph's text in reading order,
+each followed by a line feed, including the paragraphs inside tables and
+content controls.
+
+[source,roc]
+----
+{ document, diagnostics: _ } = Docx.parse(bytes)?
+text = Docx.text(document)
+----
+
+The text is what a reader sees with tracked changes shown as they stand:
+inserted text is included and deleted text is not. Field instructions, note
+and comment references and drawings contribute nothing; a field contributes
+the result it last displayed. Inside a run:
+
+* a tab is a tab character;
+* a line, page or column break is a line feed;
+* a symbol, a character in a named font such as Wingdings, is its character
+  code, which for most symbol fonts is in Unicode's private use area;
+* a soft hyphen, shown only where a line breaks, is U+00AD, and a hyphen at
+  which a line never breaks is U+2011.
+
+Text keeps its spaces where the document says `xml:space="preserve"`, as
+producers write it for text with leading, trailing or repeated spaces.
+Elsewhere, as Word and LibreOffice read it, spaces at the start and end of a
+piece of text are layout and are removed, and a tab or line end inside it is
+a space.
+
+== The blocks
+
+`Docx.body` gives the body as a list of `Document.Block` values in reading
+order, read from the main document part after the markup compatibility
+rules have been applied, so an extension the package does not understand is
+skipped and alternative content is read as the branch it understands:
+
+[source,roc]
+----
+paragraphs = Docx.body(document).keep_oks(
+    |block|
+        match block {
+            Paragraph(paragraph) => Ok(Document.paragraph_text(paragraph))
+            Container(_) => Err(NotAParagraph)
+            Preserved(_) => Err(NotAParagraph)
+        },
+)
+----
+
+That lists the text of the paragraphs directly in the body; the paragraphs in
+a table are inside a `Container`.
+
+A `Paragraph` has `properties` and `content`, a list of `Document.Inline`
+values. A `Run` inline has `properties` and `content`, a list of
+`Document.RunContent` values: `Text(text)`, `Tab`, `Break({ kind, clear })`
+with `kind` one of `Line`, `Page` and `Column` and `clear` saying which
+floating objects a line break clears, `Symbol({ font, code })`, `SoftHyphen`
+and `NonBreakingHyphen`. `Document.paragraph_text` gives one paragraph's
+text as `Docx.text` does.
+
+The model grows a construct at a time, and what it does not represent yet is
+never dropped. Every element it does not model is kept as the XML node it
+was read as, in its place among the modelled ones: a `Preserved` block,
+inline or run content. Paragraph and run properties are such nodes for now,
+in `properties.preserved`. An element whose content is blocks or paragraph
+content is a `Container`: the element itself, without its children, and its
+content read as blocks or inlines. Tables, their rows and cells, content
+controls and custom XML are containers of blocks; hyperlinks, inserted,
+deleted and moved text, simple fields, content controls, smart tags and
+bidirectional embeddings are containers of inlines. That is how the text in
+a table cell or a hyperlink is still text.
+
+A break of a type the schema does not define, a symbol without a character
+code and text holding markup are kept as `Preserved` run content rather than
+guessed at.
+
+Reading the body is a query: it reads the main document's tree each time it
+is asked, and a document still writes the trees it was read with, so
+`Docx.to_bytes` writes what `Docx.parse` read whatever the body says.

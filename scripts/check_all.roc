@@ -42,8 +42,8 @@ checks = [
 	{ name: "oracle-schema", argv: ["python3", "-I", "oracle/validate_schema.py", "tests/fixtures"] },
 	# Every XML part of every document the cases wrote validates against the schemas.
 	{ name: "oracle-schema-written", argv: ["python3", "-I", "oracle/validate_schema.py", ".roc-docx/passthrough"] },
-	# pandoc's snapshot of every fixture conforms to the snapshot contract.
-	{ name: "oracle-snapshot", argv: ["python3", "-I", "oracle/compare_snapshots.py", "--lane", "pandoc", "tests/fixtures"] },
+	# pandoc's and the package's snapshots of every fixture conform to the snapshot contract and agree; the cases wrote the package's.
+	{ name: "oracle-snapshot", argv: ["python3", "-I", "oracle/compare_snapshots.py", "--lane", "pandoc,package", "tests/fixtures"] },
 ]
 
 main! = |_args| {

@@ -3,7 +3,7 @@
     compare_snapshots.py A.json B.json
         validate both snapshots and compare them
     compare_snapshots.py --lane ADAPTER[,ADAPTER...] PATH...
-        run each adapter (pandoc, libreoffice) over every .docx under PATH,
+        run each adapter (pandoc, libreoffice, package) over every .docx under PATH,
         validate every snapshot, and compare each pair of adapters per document
     compare_snapshots.py --written ADAPTER ORIGINALS WRITTEN
         run the adapter over every .docx under WRITTEN and the document at the
@@ -36,7 +36,8 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 HERE = pathlib.Path(__file__).resolve().parent
 SCHEMA_PATH = HERE / "snapshot_schema.json"
 DEVIATIONS = ROOT / "conformance" / "accepted-deviations.json"
-ADAPTERS = {"pandoc": HERE / "snapshot_pandoc.py", "libreoffice": HERE / "snapshot_libreoffice.py"}
+ADAPTERS = {"pandoc": HERE / "snapshot_pandoc.py", "libreoffice": HERE / "snapshot_libreoffice.py",
+            "package": HERE / "snapshot_package.py"}
 COLLECTIONS = ["blocks", "notes", "comments", "revisions", "sections"]
 RUN_FIELDS = ["bold", "italic", "underline", "strike", "superscript", "subscript", "link"]
 

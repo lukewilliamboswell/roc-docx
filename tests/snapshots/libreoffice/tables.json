@@ -1,0 +1,20 @@
+{
+  "schema": "roc-docx-snapshot/1",
+  "producer": {"name": "roc-docx", "version": "working tree"},
+  "document": "tests/fixtures/libreoffice/tables.docx",
+  "keys": ["blocks.text"],
+  "blocks": [
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Quarterly Report Tables", "runs": [], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Quarterly figures", "runs": [], "rows": []},
+    {"kind": "table", "level": 0, "list": "", "text": "", "runs": [], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Headcount", "runs": [], "rows": []},
+    {"kind": "table", "level": 0, "list": "", "text": "", "runs": [], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "A short paragraph between tables.", "runs": [], "rows": []},
+    {"kind": "table", "level": 0, "list": "", "text": "", "runs": [], "rows": []}
+  ],
+  "notes": [],
+  "comments": [],
+  "revisions": [],
+  "sections": [],
+  "properties": {"title": "", "subject": "", "creator": "", "keywords": "", "description": "", "last_modified_by": "", "created": "", "modified": ""}
+}

@@ -229,9 +229,10 @@ limits, and `Docx.to_bytes` writes a document back:
 written = Docx.to_bytes(document)?
 ----
 
-Until the package models WordprocessingML, a document is its package and the
-tree of each XML part, which is every part whose content type is
-`application/xml`, `text/xml` or ends in `+xml`. Writing renders each tree
+Until the package writes its model of WordprocessingML, a document is its
+package and the tree of each XML part, which is every part whose content type
+is `application/xml`, `text/xml` or ends in `+xml`; <<read-a-documents-text>>
+reads the body's model from the main document's tree. Writing renders each tree
 with `XmlTree.render` and copies every other part, such as an image, exactly
 as the archive stored it; the parts, their content types and their
 relationships are those of the original, in the order `Opc.writer` fixes.

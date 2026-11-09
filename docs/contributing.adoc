@@ -46,7 +46,7 @@ blueprint tasks          # each check on its own, and the fixture and release ta
 | Every `expect` reachable from `package/main.roc` passes
 
 | cases
-| Every data-driven case under `tests/` reports what its expectation records
+| Every data-driven case under `tests/` reports what its expectation records: each fixture passes through, and the package's snapshot of it is the one in `tests/snapshots/`
 
 | examples
 | Every example prints what `tests/spec.json` records
@@ -64,7 +64,7 @@ blueprint tasks          # each check on its own, and the fixture and release ta
 | Every XML part of every document the cases wrote validates against the schemas
 
 | oracle-snapshot
-| pandoc's snapshot of every fixture conforms to the snapshot contract
+| pandoc's and the package's snapshots of every fixture conform to the snapshot contract and agree; it reads the package's snapshots that `cases` wrote
 |===
 
 The LibreOffice lane is a task of its own, because `check` does not need
@@ -72,7 +72,7 @@ LibreOffice:
 
 [source,sh]
 ----
-blueprint run libreoffice   # pandoc and LibreOffice agree; LibreOffice reads each written document as its original
+blueprint run libreoffice   # pandoc, LibreOffice and the package agree; LibreOffice reads each written document as its original
 ----
 
 It runs the cases first, so it needs `roc` as well, and then compares
@@ -239,7 +239,15 @@ without a zone being UTC; runs are projected onto the run keys both sides
 declare and neighbours that become equal are joined; order is significant
 everywhere.
 
-Two adapters produce snapshots today, each in its own file and sharing
+The package is compared with the oracles the same way. `Snapshot.json`
+writes its reading of a document as a snapshot that declares only
+`blocks.text`, the keys it is authoritative for so far; the `snapshots` cases
+of `tests/main.roc` write one for every fixture under `.roc-docx/snapshots/`
+and check it against `tests/snapshots/`; and `oracle/snapshot_package.py`, the
+`package` adapter, only copies those files, so a lane compares exactly what
+the package wrote. Run the cases before a lane that includes `package`.
+
+Two oracle adapters produce snapshots, each in its own file and sharing
 nothing with the package or each other. `oracle/snapshot_pandoc.py` reduces
 pandoc's JSON reading of a document; it is not authoritative for note kinds,
 comment threads or resolution, sections or properties. It restores the title,
