@@ -218,6 +218,16 @@ namespace is removed from the interpreted tree as if it had been marked
 ignorable. Extension lists, which DrawingML parts such as the theme use for
 application-defined content, are kept in the interpreted tree as written.
 
+`Mce.declare_extensions` is the writing side of that leniency. It adds every
+extension namespace a part uses without declaring it ignorable to the root's
+`mc:Ignorable`, after what is there, so the written part says what the reader
+assumed and a reader that does not know the namespace, the ECMA schemas
+included, skips it rather than rejecting the part. The extension content
+itself is kept. A Google Docs paragraph identifier is written back with
+`mc:Ignorable="w14"` on the document's root. Packaging parts, such as the
+core properties, and parts whose root is in a namespace the package does not
+understand, such as custom XML, are left as they are.
+
 == Pass a whole document through
 
 `Docx.parse` reads the bytes of a `.docx` as a `Document`, within the default
@@ -233,7 +243,8 @@ Until the package writes its model of WordprocessingML, a document is its
 package and the tree of each XML part, which is every part whose content type
 is `application/xml`, `text/xml` or ends in `+xml`; <<read-a-documents-text>>
 reads the body's model from the main document's tree. Writing renders each tree
-with `XmlTree.render` and copies every other part, such as an image, exactly
+with `XmlTree.render`, its extensions declared ignorable by
+`Mce.declare_extensions`, and copies every other part, such as an image, exactly
 as the archive stored it; the parts, their content types and their
 relationships are those of the original, in the order `Opc.writer` fixes.
 The same document always gives the same bytes. A document holds the
@@ -263,5 +274,7 @@ content types and relationships, every part that is not XML byte for byte the
 same, and the trees of the XML parts equal by `Document.equivalent_xml`. Two
 trees are equivalent when they are equal after namespace prefixes and
 declarations, the order of attributes and whitespace-only text between
-elements are set aside and the dropped content is removed; text, including
-text whose whitespace `xml:space="preserve"` keeps, compares exactly.
+elements are set aside, the dropped content is removed and an extension
+namespace used without being declared ignorable counts as declared; text,
+including text whose whitespace `xml:space="preserve"` keeps, compares
+exactly.

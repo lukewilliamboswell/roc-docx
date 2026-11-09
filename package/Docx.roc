@@ -6,6 +6,7 @@
 ## `Docx.to_bytes` writes a document as a package. What reading drops comes
 ## back as diagnostics beside the document, never printed.
 import Document
+import Mce
 import Opc
 import WmlRead
 import XmlTree
@@ -115,4 +116,27 @@ expect {
 	graph = { relationships: [], parts: [{ name: "/data.xml", content_type: "application/xml", relationships: [] }] }
 	parsed = Docx.parse(Opc.to_bytes(graph, |_| Bytes("<data/>".to_utf8()))?)?
 	Docx.body(parsed.document) == [] and Docx.text(parsed.document) == ""
+}
+
+## A paragraph identifier in an extension namespace that is not declared
+## ignorable, as Google Docs exports write `w14:paraId`, passes through and is
+## written declared ignorable, so the written part reads without a diagnostic.
+expect {
+	w14 = "http://schemas.microsoft.com/office/word/2010/wordml"
+	main = "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"
+	graph = {
+		relationships: [{ id: "rId1", kind: Opc.officedocument_relationship, target: "/word/document.xml", mode: Internal }],
+		parts: [{ name: "/word/document.xml", content_type: main, relationships: [] }],
+	}
+	xml = "<w:document xmlns:w='http://schemas.openxmlformats.org/wordprocessingml/2006/main' xmlns:w14='${w14}'><w:body><w:p w14:paraId='1A2B3C4D'><w:r><w:t>a</w:t></w:r></w:p></w:body></w:document>"
+	parsed = Docx.parse(Opc.to_bytes(graph, |_| Bytes(xml.to_utf8()))?)?
+	written = Docx.to_bytes(parsed.document)?
+	again = Docx.parse(written)?
+	part = Opc.part_bytes(Opc.open(written, {})?, "/word/document.xml")?
+	declared = "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" xmlns:mc=\"http://schemas.openxmlformats.org/markup-compatibility/2006\" xmlns:w14=\"${w14}\" mc:Ignorable=\"w14\"><w:body><w:p w14:paraId=\"1A2B3C4D\">"
+	undeclared = |document| Document.main_document(document).map_ok(|tree| Mce.process(tree).diagnostics.len())
+	Document.equivalent(parsed.document, again.document)
+		and Str.from_utf8(part).map_ok(|text| text.contains(declared)) == Ok(Bool.True)
+		and undeclared(parsed.document) == Ok(1)
+		and undeclared(again.document) == Ok(0)
 }

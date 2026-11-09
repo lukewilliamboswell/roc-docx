@@ -18,9 +18,9 @@ import "../../tests/fixtures/libreoffice/basics.docx" as libreoffice_basics : Li
 ## writing that gives the same bytes again.
 ##
 ## Inputs are arbitrary bytes, or packages generated from a small program of
-## bytes whose main document mixes WordprocessingML with an ignorable
-## extension namespace, spelled with prefixes that collide with the writer's
-## table, alternative content and the content reading drops.
+## bytes whose main document mixes WordprocessingML with an extension
+## namespace, declared ignorable or not, spelled with prefixes that collide
+## with the writer's table, alternative content and the content reading drops.
 ##
 ## Allocation ratchets, which only ever move down: parsing and writing each
 ## allocate at most linearly in the archive and the bytes it inflates, and
@@ -135,18 +135,25 @@ inflated = |bytes|
 # each declared document, as measured on nightly-2026-11-07 with roc-zip
 # 0.3.0-rc1 and roc-parser 6.0.0-rc.1 when the ceiling was set.
 # Reading the package's own parts through the namespaced reader (G1.3a)
-# added a constant 47 to 87 to each when both slices met.
+# added a constant 47 to 87 to each when both slices met. Declaring
+# undeclared extensions when writing (G1.5a) added 5 to 15 to each, the scan
+# of every part for extension namespaces, and 356 to the LibreOffice
+# document, whose main part offers shapes in a namespace it does not declare
+# ignorable as an alternative and so is processed to find it needs nothing
+# declared. The undeclared example costs the small one's and processing its
+# main part.
 exact_ceiling : Input -> Try(U64, [NotDeclared])
 exact_ceiling = |input|
 	match input {
-		Generated(program) if program == small_program => Ok(1_184)
-		Generated(program) if program == large_program => Ok(9_266)
+		Generated(program) if program == small_program => Ok(1_189)
+		Generated(program) if program == large_program => Ok(9_273)
+		Generated(program) if program == undeclared_program => Ok(1_298)
 		Fixture(index) => fixtures.get(index).map_ok(|fixture| fixture.allocations).map_err(|_| NotDeclared)
 		_ => Err(NotDeclared)
 	}
 
 # The small and large generated examples repeat one program, the large one
-# sixteen times as often; their ceilings, 1,184 and 9,266, keep the growth
+# sixteen times as often; their ceilings, 1,189 and 9,273, keep the growth
 # linear, the small one mostly the constant cost of a package and of one
 # DEFLATE compressor.
 small_program : List(U8)
@@ -154,6 +161,11 @@ small_program = List.join(List.repeat(program_unit, 4))
 
 large_program : List(U8)
 large_program = List.join(List.repeat(program_unit, 64))
+
+# The small program with the extension namespace spelled `w14` and not
+# declared ignorable, as Google Docs exports write paragraph identifiers.
+undeclared_program : List(U8)
+undeclared_program = List.concat([8], small_program.drop_first(1))
 
 # A paragraph with save identifiers and an extension attribute holding a
 # proofing mark, a run with text and a rendered page break, an extension
@@ -163,8 +175,8 @@ program_unit = [7, 4, 3, 5, 1, 2, 6, 2, 0]
 
 fixtures : List({ name : Str, bytes : List(U8), allocations : U64 })
 fixtures = [
-	{ name: "pandoc-basics", bytes: pandoc_basics, allocations: 16_281 },
-	{ name: "libreoffice-basics", bytes: libreoffice_basics, allocations: 14_287 },
+	{ name: "pandoc-basics", bytes: pandoc_basics, allocations: 16_296 },
+	{ name: "libreoffice-basics", bytes: libreoffice_basics, allocations: 14_643 },
 ]
 
 wordprocessingml : Str
@@ -173,13 +185,16 @@ wordprocessingml = "http://schemas.openxmlformats.org/wordprocessingml/2006/main
 # A package whose main document a program describes, with a picture beside
 # it. The first byte chooses the prefixes the document is written with:
 # WordprocessingML as `w` or `q`, and the extension namespace as `x`, `w14`
-# or `ns1`, which the writer's table or its own numbering also use.
+# or `ns1`, which the writer's table or its own numbering also use; and
+# whether the extension namespace is declared ignorable, which Google Docs
+# exports leave out.
 generated_package : List(U8) -> List(U8)
 generated_package = |program| {
 	choice = (program.first() ?? 0).to_u64()
 	w = pick(["w", "q"], choice)
 	x = pick(["x", "w14", "ns1"], choice // 2)
-	declarations = "xmlns:${w}='${wordprocessingml}' xmlns:${x}='urn:example:extension' xmlns:mc='http://schemas.openxmlformats.org/markup-compatibility/2006' mc:Ignorable='${x}'"
+	ignorable = if ((choice // 8) % 2 == 0) " mc:Ignorable='${x}'" else ""
+	declarations = "xmlns:${w}='${wordprocessingml}' xmlns:${x}='urn:example:extension' xmlns:mc='http://schemas.openxmlformats.org/markup-compatibility/2006'${ignorable}"
 	var $body = List.with_capacity(program.len())
 	var $open = List.with_capacity(16)
 	for byte in program.drop_first(1) {
@@ -243,6 +258,7 @@ target = Fuzz.target_with!({
 		Fuzz.example({ name: "zip-signature-only", revision: "1", make: || Bytes([0x50, 0x4B, 0x03, 0x04]) }),
 		Fuzz.example({ name: "small-document", revision: "1", make: || Generated(small_program) }),
 		Fuzz.example({ name: "large-document", revision: "1", make: || Generated(large_program) }),
+		Fuzz.example({ name: "undeclared-extension", revision: "1", make: || Generated(undeclared_program) }),
 	].concat(fixtures.map_with_index(|fixture, index| Fuzz.example({ name: fixture.name, revision: "1", make: || Fixture(index) }))),
 	generator,
 	test!,

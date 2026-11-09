@@ -14,6 +14,7 @@
 ## are what a document writes, so the model is a reading of them rather than
 ## a copy kept beside them.
 import Limits
+import Mce
 import Opc
 import XmlTree
 
@@ -282,16 +283,18 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 	}
 
 	## Write a document as a package, in the order and form of [Opc.writer]:
-	## each XML part rendered by [XmlTree.render], every other part copied
-	## with its stored bytes. The same document always gives the same bytes,
-	## and either the whole package is written or an error names the reason.
+	## each XML part rendered by [XmlTree.render] with its extension
+	## namespaces declared ignorable by [Mce.declare_extensions], every other
+	## part copied with its stored bytes. The same document always gives the
+	## same bytes, and either the whole package is written or an error names
+	## the reason.
 	to_bytes : Document -> Try(List(U8), WriteError)
 	to_bytes = |document| {
 		var $writer = Opc.writer(document.graph)?
 		var $out = List.with_capacity(0)
 		for name in Opc.pending($writer) {
 			content = match document.trees.get(name) {
-				Ok(tree) => Bytes(XmlTree.render(tree) ? |problem| XmlPartUnwritable({ part: name, problem }))
+				Ok(tree) => Bytes(XmlTree.render(Mce.declare_extensions(tree)) ? |problem| XmlPartUnwritable({ part: name, problem }))
 				Err(_) => Copied(document.pkg)
 			}
 			added = Opc.add($writer, content)?
@@ -345,6 +348,8 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 	##   children, is ignored unless `xml:space="preserve"` applies there; all
 	##   other text compares exactly, adjacent runs of text joined.
 	## * The dropped content of [Document.Dropped] is removed from both.
+	## * An extension namespace used without being declared ignorable compares
+	##   as declared, as [Mce.declare_extensions] declares it when writing.
 	equivalent_xml : XmlTree.Node, XmlTree.Node -> Bool
 	equivalent_xml = |one, other| normalized(one) == normalized(other)
 }
@@ -541,12 +546,13 @@ value_of = |element, local|
 is_save_id : XmlTree.Attribute -> Bool
 is_save_id = |attribute| attribute.name.namespace == Uri(wordprocessingml) and attribute.name.local.starts_with("rsid")
 
-# The form two trees are compared in: dropped content removed, prefixes
-# resolved, attributes sorted by namespace and local name, adjacent text
-# joined and whitespace between elements removed where it is insignificant.
+# The form two trees are compared in: dropped content removed, undeclared
+# extensions declared, prefixes resolved, attributes sorted by namespace and
+# local name, adjacent text joined and whitespace between elements removed
+# where it is insignificant.
 normalized : XmlTree.Node -> XmlTree.Node
 normalized = |tree| {
-	root = XmlTree.unprefixed(drop(tree).tree)
+	root = XmlTree.unprefixed(Mce.declare_extensions(drop(tree).tree))
 	var $pending = [Visit(root)]
 	var $frames = List.with_capacity(16)
 	var $nodes = List.with_capacity(16)

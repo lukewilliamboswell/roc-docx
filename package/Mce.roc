@@ -221,6 +221,44 @@ Mce :: [].{
 		}
 		{ interpreted: $nodes.last() ?? root, diagnostics: $diagnostics }
 	}
+
+	## The tree a writer emits for a part: `root` with every extension
+	## namespace that [Mce.process] reports as used without being declared
+	## ignorable added to the root's `mc:Ignorable`, after the prefixes
+	## already there and in the order the part first uses them, so that a
+	## consumer that does not understand them, the ECMA schemas included,
+	## skips them as the package's reader does. Each is named by the prefix
+	## the root declares it with, or else by `ns1`, `ns2` and so on, the first
+	## the root neither declares nor names in `mc:Ignorable`, declared on the
+	## root. The content in those namespaces is kept. A part whose root is in
+	## a packaging namespace, where the compatibility rules do not apply, or
+	## in a namespace the package does not understand, such as custom XML, is
+	## returned as it is.
+	declare_extensions : XmlTree.Node -> XmlTree.Node
+	declare_extensions = |root|
+		match root {
+			Element(element) =>
+				match element.name.namespace {
+					Uri(namespace) if Mce.understood.contains(namespace) and !packaging.contains(namespace) and uses_extension(root) => {
+						undeclared = Mce.process(root).diagnostics.keep_oks(
+							|diagnostic|
+								match diagnostic {
+									UndeclaredExtension({ namespace: extension, at: _ }) => Ok(extension)
+									_ => Err(NotUndeclared)
+								},
+						)
+						if undeclared.is_empty() {
+							root
+						} else {
+							Element(declare_ignorable(element, undeclared))
+						}
+					}
+
+					_ => root
+				}
+
+			Text(_) => root
+		}
 }
 
 markup_compatibility : Str
@@ -230,6 +268,66 @@ xml_namespace : Str
 xml_namespace = "http://www.w3.org/XML/1998/namespace"
 
 Element : { name : XmlTree.Name, bindings : List(XmlTree.Binding), attributes : List(XmlTree.Attribute), children : List(XmlTree.Node) }
+
+# The namespaces of the packaging parts of ECMA-376 Part 2, which do not
+# take markup compatibility attributes.
+packaging : List(Str)
+packaging = [
+	"http://schemas.openxmlformats.org/package/2006/content-types",
+	"http://schemas.openxmlformats.org/package/2006/relationships",
+	"http://schemas.openxmlformats.org/package/2006/metadata/core-properties",
+]
+
+# A root element with `namespaces` added to its `mc:Ignorable`, each by the
+# prefix the root declares it with or by a new declaration of the first free
+# `ns1`, `ns2` and so on.
+declare_ignorable : Element, List(Str) -> Element
+declare_ignorable = |element, namespaces| {
+	is_ignorable_attribute = |attribute| attribute.name.namespace == Uri(markup_compatibility) and attribute.name.local == "Ignorable"
+	named = match element.attributes.find_first(is_ignorable_attribute) {
+		Ok(attribute) => words(attribute.value)
+		Err(_) => []
+	}
+	var $bindings = element.bindings
+	var $prefixes = List.with_capacity(namespaces.len())
+	var $counter = 0.U64
+	for namespace in namespaces {
+		match declared_prefix(namespace, $bindings) {
+			Ok(prefix) => {
+				$prefixes = List.append($prefixes, prefix)
+			}
+
+			Err(_) => {
+				$counter = $counter + 1
+				while is_taken("ns${$counter.to_str()}", $bindings, named) {
+					$counter = $counter + 1
+				}
+				prefix = "ns${$counter.to_str()}"
+				$bindings = List.append($bindings, { prefix: Prefix(prefix), namespace: Uri(namespace) })
+				$prefixes = List.append($prefixes, prefix)
+			}
+		}
+	}
+	added = Str.join_with($prefixes, " ")
+	attributes = if element.attributes.any(is_ignorable_attribute) {
+		element.attributes.map(|attribute| if (is_ignorable_attribute(attribute)) { name: attribute.name, value: Str.join_with(List.append(named, added), " ") } else attribute)
+	} else {
+		List.append(element.attributes, { name: { namespace: Uri(markup_compatibility), local: "Ignorable", prefix: Prefix("mc") }, value: added })
+	}
+	{ name: element.name, bindings: $bindings, attributes, children: element.children }
+}
+
+# The prefix a root's own declarations bind to a namespace.
+declared_prefix : Str, List(XmlTree.Binding) -> Try(Str, [Undeclared])
+declared_prefix = |namespace, bindings|
+	match bindings.find_first(|binding| binding.namespace == Uri(namespace) and binding.prefix != Default) {
+		Ok({ prefix: Prefix(prefix), namespace: _ }) => Ok(prefix)
+		_ => Err(Undeclared)
+	}
+
+# A prefix a root declares, or names in its `mc:Ignorable` without declaring.
+is_taken : Str, List(XmlTree.Binding), List(Str) -> Bool
+is_taken = |prefix, bindings, named| named.contains(prefix) or bindings.any(|binding| binding.prefix == Prefix(prefix))
 
 # What the compatibility attributes in scope say: the ignorable namespaces
 # and the elements whose content is processed when they are ignored, with
@@ -554,6 +652,51 @@ push_branches = |pending, children, roles| {
 	$pending
 }
 
+# Whether an element or attribute of a tree, outside its extension lists, is
+# in a namespace the package does not understand and the root does not
+# declare ignorable: the parts without one, which are most, need no
+# processing to be written.
+uses_extension : XmlTree.Node -> Bool
+uses_extension = |root| {
+	declared = match root {
+		Element(element) =>
+			match element.attributes.find_first(|attribute| attribute.name.namespace == Uri(markup_compatibility) and attribute.name.local == "Ignorable") {
+				Ok(attribute) => words(attribute.value).keep_oks(|prefix| bound(prefix, element.bindings))
+				Err(_) => []
+			}
+
+		Text(_) => []
+	}
+	is_extension = |namespace|
+		match namespace {
+			Uri(uri) => !Mce.understood.contains(uri) and !declared.contains(uri)
+			NoNamespace => Bool.False
+		}
+	var $pending = List.append(List.with_capacity(64), root)
+	while !$pending.is_empty() {
+		next = $pending.last() ?? Text("")
+		$pending = List.drop_last($pending, 1)
+		match next {
+			Element(element) => {
+				if is_extension(element.name.namespace) or element.attributes.any(|attribute| is_extension(attribute.name.namespace)) {
+					return Bool.True
+				}
+				for child in element.children {
+					match child {
+						Element(list) if list.name.local == "extLst" and list.name.namespace != NoNamespace and is_understood(list.name.namespace) => {}
+						_ => {
+							$pending = List.append($pending, child)
+						}
+					}
+				}
+			}
+
+			Text(_) => {}
+		}
+	}
+	Bool.False
+}
+
 # How many elements a list of nodes holds at any depth, so that skipping
 # them keeps the positions of later elements those of the part.
 descendants : List(XmlTree.Node) -> U64
@@ -708,4 +851,44 @@ expect {
 		Ok(tree) => Mce.process(tree) == { interpreted: tree, diagnostics: [] }
 		Err(_) => Bool.False
 	}
+}
+
+# A part's tree with its undeclared extensions declared, written with the
+# package's prefixes, beside the same for the part that is expected.
+declares_as : Str, Str -> Bool
+declares_as = |source, expected|
+	match (XmlTree.parse(source.to_utf8(), {}), XmlTree.parse(expected.to_utf8(), {})) {
+		(Ok(tree), Ok(wanted)) => XmlTree.render(Mce.declare_extensions(tree)) == XmlTree.render(wanted)
+		_ => Bool.False
+	}
+
+## Undeclared extensions, as Google Docs writes `w14:paraId`, are declared
+## ignorable on the root in the order the part first uses them, after those
+## already declared, by the root's prefix or a new one; the content stays.
+expect {
+	w = "xmlns:w='http://schemas.openxmlformats.org/wordprocessingml/2006/main'"
+	w14 = "xmlns:w14='http://schemas.microsoft.com/office/word/2010/wordml'"
+	mc = "xmlns:mc='http://schemas.openxmlformats.org/markup-compatibility/2006'"
+	declares_as("<w:document ${w} ${w14}><w:p w14:paraId='1A'/></w:document>", "<w:document ${w} ${w14} ${mc} mc:Ignorable='w14'><w:p w14:paraId='1A'/></w:document>")
+		and declares_as(
+			"<w:document ${w} ${mc} xmlns:ns1='urn:a' mc:Ignorable='ns1'><w:p xmlns:x='urn:b' x:a='1'><ns1:e/></w:p><w:p w14:paraId='2' ${w14}/></w:document>",
+			"<w:document ${w} ${mc} xmlns:ns1='urn:a' xmlns:ns2='urn:b' ${w14} mc:Ignorable='ns1 ns2 w14'><w:p x:a='1' xmlns:x='urn:b'><ns1:e/></w:p><w:p w14:paraId='2'/></w:document>",
+		)
+}
+
+## A part whose extensions are declared, one that uses only the understood
+## namespaces, VML included, and one the compatibility rules do not apply to
+## are written as they are.
+expect {
+	declared = "<w:document ${declarations} mc:Ignorable='w14'><w:p w14:paraId='1'/></w:document>"
+	vml = "<w:pict xmlns:w='http://schemas.openxmlformats.org/wordprocessingml/2006/main' xmlns:v='urn:schemas-microsoft-com:vml' xmlns:o='urn:schemas-microsoft-com:office:office'><v:rect o:hr='t'/></w:pict>"
+	custom = "<b:Sources xmlns:b='http://schemas.openxmlformats.org/officeDocument/2006/bibliography'><b:Source xmlns:x='urn:x' x:a='1'/></b:Sources>"
+	core = "<cp:coreProperties xmlns:cp='http://schemas.openxmlformats.org/package/2006/metadata/core-properties' xmlns:x='urn:x' x:a='1'/>"
+	[declared, vml, custom, core].all(
+		|source|
+			match XmlTree.parse(source.to_utf8(), {}) {
+				Ok(tree) => Mce.declare_extensions(tree) == tree
+				Err(_) => Bool.False
+			},
+	)
 }

@@ -200,6 +200,7 @@ The dropped class is small and justified: revision save identifiers (`w:rsid*`),
 * Insignificant whitespace between elements is insignificant; text content, including `xml:space="preserve"` text, compares exactly.
 * Attributes explicitly set to the schema default compare equal to absence where the schema defines a default and the package records neither; where a producer's explicit default is meaningful (toggle properties), the model records it and it round-trips.
 * Dropped-class content is removed from the original before comparison.
+* An extension namespace used without being declared ignorable compares equal to its declaration on the part's root, which the writer adds as xref:architecture.adoc#markup-compatibility-and-extensibility[Markup Compatibility and Extensibility] requires.
 
 The package ships this equivalence as a function, because the test harness and the fuzz targets need exactly the equivalence the package promises, and a second definition in a test would drift.
 
