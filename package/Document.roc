@@ -846,13 +846,14 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 
 	## The document with a new XML part: `name`, of `content_type`, holding
 	## `tree`, and a relationship of type `kind` to it from the part named
-	## `source`, whose identifier is the lowest `rIdN` from `rId1` up that no
-	## relationship of the source uses. A name the document already has, or a
-	## source it does not, changes nothing. The part is written from its tree,
-	## as [Document.to_bytes] writes every XML part.
+	## `source`, or from the package itself when `source` is `/`, whose
+	## identifier is the lowest `rIdN` from `rId1` up that no relationship of
+	## the source uses. A name the document already has, or a source it does
+	## not, changes nothing. The part is written from its tree, as
+	## [Document.to_bytes] writes every XML part.
 	with_new_part : Document, { source : Str, kind : Str, name : Str, content_type : Str }, XmlTree.Node -> Document
 	with_new_part = |document, new, tree| {
-		if document.graph.parts.any(|part| part.name == new.name) or !document.graph.parts.any(|part| part.name == new.source) {
+		if document.graph.parts.any(|part| part.name == new.name) or (new.source != "/" and !document.graph.parts.any(|part| part.name == new.source)) {
 			return document
 		}
 		related_from = |relationships| {
@@ -864,8 +865,20 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 		}
 		parts = document.graph.parts.map(|part| if (part.name == new.source) { name: part.name, content_type: part.content_type, relationships: related_from(part.relationships) } else part)
 		added = List.append(parts, { name: new.name, content_type: new.content_type, relationships: [] })
-		{ pkg: document.pkg, graph: { relationships: document.graph.relationships, parts: added }, trees: document.trees.insert(new.name, tree), body: document.body }
+		package_relationships = if (new.source == "/") related_from(document.graph.relationships) else document.graph.relationships
+		{ pkg: document.pkg, graph: { relationships: package_relationships, parts: added }, trees: document.trees.insert(new.name, tree), body: document.body }
 	}
+
+	## The document with `blocks` as the body of its main document part,
+	## written into the part's tree when the document is written, as
+	## [Document.from_trees] keeps a built body. A document without a main
+	## document part is returned as it is.
+	with_body : Document, List(Block) -> Document
+	with_body = |document, blocks|
+		match Document.related(document, "/", Opc.officedocument_relationship) {
+			Ok(main) => { pkg: document.pkg, graph: document.graph, trees: document.trees, body: Blocks({ part: main.name, body: { blocks, diagnostics: [] } }) }
+			Err(NotFound) => document
+		}
 
 	## A document built rather than read: the parts and relationships of
 	## `graph`, each part holding its tree in `trees`, and `blocks` the body

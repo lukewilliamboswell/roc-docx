@@ -1,9 +1,9 @@
 = Generate a document
 
 This chapter starts a new document instead of reading one: what a new
-document holds, which styles and lists it has, and how its properties are
-given. It continues from <<write-a-document>>, which says how a document is
-written.
+document holds, how its content is built, which styles and lists it has,
+and how its properties are given. It continues from <<write-a-document>>,
+which says how a document is written.
 
 == Start a new document
 
@@ -30,6 +30,119 @@ of the page. Word and LibreOffice open it as a blank document, and it reads
 back like any other: `Docx.text` gives one empty line, `Docx.styles` the
 styles below, `Docx.numbering` the lists, and `Docx.core_properties` the
 properties it was given.
+
+== Build the content
+
+The `Build` module makes the content: paragraphs, text, list items, tables
+and links are values of the document model, and the rest, the notes,
+headers and footers, pages and properties, are added to the document. Each
+takes its content and a record of options, every option with a default, so
+`{}` asks for none:
+
+[source,roc]
+----
+created = Docx.new_document({ title: Text("Tenancy notice"), creator: Text("Ada Reviewer") })?
+noted = Build.footnote(created, [Build.text("As agreed on signing.", {})])?
+cell = |text, options| Build.cell(options, [Build.paragraph({}, [Build.text(text, {})])])
+document = Build.append(
+    noted.document,
+    [
+        Build.paragraph({ style: Heading(1) }, [Build.text("Tenancy notice", {})]),
+        Build.paragraph({}, [Build.text("The rent is ", {}), Build.text("due monthly", { bold: On }), noted.reference, Build.text(". See ", {}), Build.link("https://example.org/tenancy", [Build.text("the terms", {})]), Build.text(".", {})]),
+        Build.list_item({}, [Build.text("Rent", {})]),
+        Build.list_item({ list: Numbered, level: 1 }, [Build.text("Give notice", {})]),
+        Build.table({ widths: [3000, 6026], header_rows: 1 }, [[cell("Item", {}), cell("Due", {})], [cell("Rent", {}), cell("Monthly", {})]]),
+    ],
+)
+bytes = Docx.to_bytes(document)?
+----
+
+`Build.append` adds blocks at the end of the body, before the end of its
+final section; the one empty paragraph of a new document gives way to the
+first blocks appended.
+
+`Build.paragraph` sets a paragraph's `style`, the normal style by default, a
+heading's with `Heading(1)` to `Heading(6)` or any style by its identifier
+with `Style("ListParagraph")`; its `alignment`, `Left`, `Center`, `Right` or
+`Justified`; and whether it starts on a new page, `page_break_before: On`.
+
+`Build.text` makes a run of text. A tab in the text is a tab and a line feed
+a line break. Its options set `bold`, `italic`, `underline` and `strike`,
+each `On`, or `Off` against what a style sets; `vertical_align`,
+`Superscript` or `Subscript`; `size` in half-points, `HalfPoints(24)` being 12
+points; `color`, `Rgb({ red: 192, green: 0, blue: 0 })`; `font`,
+`Named("Cambria")`; and a character `style`. What a run leaves `Unset`
+comes from the paragraph's style and the document's defaults.
+
+`Build.list_item` makes an item of the bulleted list, or with
+`list: Numbered` of the numbered one, at its `level` from 0, in the List
+Paragraph style; the lists are described below.
+
+`Build.link` makes a link to an address around its content; runs without a
+character style of their own take the Hyperlink style. The relationship
+that holds the address is added when the document is written.
+
+`Build.table` makes a table in the Table Grid style from rows of cells made
+by `Build.cell`. Its `widths` are its columns' in twips (1,440 to the inch),
+and without them the columns share the width of an A4 page between one-inch
+margins; its first `header_rows` rows repeat at the top of each page it runs
+onto. A cell `span`s grid columns, and is as wide as the columns it spans; a
+cell with `merge: Restart` starts a vertical merge that the cells below it
+with `merge: Continue` join. A cell ends with a paragraph, so an empty one is
+given one.
+
+== Notes, headers and footers
+
+`Build.footnote` adds a footnote and gives back the document with it and the
+reference to place in a paragraph, which shows the note's number. The note
+is a paragraph in the footnote text style starting with its number. A
+document without footnotes is given a footnotes part with the separator
+lines drawn above the notes.
+
+`Build.header` and `Build.footer` give the final section the header or
+footer of every page, from blocks as the body's are, in a part of their own
+that is added with its relationship; giving one again replaces it.
+`Build.page_number` and `Build.page_count` are fields for the page's number
+and the number of pages, which Word and LibreOffice calculate as they lay
+the document out:
+
+[source,roc]
+----
+footed = Build.footer(document, [Build.paragraph({ alignment: Center }, [Build.text("Page ", {}), Build.page_number, Build.text(" of ", {}), Build.page_count])])?
+----
+
+Until a word processor calculates them, the package reads each field's
+result as 1. Each of these three fails with `NoMainDocument` for a document
+without a main document part, or with the writer's error for content that
+names a note or comment the document does not have.
+
+== Pages and sections
+
+`Build.page_setup` sets the final section's page: its `size`, `A4`,
+`Letter`, `Legal` or `Size({ width, height })` in twips; its `orientation`,
+`Portrait` or `Landscape`; its `top`, `right`, `bottom` and `left` margins
+and its `header` and `footer` distances from the edge of the page, in
+twips; and where it `start`s, `NextPage`, `Continuous`, `EvenPage` or
+`OddPage`. The defaults are the new document's page.
+
+`Build.new_section` ends the final section where the body ends, keeping its
+page, header and footer, and starts a new one with the page its setup gives.
+The new section shows the header and footer of the section before it until
+it is given its own:
+
+[source,roc]
+----
+annex = Build.append(Build.new_section(document, { orientation: Landscape }), [Build.paragraph({ style: Heading(1) }, [Build.text("Schedule", {})])])
+----
+
+== Properties
+
+`Build.properties` sets the document's title, subject, author (`creator`),
+keywords, description, who last modified it, its revision number and when it
+was created and last modified. A property given replaces the document's, and
+one left out keeps it; a document without core properties is given them. A
+date that is not in the W3C date and time format is refused with
+`NotADate`, as `Docx.new_document` refuses it.
 
 == The styles
 

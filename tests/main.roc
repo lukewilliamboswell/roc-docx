@@ -8,6 +8,7 @@ import cli.Monotonic
 import cli.Path
 import cli.Stderr
 import cli.Stdout
+import docx.Build
 import docx.Comments
 import docx.Docx
 import docx.Document
@@ -43,12 +44,14 @@ import docx.XmlTree
 ##
 ## Generated: documents built from the model rather than read, for content
 ## the fixtures do not hold together, such as every kind of tracked change,
-## and a new document from the default document kit. Each is written under
+## a new document from the default document kit, and documents made by the
+## builders, one on a single page and one of two sections. Each is written under
 ## `.roc-docx/generated/`, must read back as what it was built from, without
 ## anything to drop or repair, and pass through as a fixture does; its
 ## snapshot goes beside the fixtures' and its report, the pass-through
-## report with what it reads back (its tracked changes, or the kit's styles,
-## lists and properties), is compared with `tests/generated/<name>.txt`.
+## report with what it reads back (its tracked changes; the kit's styles,
+## lists and properties; or the built text, notes, sections, fields and
+## properties), is compared with `tests/generated/<name>.txt`.
 ##
 ## Review: the fixture edited by the reviewer's pass of
 ## `examples/review_contract`, which adds a comment on the first line of
@@ -420,7 +423,102 @@ built = |content| {
 
 # Documents built from the model, by name.
 generated : List({ name : Str, build : () -> Try({ written : List(U8), report : Str, document : Document }, Str) })
-generated = [{ name: "revisions", build: || built(every_revision) }, { name: "kit", build: new_document }]
+generated = [{ name: "revisions", build: || built(every_revision) }, { name: "kit", build: new_document }, { name: "builders", build: || authored(every_builder) }, { name: "sections", build: || authored(two_sections) }]
+
+# A document made by the builders, written and passed through as a fixture
+# is, which must read back equivalent to what was built; its report adds
+# what it reads back: its text by line, its footnotes, its sections' pages
+# and their headers' and footers' text, its fields and its properties.
+authored : (() -> Try(Document, Str)) -> Try({ written : List(U8), report : Str, document : Document }, Str)
+authored = |build| {
+	made = build()?
+	passed = pass_through(Docx.to_bytes(made) ? |problem| "the built document does not write: ${Str.inspect(problem)}")?
+	again = Docx.parse(passed.written) ? |problem| "the written document does not parse: ${Str.inspect(problem)}"
+	if !Docx.equivalent(made, again.document) {
+		return Err("the built document reads back differently from what was built")
+	}
+	read = again.document
+	region = |references|
+		match references.find_first(|reference| reference.kind == Default) {
+			Ok(reference) => Str.inspect(Docx.header_footer(read, reference.part).map(block_text))
+			Err(_) => "none"
+		}
+	note_text = |note| Str.inspect(note.content.map(block_text))
+	properties = Docx.core_properties(read)
+	lines = List.join([
+		Docx.text(read).split_on("\n").map(|line| "text: ${Str.inspect(line)}"),
+		Docx.footnotes(read).map(|note| "footnote: ${Str.inspect(note.kind)} ${note_text(note)}"),
+		Docx.sections(read).map(|section| "section: ${Str.inspect(section.start)} ${Str.inspect(section.page_size)} ${Str.inspect(section.margins)} header ${region(section.headers)} footer ${region(section.footers)}"),
+		Docx.sections(read).map(|section| List.concat(section.headers, section.footers)).join().map(|reference| Document.fields(Docx.header_footer(read, reference.part))).join().map(|field| "field: ${Str.inspect(field.code)} ${Str.inspect(field.result)}"),
+		["properties: ${Str.inspect((properties.title, properties.subject, properties.creator, properties.created, properties.modified))}"],
+	])
+	Ok({ written: passed.written, report: Str.concat(passed.report, Str.join_with(lines.map(|line| "${line}\n"), "")), document: read })
+}
+
+# A block's text: a paragraph's, or a table's cells' paragraphs.
+block_text : Document.Block -> Str
+block_text = |block|
+	match block {
+		Paragraph(paragraph) => Document.paragraph_text(paragraph)
+		_ => ""
+	}
+
+# A one-page document using every builder but a section break: properties,
+# a header and a footer with the page number and count, a heading, formatted
+# text, a link, a footnote, bulleted and numbered lists, and a table with a
+# header row, a cell spanning two columns and a vertical merge, on a Letter
+# page with narrower margins.
+every_builder : () -> Try(Document, Str)
+every_builder = || {
+	created = Docx.new_document({}) ? |problem| "the kit refuses its properties: ${Str.inspect(problem)}"
+	described = Build.properties(created, { title: Text("Tenancy notice"), subject: Text("Rent"), creator: Text("Ada Reviewer"), created: Date(stamp.written), modified: Date(stamp.written) }) ? |problem| "the properties are refused: ${Str.inspect(problem)}"
+	headed = Build.header(described, [Build.paragraph({ alignment: Right }, [Build.text("Tenancy notice", { italic: On })])]) ? |problem| "the header does not write: ${Str.inspect(problem)}"
+	footed = Build.footer(headed, [Build.paragraph({ alignment: Center }, [Build.text("Page ", {}), Build.page_number, Build.text(" of ", {}), Build.page_count])]) ? |problem| "the footer does not write: ${Str.inspect(problem)}"
+	noted = Build.footnote(footed, [Build.text("As agreed on signing.", {})]) ? |problem| "the footnote does not write: ${Str.inspect(problem)}"
+	cell = |text, options| Build.cell(options, [Build.paragraph({}, [Build.text(text, {})])])
+	content = [
+		Build.paragraph({ style: Heading(1) }, [Build.text("Tenancy notice", {})]),
+		Build.paragraph(
+			{ alignment: Justified },
+			[
+				Build.text("The rent is ", {}),
+				Build.text("due monthly", { bold: On }),
+				Build.text(", in ", {}),
+				Build.text("advance", { italic: On, underline: On }),
+				Build.text(", at the rate of ", {}),
+				Build.text("one thousand", { color: Rgb({ red: 192, green: 0, blue: 0 }), size: HalfPoints(24) }),
+				noted.reference,
+				Build.text(". See ", {}),
+				Build.link("https://example.org/tenancy", [Build.text("the terms", {})]),
+				Build.text(".", {}),
+			],
+		),
+		Build.list_item({}, [Build.text("Rent\tmonthly", {})]),
+		Build.list_item({ level: 1 }, [Build.text("By transfer", {})]),
+		Build.list_item({ list: Numbered }, [Build.text("Give notice", {})]),
+		Build.list_item({ list: Numbered }, [Build.text("Return the keys", {})]),
+		Build.table(
+			{ widths: [3000, 3000, 3026], header_rows: 1 },
+			[
+				[cell("Item", {}), cell("Due", { span: 2 })],
+				[cell("Rent", { merge: Restart }), cell("Monthly", {}), cell("1000", {})],
+				[cell("", { merge: Continue }), cell("Yearly", {}), cell("12000", {})],
+			],
+		),
+		Build.paragraph({}, [Build.text("Signed\nAda Reviewer", { font: Named("Cambria") }), Build.text("1", { vertical_align: Superscript })]),
+	]
+	Ok(Build.page_setup(Build.append(noted.document, content), { size: Letter, top: 1080, bottom: 1080 }))
+}
+
+# A document of two sections: a portrait A4 one with a header, and a
+# landscape A4 one after a section break with a footer of its own.
+two_sections : () -> Try(Document, Str)
+two_sections = || {
+	created = Docx.new_document({ title: Text("Schedule"), creator: Text("Ada Reviewer"), created: Date(stamp.written) }) ? |problem| "the kit refuses its properties: ${Str.inspect(problem)}"
+	headed = Build.header(Build.append(created, [Build.paragraph({ style: Heading(1) }, [Build.text("Notice", {})])]), [Build.paragraph({}, [Build.text("Notice", {})])]) ? |problem| "the header does not write: ${Str.inspect(problem)}"
+	split = Build.append(Build.new_section(headed, { orientation: Landscape, left: 1080, right: 1080 }), [Build.paragraph({ style: Heading(2) }, [Build.text("Schedule", {})])])
+	Ok(Build.footer(split, [Build.paragraph({}, [Build.text("Schedule of rent", {})])]) ? |problem| "the footer does not write: ${Str.inspect(problem)}")
+}
 
 # A new document from the default document kit, with every core property
 # the kit takes, written and passed through as a fixture is; its report

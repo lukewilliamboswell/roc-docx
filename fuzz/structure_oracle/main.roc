@@ -6,6 +6,7 @@ app [target] {
 }
 
 import fuzz.Fuzz
+import docx.Build
 import docx.Docx
 import parser.XmlNs
 import zip.Zip
@@ -47,8 +48,8 @@ import "../../tests/fixtures/word/tables.docx" as word_tables : List(U8)
 ## * every element of a table grounded in the Transitional schema carries
 ##   the attributes the schema requires of it.
 ##
-## Inputs are every fixture and a new document from the default document
-## kit, written as `Docx.to_bytes` writes what `Docx.parse` reads, and
+## Inputs are every fixture, a new document from the default document
+## kit and one made by every builder, written as `Docx.to_bytes` writes what `Docx.parse` reads, and
 ## packages generated from a program of bytes whose
 ## main document, footnotes, header and comments hold bookmarks whose
 ## identifiers collide across parts and with comments', links, note references, comment ranges, pictures,
@@ -73,6 +74,7 @@ test! = |input| {
 			}
 
 		New => new_document
+		Built => built_document
 	}
 	cost = check!(source)
 	allocations = cost.stats.allocs + cost.stats.reallocs
@@ -128,7 +130,7 @@ check! = |source| {
 held : Fuzz.Stats -> U64
 held = |stats| stats.peak_live_bytes - stats.entry_live_bytes
 
-Input : [Generated(List(U8)), Fixture(U64), New]
+Input : [Generated(List(U8)), Fixture(U64), New, Built]
 
 generator : Fuzz.Generator(Input)
 generator = Fuzz.map(Fuzz.bytes, |bytes| Generated(bytes))
@@ -149,7 +151,8 @@ inflated = |bytes|
 # examples, 18 for pandoc's comments and 15 for its review; the Word
 # comments and Google Docs documents lost the identifiers on every other
 # paragraph and fell by 19 and 6. The new document from the default
-# document kit (G5.1) takes 2,028, set when it was declared.
+# document kit (G5.1) takes 2,028 and the document made by every builder
+# (G5.2) 2,777, each set when it was declared.
 exact_ceiling : Input -> Try(U64, [NotDeclared])
 exact_ceiling = |input|
 	match input {
@@ -157,6 +160,7 @@ exact_ceiling = |input|
 		Generated(program) if program == large_program => Ok(9_117)
 		Fixture(index) => fixtures.get(index).map_ok(|fixture| fixture.allocations).map_err(|_| NotDeclared)
 		New => Ok(2_028)
+		Built => Ok(2_777)
 		_ => Err(NotDeclared)
 	}
 
@@ -194,6 +198,32 @@ new_document =
 		Ok(created) => Docx.to_bytes(created) ?? []
 		Err(_) => []
 	}
+
+# A new document made by every builder: properties, a header, a footer with
+# the page number and count, a footnote, a heading, formatted text, a link,
+# list items, a table with a header row, a span and a merge, and a section
+# break to a landscape page, as it is written.
+built_document : List(U8)
+built_document = {
+	built = |{}| {
+		created = Docx.new_document({}) ? |_| Unbuilt
+		described = Build.properties(created, { title: Text("Notice"), creator: Text("Ada Reviewer"), created: Date("2026-05-07T09:00:00Z") }) ? |_| Unbuilt
+		headed = Build.header(described, [Build.paragraph({}, [Build.text("Notice", {})])]) ? |_| Unbuilt
+		footed = Build.footer(headed, [Build.paragraph({ alignment: Center }, [Build.page_number, Build.text(" of ", {}), Build.page_count])]) ? |_| Unbuilt
+		noted = Build.footnote(footed, [Build.text("Source.", {})]) ? |_| Unbuilt
+		cell = |text, options| Build.cell(options, [Build.paragraph({}, [Build.text(text, {})])])
+		content = [
+			Build.paragraph({ style: Heading(1) }, [Build.text("Notice", {})]),
+			Build.paragraph({}, [Build.text("Rent ", { bold: On }), noted.reference, Build.link("https://example.org/terms", [Build.text("terms", {})])]),
+			Build.list_item({}, [Build.text("Monthly", {})]),
+			Build.list_item({ list: Numbered, level: 1 }, [Build.text("Yearly", {})]),
+			Build.table({ header_rows: 1 }, [[cell("Item", { span: 2 })], [cell("Rent", { merge: Restart }), cell("1000", {})], [cell("", { merge: Continue }), cell("12000", {})]]),
+		]
+		split = Build.new_section(Build.page_setup(Build.append(noted.document, content), { size: Letter }), { orientation: Landscape })
+		Ok(Docx.to_bytes(Build.append(split, [Build.paragraph({}, [Build.text("Schedule", {})])])) ? |_| Unbuilt)
+	}
+	built({}) ?? []
+}
 
 fixtures : List({ name : Str, bytes : List(U8), allocations : U64 })
 fixtures = [
@@ -641,6 +671,7 @@ target = Fuzz.target_with!({
 		Fuzz.example({ name: "small-document", revision: "1", make: || Generated(small_program) }),
 		Fuzz.example({ name: "large-document", revision: "1", make: || Generated(large_program) }),
 		Fuzz.example({ name: "new-document", revision: "1", make: || New }),
+		Fuzz.example({ name: "built-document", revision: "1", make: || Built }),
 	].concat(fixtures.map_with_index(|fixture, index| Fuzz.example({ name: fixture.name, revision: "1", make: || Fixture(index) }))),
 	generator,
 	test!,

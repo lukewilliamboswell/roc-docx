@@ -1,0 +1,36 @@
+written: 6025 bytes, FNV-1a 64 07adc60b8d1166b5
+part: /_rels/.rels 442 bytes application/vnd.openxmlformats-package.relationships+xml
+part: /word/document.xml 3290 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml
+part: /word/_rels/document.xml.rels 1237 bytes application/vnd.openxmlformats-package.relationships+xml
+part: /docProps/core.xml 583 bytes application/vnd.openxmlformats-package.core-properties+xml
+part: /word/styles.xml 5865 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml
+part: /word/numbering.xml 3569 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml
+part: /word/settings.xml 359 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml
+part: /word/fontTable.xml 296 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.fontTable+xml
+part: /word/header1.xml 246 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml
+part: /word/footer1.xml 423 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml
+part: /word/footnotes.xml 755 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml
+text: "Tenancy notice"
+text: "The rent is due monthly, in advance, at the rate of one thousand. See the terms."
+text: "Rent	monthly"
+text: "By transfer"
+text: "Give notice"
+text: "Return the keys"
+text: "Item"
+text: "Due"
+text: "Rent"
+text: "Monthly"
+text: "1000"
+text: ""
+text: "Yearly"
+text: "12000"
+text: "Signed"
+text: "Ada Reviewer1"
+text: ""
+footnote: Separator [""]
+footnote: ContinuationSeparator [""]
+footnote: Note [" As agreed on signing."]
+section: NextPage Size({ height: 15840, orientation: Portrait, width: 12240 }) Margins({ bottom: 1080, footer: 708, gutter: 0, header: 708, left: 1440, right: 1440, top: 1080 }) header ["Tenancy notice"] footer ["Page 1 of 1"]
+field: " PAGE " "1"
+field: " NUMPAGES " "1"
+properties: (Text("Tenancy notice"), Text("Rent"), Text("Ada Reviewer"), Date("2026-05-07T09:00:00Z"), Date("2026-05-07T09:00:00Z"))
