@@ -76,14 +76,105 @@ inline or run content. Paragraph and run properties are such nodes for now,
 in `properties.preserved`. An element whose content is blocks or paragraph
 content is a `Container`: the element itself, without its children, and its
 content read as blocks or inlines. Content controls and custom XML are
-containers of blocks, and of rows and cells inside a table; hyperlinks, inserted,
-deleted and moved text, simple fields, content controls, smart tags and
-bidirectional embeddings are containers of inlines. That is how the text in
-a content control or a hyperlink is still text.
+containers of blocks, and of rows and cells inside a table; inserted,
+deleted and moved text, content controls, smart tags and bidirectional
+embeddings are containers of inlines. That is how the text in a content
+control is still text.
 
 A break of a type the schema does not define, a symbol without a character
 code and text holding markup are kept as `Preserved` run content rather than
 guessed at.
+
+== Links and bookmarks
+
+A `Hyperlink({ target, preserved, content })` inline holds the runs it
+links. Its `target` is one of:
+
+* `External(url)`, an address outside the document;
+* `ExternalAt({ url, location })`, an address and a location within what it
+  addresses;
+* `Internal(name)`, a bookmark of the document by its name.
+
+`preserved` keeps the hyperlink's other attributes, such as its tooltip. A
+document names an external address through a relationship of its part; the
+model holds the address itself, so an application never sees the
+relationship's identifier.
+
+A bookmark is a `BookmarkStart(name)` inline where it begins and a
+`BookmarkEnd(name)` where it ends, named by its name, which an internal
+link's target uses too. The document's own numeric identifiers for
+bookmarks are not part of the model.
+
+What the package cannot resolve is kept rather than guessed at: a hyperlink
+whose relationship is missing, or that names no target, is a `Container` of
+its runs, and a bookmark end without a start, or a bookmark spanning table
+columns, is `Preserved`.
+
+== Footnotes and endnotes
+
+`Docx.footnotes` and `Docx.endnotes` give a document's notes as
+`Document.Note` values, in the order of their parts, read from the parts
+the main document's footnotes and endnotes relationships lead to. A note
+has a `kind` and `content`, a list of blocks read as the body's are. Most
+notes are of kind `Note`; the others are the `Separator` line between body
+and notes, the `ContinuationSeparator` above notes continued from the
+previous page, and the `ContinuationNotice` that they continue.
+
+In the body, a reference is the run content
+`NoteReference({ kind, note })`: `kind` is `Footnote` or `Endnote`, and
+`note` is the note's place in the list `Docx.footnotes` or `Docx.endnotes`
+gives:
+
+[source,roc]
+----
+note_of = |reference|
+    match reference.kind {
+        Footnote => Docx.footnotes(document).get(reference.note)
+        Endnote => Docx.endnotes(document).get(reference.note)
+    }
+----
+
+Inside a note, the mark that numbers it is `NoteMark(kind)`. Neither the
+reference nor the mark contributes text. A reference whose mark is the text
+written after it, rather than a number, is kept as `Preserved`.
+
+== Fields
+
+Fields are read, never evaluated: the package does not recalculate a page
+number or a date, and a field's result is what the producer last displayed.
+
+A simple field is a `SimpleField({ code, preserved, content })` inline: its
+field code, its other attributes and its result as runs. A complex field is
+spread over runs, and can be spread over paragraphs, exactly as it was
+written: `FieldMark({ kind: Begin, element })`, the pieces of its code as
+`FieldCode(text)`, `FieldMark({ kind: Separate, element })`, the runs of its
+result, and `FieldMark({ kind: End, element })`. Each mark keeps its
+element, with what the model does not hold, such as a lock or form field
+data.
+
+`Docx.fields` gathers the body's fields, in the order they begin, as
+`{ code, result }` with the result as text; `Document.fields` does the same
+for any list of blocks, such as a note's content:
+
+[source,roc]
+----
+pages = Docx.fields(document).keep_if(|field| field.code.contains("PAGE"))
+----
+
+A field nested in another's result, as page numbers are inside the links of
+a table of contents, is part of that result too. `Document.field_target`
+reads the target a `HYPERLINK` field code names, as Word and LibreOffice
+write links in fields, in the same form as a hyperlink's target.
+
+== Pictures
+
+An inline picture is the run content
+`Picture({ media, size, drawing })`: `media` is the name of the part holding
+the image, which is never decoded, `size` its `width` and `height` on the
+page in English Metric Units (914,400 to the inch), and `drawing` the
+drawing as it was read. The image part itself is written back byte for byte
+as it was read. A floating drawing, a picture whose image is not in the
+package and any other drawing are kept as `Preserved`.
 
 == Tables
 

@@ -2,14 +2,18 @@
   "schema": "roc-docx-snapshot/1",
   "producer": {"name": "roc-docx", "version": "working tree"},
   "document": "tests/fixtures/pandoc/notes.docx",
-  "keys": ["blocks.text", "blocks.rows"],
+  "keys": ["blocks.text", "blocks.rows", "blocks.runs.link", "notes.kind", "notes.text"],
   "blocks": [
-    {"kind": "paragraph", "level": 0, "list": "", "text": "Policy Note", "runs": [], "rows": []},
-    {"kind": "paragraph", "level": 0, "list": "", "text": "Travel policy", "runs": [], "rows": []},
-    {"kind": "paragraph", "level": 0, "list": "", "text": "Employees may book economy travel for journeys under six hours. Longer journeys may be booked in premium economy with manager approval.", "runs": [], "rows": []},
-    {"kind": "paragraph", "level": 0, "list": "", "text": "Accommodation is reimbursed at the published rate for the destination.", "runs": [], "rows": []}
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Policy Note", "runs": [{"text": "Policy Note", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Travel policy", "runs": [{"text": "Travel policy", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Employees may book economy travel for journeys under six hours. Longer journeys may be booked in premium economy with manager approval.", "runs": [{"text": "Employees may book economy travel for journeys under six hours. Longer journeys may be booked in premium economy with manager approval.", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Accommodation is reimbursed at the published rate for the destination.", "runs": [{"text": "Accommodation is reimbursed at the published rate for the destination.", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []}
   ],
-  "notes": [],
+  "notes": [
+    {"kind": "footnote", "text": " Journey time is measured from scheduled departure to scheduled arrival."},
+    {"kind": "footnote", "text": " Approval must be recorded before booking."},
+    {"kind": "footnote", "text": " Rates are reviewed each January and published on the intranet."}
+  ],
   "comments": [],
   "revisions": [],
   "sections": [],

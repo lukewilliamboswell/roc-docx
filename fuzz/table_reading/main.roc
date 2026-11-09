@@ -59,7 +59,7 @@ WrittenCell : { text : Str, span : U64, merge : [Unset, Restart, Continue], nest
 agree! : Written => { allocations : U64, requested_bytes : U64 }
 agree! = |written| {
 	tree = XmlTree.parse(written.xml.to_utf8(), {}) ?? crash "a written table is not XML"
-	{ value: read, stats } = Fuzz.measure!("wml-read-body", || WmlRead.read_body(tree))
+	{ value: read, stats } = Fuzz.measure!("wml-read-body", || WmlRead.read_body(tree, { relationships: [], footnotes: [], endnotes: [] }))
 	check_linear(stats, size(tree))
 	table = match read.blocks {
 		[Table(only)] => only

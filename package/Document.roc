@@ -10,9 +10,10 @@
 ## part's bytes beyond them.
 ##
 ## The body's model, [Document.Block] and what it holds, is read from the
-## main document's tree by [Docx.body]. Until the model is written, the trees
-## are what a document writes, so the model is a reading of them rather than
-## a copy kept beside them.
+## main document's tree by [Docx.body], and its notes from the footnotes and
+## endnotes parts by [Docx.footnotes] and [Docx.endnotes]. Until the model is
+## written, the trees are what a document writes, so the model is a reading
+## of them rather than a copy kept beside them.
 import Limits
 import Mce
 import Opc
@@ -43,14 +44,27 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 	## is kept as it was read, in order.
 	ParagraphProperties : { preserved : List(XmlTree.Node) }
 
-	## A paragraph's content, in order: a run; an element the model does not
-	## represent whose content is still read as paragraph content, kept
-	## without its children in `element` (a hyperlink, an inserted, deleted or
-	## moved range, a simple field, a content control and its content, a smart
-	## tag, custom XML, a bidirectional embedding); or any other element, such
-	## as a bookmark or comment range boundary, kept whole in its place.
+	## A paragraph's content, in order: a run; a hyperlink; a simple field; a
+	## bookmark's start or end; an element the model does not represent whose
+	## content is still read as paragraph content, kept without its children
+	## in `element` (an inserted, deleted or moved range, a content control
+	## and its content, a smart tag, custom XML, a bidirectional embedding, or
+	## a hyperlink whose target cannot be resolved); or any other element,
+	## such as a comment range boundary, kept whole in its place.
+	##
+	## A hyperlink holds its target, the attributes the model does not
+	## represent (a tooltip, a target frame, whether it was visited) and its
+	## content. A simple field holds its field code, the attributes the model
+	## does not represent (whether it is locked or must be updated) and its
+	## content, which is the field's result as last calculated. A bookmark's
+	## start and end both name the bookmark by its name, which is unique in a
+	## document.
 	Inline := [
 		Run(Run),
+		Hyperlink({ target : LinkTarget, preserved : List(XmlTree.Attribute), content : List(Inline) }),
+		SimpleField({ code : Str, preserved : List(XmlTree.Attribute), content : List(Inline) }),
+		BookmarkStart(Str),
+		BookmarkEnd(Str),
 		Container({ element : XmlTree.Node, content : List(Inline) }),
 		Preserved(XmlTree.Node),
 	].{
@@ -69,9 +83,22 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 	## What a run holds, in order: text; a tab; a line, page or column break,
 	## a line break saying which floating objects the next line clears; a
 	## symbol, a character `code` in a named `font`; a soft hyphen, shown only
-	## where a line breaks; a hyphen at which a line never breaks; or any other
-	## element, such as a note reference, a field character or a drawing, kept
-	## whole in its place.
+	## where a line breaks; a hyphen at which a line never breaks; a reference
+	## to a footnote or endnote; the mark that numbers a note, inside the note
+	## itself; a complex field's mark or a piece of its field code; an inline
+	## picture; or any other element, such as a floating drawing or a deleted
+	## field code, kept whole in its place.
+	##
+	## A note reference names its note by its place among the document's
+	## footnotes or endnotes, as [Docx.footnotes] and [Docx.endnotes] list
+	## them. A complex field is spread over runs, and over paragraphs, in the
+	## order it was written: its beginning, its code, a separator, the runs of
+	## its result as last calculated, and its end. Each mark keeps its
+	## `element` as it was read, with what the model does not represent, such
+	## as a lock or form field data; [Document.fields] gathers each field's
+	## code and result. A picture is opaque: the `media` part holding its
+	## image, which is never decoded, its `size` on the page in English Metric
+	## Units (914,400 to the inch), and the `drawing` as it was read.
 	RunContent : [
 		Text(Str),
 		Tab,
@@ -79,6 +106,11 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 		Symbol({ font : Str, code : U16 }),
 		SoftHyphen,
 		NonBreakingHyphen,
+		NoteReference({ kind : NoteKind, note : U64 }),
+		NoteMark(NoteKind),
+		FieldMark({ kind : [Begin, Separate, End], element : XmlTree.Node }),
+		FieldCode(Str),
+		Picture({ media : Str, size : { width : U64, height : U64 }, drawing : XmlTree.Node }),
 		Preserved(XmlTree.Node),
 	]
 
@@ -181,6 +213,90 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 	## as the document writes them.
 	Color : [Unset, Auto, Rgb(Str)]
 
+	## Where a hyperlink leads: an address outside the document, an address
+	## with a location in what it addresses, or a bookmark of the document by
+	## its name.
+	LinkTarget : [External(Str), ExternalAt({ url : Str, location : Str }), Internal(Str)]
+
+	## Whether a note is a footnote or an endnote.
+	NoteKind : [Footnote, Endnote]
+
+	## A footnote or endnote: what kind of note it is, and its content. Most
+	## notes are `Note`s; the others are the line separating notes from the
+	## body, the longer one above notes continued from the previous page, and
+	## the notice that notes continue on the next.
+	Note : { kind : [Note, Separator, ContinuationSeparator, ContinuationNotice], content : List(Block) }
+
+	## A field as written: its field code, every piece joined, and its result
+	## as last calculated, as text. Fields are never evaluated.
+	Field : { code : Str, result : Str }
+
+	## The target a `HYPERLINK` field code names, as Word and LibreOffice
+	## write links in fields: its first argument is the address, and its `\l`
+	## switch a location in it, or a bookmark of the document when there is
+	## no address. Its other switches (`\o` a tooltip, `\t` a target frame,
+	## `\m` and `\n`) are not targets. This reads the code; it does not
+	## evaluate the field, whose result stays as last calculated.
+	field_target : Str -> Try(LinkTarget, [NotAHyperlink])
+	field_target = |code| {
+		tokens = field_tokens(code)
+		match tokens.first() {
+			Ok({ text, quoted: Bool.False }) if is_hyperlink(text) => {}
+			_ => return Err(NotAHyperlink)
+		}
+		var $address = Err(Missing)
+		var $location = Err(Missing)
+		var $pending = Err(Missing)
+		for token in List.drop_first(tokens, 1) {
+			if !token.quoted and token.text.starts_with("\\") {
+				$pending = if (token.text == "\\l" or token.text == "\\o" or token.text == "\\t") Ok(token.text) else Err(Missing)
+			} else {
+				match $pending {
+					Ok("\\l") => {
+						$location = Ok(token.text)
+					}
+
+					Ok(_) => {}
+					Err(_) => {
+						$address = match $address {
+							Ok(found) => Ok(found)
+							Err(_) => Ok(token.text)
+						}
+					}
+				}
+				$pending = Err(Missing)
+			}
+		}
+		match ($address, $location) {
+			(Ok(url), Ok(location)) => Ok(ExternalAt({ url, location }))
+			(Ok(url), Err(_)) => Ok(External(url))
+			(Err(_), Ok(name)) => Ok(Internal(name))
+			(Err(_), Err(_)) => Err(NotAHyperlink)
+		}
+	}
+
+	## An inline's text, as [Document.paragraph_text] counts it.
+	inline_text : Inline -> Str
+	inline_text = |inline| Str.from_utf8(inline_text_bytes(List.with_capacity(16), inline)) ?? ""
+
+	## The fields of blocks in the order they begin, through containers,
+	## hyperlinks and other fields: each simple field, with its content's text
+	## as its result, and each complex field, with the code between its
+	## beginning and its separator and the text between its separator and its
+	## end, where a paragraph's end is a line feed. A field nested in
+	## another's result is part of that result too, and a complex field that
+	## never ends ends with the blocks.
+	fields : List(Block) -> List(Field)
+	fields = |blocks| {
+		var $state = { open: List.with_capacity(4), done: List.with_capacity(8), begun: 0.U64 }
+		for block in blocks {
+			$state = block_fields($state, block)
+		}
+		List.concat($state.done, $state.open)
+			.sort_with(|a, b| if (a.order < b.order) Before else if (a.order > b.order) After else Same)
+			.map(|field| { code: Str.from_utf8(field.code) ?? "", result: Str.from_utf8(field.result) ?? "" })
+	}
+
 	## A paragraph's current text, its tracked changes as they stand: every
 	## run's text, inserted and moved-in text included, deleted and moved-away
 	## text not, and nothing from the content the model keeps without
@@ -191,7 +307,7 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 	paragraph_text = |paragraph| {
 		var $text = List.with_capacity(64)
 		for inline in paragraph.content {
-			$text = inline_text($text, inline)
+			$text = inline_text_bytes($text, inline)
 		}
 		Str.from_utf8($text) ?? ""
 	}
@@ -225,6 +341,27 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 		relationship = document.graph.relationships.find_first(|rel| rel.kind == Opc.officedocument_relationship and rel.mode == Internal) ? |_| NoMainDocument
 		part = Opc.part(document.pkg, relationship.target) ? |_| NoMainDocument
 		Ok(document.trees.get(part.name) ? |_| NoMainDocument)
+	}
+
+	## An XML part as reading left it: its name, its tree, and the
+	## relationships whose source it is.
+	XmlPart : { name : Str, tree : XmlTree.Node, relationships : List(Opc.Relationship) }
+
+	## The XML part that the first internal relationship of type `kind` whose
+	## source is the part named `source`, or the package itself when `source`
+	## is `/`, targets. Parts are found by relationship type, never by name.
+	related : Document, Str, Str -> Try(XmlPart, [NotFound])
+	related = |document, source, kind| {
+		relationships = if source == "/" {
+			document.graph.relationships
+		} else {
+			(document.graph.parts.find_first(|candidate| candidate.name == source) ? |_| NotFound).relationships
+		}
+		relationship = relationships.find_first(|rel| rel.kind == kind and rel.mode == Internal) ? |_| NotFound
+		part = Opc.part(document.pkg, relationship.target) ? |_| NotFound
+		tree = document.trees.get(part.name) ? |_| NotFound
+		target = document.graph.parts.find_first(|candidate| candidate.name == part.name) ? |_| NotFound
+		Ok({ name: part.name, tree, relationships: target.relationships })
 	}
 
 	## Something reading did to a document that writing it back shows: a part
@@ -377,11 +514,15 @@ same_content = |one, other, name|
 	}
 
 # An inline's text, as [Document.paragraph_text] defines it, appended as UTF-8.
-inline_text : List(U8), Document.Inline -> List(U8)
-inline_text = |text, inline|
+inline_text_bytes : List(U8), Document.Inline -> List(U8)
+inline_text_bytes = |text, inline|
 	match inline {
 		Run(run) => run.content.fold(text, run_content_text)
-		Container({ element, content }) => if (is_removal(element)) text else content.fold(text, inline_text)
+		Container({ element, content }) => if (is_removal(element)) text else content.fold(text, inline_text_bytes)
+		Hyperlink({ target: _, preserved: _, content }) => content.fold(text, inline_text_bytes)
+		SimpleField({ code: _, preserved: _, content }) => content.fold(text, inline_text_bytes)
+		BookmarkStart(_) => text
+		BookmarkEnd(_) => text
 		Preserved(_) => text
 	}
 
@@ -412,6 +553,126 @@ is_removal = |node|
 is_w_in : XmlTree.Name, List(Str) -> Bool
 is_w_in = |name, locals| name.namespace == Uri(wordprocessingml) and locals.contains(name.local)
 
+# A field code's words and quoted arguments, in order.
+field_tokens : Str -> List({ text : Str, quoted : Bool })
+field_tokens = |code| {
+	var $tokens = List.with_capacity(8)
+	var $current = List.with_capacity(32)
+	var $state = Between
+	for byte in code.to_utf8() {
+		match $state {
+			Between => {
+				if byte == '"' {
+					$state = InQuotes
+				} else if byte != ' ' and byte != 9 and byte != 10 and byte != 13 {
+					$current = List.append($current, byte)
+					$state = InWord
+				}
+			}
+
+			InWord => {
+				if byte == ' ' or byte == 9 or byte == 10 or byte == 13 {
+					$tokens = List.append($tokens, { text: Str.from_utf8($current) ?? "", quoted: Bool.False })
+					$current = List.with_capacity(32)
+					$state = Between
+				} else {
+					$current = List.append($current, byte)
+				}
+			}
+
+			InQuotes => {
+				if byte == '"' {
+					$tokens = List.append($tokens, { text: Str.from_utf8($current) ?? "", quoted: Bool.True })
+					$current = List.with_capacity(32)
+					$state = Between
+				} else {
+					$current = List.append($current, byte)
+				}
+			}
+		}
+	}
+	match $state {
+		Between => $tokens
+		InWord => List.append($tokens, { text: Str.from_utf8($current) ?? "", quoted: Bool.False })
+		InQuotes => List.append($tokens, { text: Str.from_utf8($current) ?? "", quoted: Bool.True })
+	}
+}
+
+# Whether a word is `HYPERLINK`, in any case.
+is_hyperlink : Str -> Bool
+is_hyperlink = |word| word.to_utf8().map(|byte| if (byte >= 'a' and byte <= 'z') byte - 32 else byte) == "HYPERLINK".to_utf8()
+
+# The fields begun so far, as [Document.fields] gathers them: those still
+# open, innermost last, those ended, and how many have begun.
+FieldState : { open : List(OpenField), done : List(OpenField), begun : U64 }
+
+OpenField : { order : U64, code : List(U8), result : List(U8), in_result : Bool }
+
+block_fields : FieldState, Document.Block -> FieldState
+block_fields = |state, block|
+	match block {
+		Paragraph(paragraph) => to_results(paragraph.content.fold(state, inline_fields), [10])
+		Table(table) => Document.table_rows(table).fold(state, |by_row, row| Document.row_cells(row).fold(by_row, |by_cell, cell| cell.content.fold(by_cell, block_fields)))
+		Container({ element: _, content }) => content.fold(state, block_fields)
+		Preserved(_) => state
+	}
+
+inline_fields : FieldState, Document.Inline -> FieldState
+inline_fields = |state, inline|
+	match inline {
+		Run(run) => run.content.fold(state, run_content_fields)
+		Hyperlink({ target: _, preserved: _, content }) => content.fold(state, inline_fields)
+		SimpleField({ code, preserved: _, content }) => {
+			inner = content.fold({ open: state.open, done: state.done, begun: state.begun + 1 }, inline_fields)
+			field = { order: state.begun, code: code.to_utf8(), result: inline_text_bytes([], inline), in_result: Bool.True }
+			{ open: inner.open, done: List.append(inner.done, field), begun: inner.begun }
+		}
+
+		Container({ element: _, content }) => content.fold(state, inline_fields)
+		BookmarkStart(_) => state
+		BookmarkEnd(_) => state
+		Preserved(_) => state
+	}
+
+run_content_fields : FieldState, Document.RunContent -> FieldState
+run_content_fields = |state, content|
+	match content {
+		FieldMark({ kind: Begin, element: _ }) => {
+			field = { order: state.begun, code: [], result: [], in_result: Bool.False }
+			{ open: List.append(state.open, field), done: state.done, begun: state.begun + 1 }
+		}
+
+		FieldMark({ kind: Separate, element: _ }) =>
+			match state.open.last() {
+				Ok(field) => { open: List.append(List.drop_last(state.open, 1), { order: field.order, code: field.code, result: field.result, in_result: Bool.True }), done: state.done, begun: state.begun }
+				Err(_) => state
+			}
+
+		FieldMark({ kind: End, element: _ }) =>
+			match state.open.last() {
+				Ok(field) => { open: List.drop_last(state.open, 1), done: List.append(state.done, field), begun: state.begun }
+				Err(_) => state
+			}
+
+		FieldCode(code) =>
+			match state.open.last() {
+				Ok(field) => { open: List.append(List.drop_last(state.open, 1), { order: field.order, code: List.concat(field.code, code.to_utf8()), result: field.result, in_result: field.in_result }), done: state.done, begun: state.begun }
+				Err(_) => state
+			}
+
+		_ => to_results(state, run_content_text([], content))
+	}
+
+# Text added to the result of every open field that has reached its result.
+to_results : FieldState, List(U8) -> FieldState
+to_results = |state, text|
+	if text.is_empty() or state.open.is_empty() {
+		state
+	} else {
+		open = state.open.map(|field| if (field.in_result) { order: field.order, code: field.code, result: List.concat(field.result, text), in_result: Bool.True } else field)
+		{ open, done: state.done, begun: state.begun }
+	}
+
 run_content_text : List(U8), Document.RunContent -> List(U8)
 run_content_text = |text, content|
 	match content {
@@ -421,6 +682,11 @@ run_content_text = |text, content|
 		Symbol({ font: _, code }) => List.concat(text, utf8(code))
 		SoftHyphen => List.concat(text, [0xC2, 0xAD])
 		NonBreakingHyphen => List.concat(text, [0xE2, 0x80, 0x91])
+		NoteReference(_) => text
+		NoteMark(_) => text
+		FieldMark(_) => text
+		FieldCode(_) => text
+		Picture(_) => text
 		Preserved(_) => text
 	}
 
@@ -794,6 +1060,37 @@ expect {
 		],
 	}
 	Document.paragraph_text(paragraph) == "a\t\n\n\u(3B1)\u(AD)\u(2011)b\u(FFFD)A\u(F0E0)"
+}
+
+## Fields are listed in the order they begin with their code and result: a
+## result spans paragraphs, a field nested in another's result is part of
+## it, a simple field's result is its content, and a field that never ends
+## ends with the blocks.
+expect {
+	mark = |kind| FieldMark({ kind, element: Text("") })
+	run = |content| Run({ properties: { preserved: [] }, content })
+	paragraph = |content| Paragraph({ properties: { preserved: [] }, content })
+	simple = SimpleField({ code: "DATE", preserved: [], content: [run([Text("today")])] })
+	blocks = [
+		paragraph([run([mark(Begin), FieldCode(" TOC "), FieldCode("\\o"), mark(Separate), Text("One")])]),
+		paragraph([run([Text("Two "), mark(Begin), FieldCode("PAGEREF x"), mark(Separate), Text("2"), mark(End)]), simple]),
+		paragraph([run([mark(End), Text("after"), mark(Begin), FieldCode("NUMPAGES")])]),
+	]
+	Document.fields(blocks) == [{ code: " TOC \\o", result: "One\nTwo 2today\n" }, { code: "PAGEREF x", result: "2" }, { code: "DATE", result: "today" }, { code: "NUMPAGES", result: "" }]
+}
+
+## A `HYPERLINK` field code names an address, an address and a location, or
+## a bookmark, whatever its case, quoting and other switches; any other code
+## names no target.
+expect {
+	Document.field_target(" HYPERLINK \"https://example.org/rates\" \\l \"q1\"") == Ok(ExternalAt({ url: "https://example.org/rates", location: "q1" }))
+		and Document.field_target("hyperlink https://example.org/a \\o \"Tip\" \\t _blank") == Ok(External("https://example.org/a"))
+		and Document.field_target("HYPERLINK \\l \"_Toc1\" \\h") == Ok(Internal("_Toc1"))
+		and Document.field_target("HYPERLINK \"a b") == Ok(External("a b"))
+		and Document.field_target(" PAGEREF _Toc1 \\h ") == Err(NotAHyperlink)
+		and Document.field_target("HYPERLINK \\o \"Tip\"") == Err(NotAHyperlink)
+		and Document.field_target("\"HYPERLINK\" x") == Err(NotAHyperlink)
+		and Document.field_target("") == Err(NotAHyperlink)
 }
 
 # A package of a main document with an extension, a style part and a picture.

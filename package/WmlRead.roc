@@ -3,14 +3,26 @@
 ## The reader is lenient and loses nothing: an element it models becomes a
 ## typed value, and every other element is kept, in its place, as the
 ## [XmlTree.Node] it was read as. Elements whose content is itself blocks or
-## paragraph content, such as a table or a hyperlink, are kept without their
-## children and their content is read, so text inside them is still text.
-## Whitespace-only text between elements is not content and is not kept.
+## paragraph content, such as a content control or a tracked insertion, are
+## kept without their children and their content is read, so text inside
+## them is still text. What a part's elements name elsewhere in the package,
+## such as a hyperlink's relationship or a note reference's note, is resolved
+## through the part's [WmlRead.Context], so the model holds what is named
+## rather than the part's identifiers for it. Whitespace-only text between
+## elements is not content and is not kept.
 import Document
 import Mce
+import Opc
 import XmlTree
 
 WmlRead :: [].{
+
+	## What reading a part needs from the rest of its package: the
+	## relationships whose source is the part, which hyperlinks and pictures
+	## name, and the identifiers of the footnotes and of the endnotes in the
+	## order of their parts, as [WmlRead.note_ids] lists them, which note
+	## references name.
+	Context : { relationships : List(Opc.Relationship), footnotes : List(Str), endnotes : List(Str) }
 
 	## The body of a main document part, block by block in reading order, from
 	## the part's tree as [Docx.parse] read it. The tree is interpreted by
@@ -21,31 +33,72 @@ WmlRead :: [].{
 	## A paragraph's first `w:pPr` holds its properties and a run's first
 	## `w:rPr` its properties. In a run, `w:t` is text, `w:tab` a tab, `w:br`
 	## a break (`w:cr` a line break), `w:sym` a symbol, `w:softHyphen` and
-	## `w:noBreakHyphen` hyphens. An element whose attributes are not ones
-	## the model can hold, such as a break of an unknown type or a symbol
-	## without a character code, is kept as it was read.
+	## `w:noBreakHyphen` hyphens, `w:footnoteReference` and
+	## `w:endnoteReference` note references, `w:footnoteRef` and
+	## `w:endnoteRef` note marks, `w:fldChar` a field's mark, `w:instrText` a
+	## piece of its code, and a `w:drawing` holding a `wp:inline` picture a
+	## picture. In a paragraph, `w:hyperlink` is a hyperlink, `w:fldSimple` a
+	## simple field and `w:bookmarkStart` and `w:bookmarkEnd` a bookmark's
+	## boundaries.
+	##
+	## An element whose attributes are not ones the model can hold, such as a
+	## break of an unknown type, a symbol without a character code, a note
+	## reference with a custom mark or a bookmark spanning table columns, or
+	## that names what the package does not have, such as a missing note, a
+	## relationship that is not there or a bookmark end without its start,
+	## is kept as it was read; a hyperlink or simple field like that is a
+	## container of its content.
 	##
 	## A table's first `w:tblPr` holds its properties and its first
 	## `w:tblGrid` its grid, a row's first `w:trPr` and a cell's first
 	## `w:tcPr` theirs. Each property the model holds is read from the first
 	## element that gives it in a form the model can hold; every other
 	## property element stays in `preserved`, in order.
-	body : XmlTree.Node -> List(Document.Block)
-	body = |tree| WmlRead.read_body(tree).blocks
+	body : XmlTree.Node, Context -> List(Document.Block)
+	body = |tree, context| WmlRead.read_body(tree, context).blocks
 
 	## The body as [WmlRead.body] reads it, with what reading it noticed, in
 	## document order.
-	read_body : XmlTree.Node -> { blocks : List(Document.Block), diagnostics : List(WmlRead.Diagnostic) }
-	read_body = |tree|
-		match Mce.process(tree).interpreted {
+	read_body : XmlTree.Node, Context -> { blocks : List(Document.Block), diagnostics : List(WmlRead.Diagnostic) }
+	read_body = |tree, context| {
+		interpreted = Mce.process(tree).interpreted
+		match interpreted {
 			Element(root) if is_w(root.name, "document") =>
 				match root.children.find_first(|child| is_element(child, "body")) {
-					Ok(Element(element)) => blocks(element.children, [])
+					Ok(Element(element)) => blocks(element.children, reading(interpreted, context), [])
 					_ => { blocks: [], diagnostics: [] }
 				}
 
 			_ => { blocks: [], diagnostics: [] }
 		}
+	}
+
+	## The notes of a footnotes or endnotes part, in the part's order, from
+	## the part's tree as [Docx.parse] read it, interpreted by [Mce.process]
+	## first. A note's content is read as a body's blocks are, and `w:type`
+	## says what kind of note it is. A tree whose root is not a
+	## WordprocessingML footnotes or endnotes part has no notes.
+	notes : XmlTree.Node, Context -> List(Document.Note)
+	notes = |tree, context| {
+		interpreted = Mce.process(tree).interpreted
+		within = reading(interpreted, context)
+		note_elements(interpreted).map(
+			|element| {
+				kind = match value_of(element, "type") {
+					Ok("separator") => Separator
+					Ok("continuationSeparator") => ContinuationSeparator
+					Ok("continuationNotice") => ContinuationNotice
+					_ => Note
+				}
+				{ kind, content: blocks(element.children, within, []).blocks }
+			},
+		)
+	}
+
+	## The identifiers of a footnotes or endnotes part's notes, in the order
+	## [WmlRead.notes] reads them; a note without one has the empty string.
+	note_ids : XmlTree.Node -> List(Str)
+	note_ids = |tree| note_elements(Mce.process(tree).interpreted).map(|element| value_of(element, "id") ?? "")
 
 	## Something the reader accepted that the schema does not allow: a number
 	## the schema wants whole written with a fraction, such as the width
@@ -57,6 +110,74 @@ WmlRead :: [].{
 	Diagnostic : [Rounded({ element : Str, attribute : Str, value : Str })]
 }
 
+# What reading a part looks up: its relationships and its bookmarks' names by
+# identifier, and each note's place by identifier.
+Reading : {
+	relationships : Dict(Str, Opc.Relationship),
+	bookmarks : Dict(Str, Str),
+	footnotes : Dict(Str, U64),
+	endnotes : Dict(Str, U64),
+}
+
+reading : XmlTree.Node, WmlRead.Context -> Reading
+reading = |interpreted, context| {
+	var $relationships = Dict.with_capacity(context.relationships.len())
+	for relationship in context.relationships {
+		$relationships = $relationships.insert(relationship.id, relationship)
+	}
+	{ relationships: $relationships, bookmarks: bookmark_names(interpreted), footnotes: places(context.footnotes), endnotes: places(context.endnotes) }
+}
+
+places : List(Str) -> Dict(Str, U64)
+places = |ids| {
+	var $places = Dict.with_capacity(ids.len())
+	var $index = 0.U64
+	for id in ids {
+		$places = $places.insert(id, $index)
+		$index = $index + 1
+	}
+	$places
+}
+
+# The names of a tree's bookmarks by identifier, from every start that has
+# both, outside runs and property elements of any namespace, where bookmarks
+# never are. The tree is walked as deep as the readers walk it, within the
+# XML depth limit, without copying any list of children, and names are
+# compared by local name first, as comparing a namespace costs an
+# allocation.
+bookmark_names : XmlTree.Node -> Dict(Str, Str)
+bookmark_names = |root| names_in(Dict.with_capacity(0), root)
+
+names_in : Dict(Str, Str), XmlTree.Node -> Dict(Str, Str)
+names_in = |names, node|
+	match node {
+		Element(element) if element.name.local == "bookmarkStart" and is_w(element.name, "bookmarkStart") =>
+			match (value_of(element, "id"), value_of(element, "name")) {
+				(Ok(id), Ok(name)) => names.insert(id, name)
+				_ => names
+			}
+
+		Element(element) if element.name.local == "r" or element.name.local.ends_with("Pr") => names
+		Element(element) => element.children.fold(names, names_in)
+		Text(_) => names
+	}
+
+# The note elements of a footnotes or endnotes part's root.
+note_elements : XmlTree.Node -> List(Element)
+note_elements = |root|
+	match root {
+		Element(element) if is_w(element.name, "footnotes") or is_w(element.name, "endnotes") =>
+			element.children.keep_oks(
+				|child|
+					match child {
+						Element(note) if is_w(note.name, "footnote") or is_w(note.name, "endnote") => Ok(note)
+						_ => Err(NotANote)
+					},
+			)
+
+		_ => []
+	}
+
 # Elements whose content is blocks, read as containers in a block's place.
 block_containers : List(Str)
 block_containers = ["sdt", "sdtContent", "customXml"]
@@ -64,17 +185,17 @@ block_containers = ["sdt", "sdtContent", "customXml"]
 # Elements whose content is paragraph content, read as containers in an
 # inline's place.
 inline_containers : List(Str)
-inline_containers = ["hyperlink", "ins", "del", "moveFrom", "moveTo", "fldSimple", "sdt", "sdtContent", "smartTag", "customXml", "dir", "bdo"]
+inline_containers = ["ins", "del", "moveFrom", "moveTo", "sdt", "sdtContent", "smartTag", "customXml", "dir", "bdo"]
 
 # Block reading carries what it has noticed so far and gives it back with
 # what it read.
-blocks : List(XmlTree.Node), List(WmlRead.Diagnostic) -> { blocks : List(Document.Block), diagnostics : List(WmlRead.Diagnostic) }
-blocks = |nodes, diagnostics| {
+blocks : List(XmlTree.Node), Reading, List(WmlRead.Diagnostic) -> { blocks : List(Document.Block), diagnostics : List(WmlRead.Diagnostic) }
+blocks = |nodes, within, diagnostics| {
 	var $out = List.with_capacity(nodes.len())
 	var $diagnostics = diagnostics
 	for node in nodes {
 		if is_content(node) {
-			read = block(node, $diagnostics)
+			read = block(node, within, $diagnostics)
 			$out = List.append($out, read.block)
 			$diagnostics = read.diagnostics
 		}
@@ -82,25 +203,25 @@ blocks = |nodes, diagnostics| {
 	{ blocks: $out, diagnostics: $diagnostics }
 }
 
-block : XmlTree.Node, List(WmlRead.Diagnostic) -> { block : Document.Block, diagnostics : List(WmlRead.Diagnostic) }
-block = |node, diagnostics|
+block : XmlTree.Node, Reading, List(WmlRead.Diagnostic) -> { block : Document.Block, diagnostics : List(WmlRead.Diagnostic) }
+block = |node, within, diagnostics|
 	match node {
-		Element(element) if is_w(element.name, "p") => { block: Paragraph(paragraph(element.children)), diagnostics: diagnostics }
+		Element(element) if is_w(element.name, "p") => { block: Paragraph(paragraph(element.children, within)), diagnostics: diagnostics }
 		Element(element) if is_w(element.name, "tbl") => {
-			read = table(element.children, diagnostics)
+			read = table(element.children, within, diagnostics)
 			{ block: Table(read.table), diagnostics: read.diagnostics }
 		}
 
 		Element(element) if is_w_in(element.name, block_containers) => {
-			read = blocks(element.children, diagnostics)
+			read = blocks(element.children, within, diagnostics)
 			{ block: Container({ element: without_children(element), content: read.blocks }), diagnostics: read.diagnostics }
 		}
 
 		_ => { block: Preserved(node), diagnostics: diagnostics }
 	}
 
-table : List(XmlTree.Node), List(WmlRead.Diagnostic) -> { table : Document.Table, diagnostics : List(WmlRead.Diagnostic) }
-table = |children, diagnostics| {
+table : List(XmlTree.Node), Reading, List(WmlRead.Diagnostic) -> { table : Document.Table, diagnostics : List(WmlRead.Diagnostic) }
+table = |children, within, diagnostics| {
 	var $properties = Err(Missing)
 	var $grid = Err(Missing)
 	var $content = List.with_capacity(children.len())
@@ -121,7 +242,7 @@ table = |children, diagnostics| {
 
 			_ => {
 				if is_content(child) {
-					read = table_content(child, $diagnostics)
+					read = table_content(child, within, $diagnostics)
 					$content = List.append($content, read.content)
 					$diagnostics = read.diagnostics
 				}
@@ -132,11 +253,11 @@ table = |children, diagnostics| {
 	{ table: { properties, grid: $grid ?? [], content: $content }, diagnostics: $diagnostics }
 }
 
-table_content : XmlTree.Node, List(WmlRead.Diagnostic) -> { content : Document.TableContent, diagnostics : List(WmlRead.Diagnostic) }
-table_content = |node, diagnostics|
+table_content : XmlTree.Node, Reading, List(WmlRead.Diagnostic) -> { content : Document.TableContent, diagnostics : List(WmlRead.Diagnostic) }
+table_content = |node, within, diagnostics|
 	match node {
 		Element(element) if is_w(element.name, "tr") => {
-			read = row(element.children, diagnostics)
+			read = row(element.children, within, diagnostics)
 			{ content: Row(read.row), diagnostics: read.diagnostics }
 		}
 
@@ -145,7 +266,7 @@ table_content = |node, diagnostics|
 			var $diagnostics = diagnostics
 			for child in element.children {
 				if is_content(child) {
-					read = table_content(child, $diagnostics)
+					read = table_content(child, within, $diagnostics)
 					$content = List.append($content, read.content)
 					$diagnostics = read.diagnostics
 				}
@@ -156,8 +277,8 @@ table_content = |node, diagnostics|
 		_ => { content: Preserved(node), diagnostics: diagnostics }
 	}
 
-row : List(XmlTree.Node), List(WmlRead.Diagnostic) -> { row : Document.Row, diagnostics : List(WmlRead.Diagnostic) }
-row = |children, diagnostics| {
+row : List(XmlTree.Node), Reading, List(WmlRead.Diagnostic) -> { row : Document.Row, diagnostics : List(WmlRead.Diagnostic) }
+row = |children, within, diagnostics| {
 	var $properties = Err(Missing)
 	var $content = List.with_capacity(children.len())
 	var $diagnostics = diagnostics
@@ -171,7 +292,7 @@ row = |children, diagnostics| {
 
 			_ => {
 				if is_content(child) {
-					read = row_content(child, $diagnostics)
+					read = row_content(child, within, $diagnostics)
 					$content = List.append($content, read.content)
 					$diagnostics = read.diagnostics
 				}
@@ -182,11 +303,11 @@ row = |children, diagnostics| {
 	{ row: { properties, content: $content }, diagnostics: $diagnostics }
 }
 
-row_content : XmlTree.Node, List(WmlRead.Diagnostic) -> { content : Document.RowContent, diagnostics : List(WmlRead.Diagnostic) }
-row_content = |node, diagnostics|
+row_content : XmlTree.Node, Reading, List(WmlRead.Diagnostic) -> { content : Document.RowContent, diagnostics : List(WmlRead.Diagnostic) }
+row_content = |node, within, diagnostics|
 	match node {
 		Element(element) if is_w(element.name, "tc") => {
-			read = cell(element.children, diagnostics)
+			read = cell(element.children, within, diagnostics)
 			{ content: Cell(read.cell), diagnostics: read.diagnostics }
 		}
 
@@ -195,7 +316,7 @@ row_content = |node, diagnostics|
 			var $diagnostics = diagnostics
 			for child in element.children {
 				if is_content(child) {
-					read = row_content(child, $diagnostics)
+					read = row_content(child, within, $diagnostics)
 					$content = List.append($content, read.content)
 					$diagnostics = read.diagnostics
 				}
@@ -206,8 +327,8 @@ row_content = |node, diagnostics|
 		_ => { content: Preserved(node), diagnostics: diagnostics }
 	}
 
-cell : List(XmlTree.Node), List(WmlRead.Diagnostic) -> { cell : Document.Cell, diagnostics : List(WmlRead.Diagnostic) }
-cell = |children, diagnostics| {
+cell : List(XmlTree.Node), Reading, List(WmlRead.Diagnostic) -> { cell : Document.Cell, diagnostics : List(WmlRead.Diagnostic) }
+cell = |children, within, diagnostics| {
 	var $properties = Err(Missing)
 	var $content = List.with_capacity(children.len())
 	var $diagnostics = diagnostics
@@ -221,7 +342,7 @@ cell = |children, diagnostics| {
 
 			_ => {
 				if is_content(child) {
-					read = block(child, $diagnostics)
+					read = block(child, within, $diagnostics)
 					$content = List.append($content, read.block)
 					$diagnostics = read.diagnostics
 				}
@@ -696,8 +817,8 @@ decimal = |text, factor| {
 	Ok({ value: if (negative) -value else value, exact: scaled % $scale == 0 })
 }
 
-paragraph : List(XmlTree.Node) -> Document.Paragraph
-paragraph = |children| {
+paragraph : List(XmlTree.Node), Reading -> Document.Paragraph
+paragraph = |children, within| {
 	var $properties = Err(Missing)
 	var $content = List.with_capacity(children.len())
 	for child in children {
@@ -708,7 +829,7 @@ paragraph = |children| {
 
 			_ => {
 				if is_content(child) {
-					$content = List.append($content, inline(child))
+					$content = List.append($content, inline(child, within))
 				}
 			}
 		}
@@ -716,27 +837,85 @@ paragraph = |children| {
 	{ properties: $properties ?? { preserved: [] }, content: $content }
 }
 
-inlines : List(XmlTree.Node) -> List(Document.Inline)
-inlines = |nodes| {
+inlines : List(XmlTree.Node), Reading -> List(Document.Inline)
+inlines = |nodes, within| {
 	var $out = List.with_capacity(nodes.len())
 	for node in nodes {
 		if is_content(node) {
-			$out = List.append($out, inline(node))
+			$out = List.append($out, inline(node, within))
 		}
 	}
 	$out
 }
 
-inline : XmlTree.Node -> Document.Inline
-inline = |node|
+inline : XmlTree.Node, Reading -> Document.Inline
+inline = |node, within|
 	match node {
-		Element(element) if is_w(element.name, "r") => Run(run(element.children))
-		Element(element) if is_w_in(element.name, inline_containers) => Container({ element: without_children(element), content: inlines(element.children) })
+		Element(element) if is_w(element.name, "r") => Run(run(element.children, within))
+		Element(element) if is_w(element.name, "hyperlink") => hyperlink(element, within) ?? container(element, within)
+		Element(element) if is_w(element.name, "fldSimple") => simple_field(element, within) ?? container(element, within)
+		Element(element) if is_w(element.name, "bookmarkStart") => bookmark_start(element) ?? Preserved(node)
+		Element(element) if is_w(element.name, "bookmarkEnd") => bookmark_end(element, within) ?? Preserved(node)
+		Element(element) if is_w_in(element.name, inline_containers) => container(element, within)
 		_ => Preserved(node)
 	}
 
-run : List(XmlTree.Node) -> Document.Run
-run = |children| {
+container : Element, Reading -> Document.Inline
+container = |element, within| Container({ element: without_children(element), content: inlines(element.children, within) })
+
+# A hyperlink: `r:id` names an external relationship, whose target is the
+# address, and `w:anchor` a location in it, or a bookmark of the document
+# when there is no `r:id`.
+hyperlink : Element, Reading -> Try(Document.Inline, [Unresolved])
+hyperlink = |element, within| {
+	anchor = value_of(element, "anchor")
+	target = match relationship_of(element, "id") {
+		Ok(id) =>
+			match (within.relationships.get(id), anchor) {
+				(Ok({ id: _, kind: _, target: url, mode: External }), Ok(location)) => ExternalAt({ url, location })
+				(Ok({ id: _, kind: _, target: url, mode: External }), Err(_)) => External(url)
+				_ => return Err(Unresolved)
+			}
+
+		Err(_) =>
+			match anchor {
+				Ok(name) => Internal(name)
+				Err(_) => return Err(Unresolved)
+			}
+	}
+	preserved = element.attributes.drop_if(|attribute| is_w(attribute.name, "anchor") or is_r(attribute.name, "id"))
+	Ok(Hyperlink({ target, preserved, content: inlines(element.children, within) }))
+}
+
+simple_field : Element, Reading -> Try(Document.Inline, [NoCode])
+simple_field = |element, within| {
+	code = value_of(element, "instr") ? |_| NoCode
+	preserved = element.attributes.drop_if(|attribute| is_w(attribute.name, "instr"))
+	Ok(SimpleField({ code, preserved, content: inlines(element.children, within) }))
+}
+
+bookmark_start : Element -> Try(Document.Inline, [Unknown])
+bookmark_start = |element|
+	if only(element, ["id", "name"]) {
+		match (value_of(element, "id"), value_of(element, "name")) {
+			(Ok(_), Ok(name)) => Ok(BookmarkStart(name))
+			_ => Err(Unknown)
+		}
+	} else {
+		Err(Unknown)
+	}
+
+bookmark_end : Element, Reading -> Try(Document.Inline, [Unknown])
+bookmark_end = |element, within|
+	if only(element, ["id"]) {
+		id = value_of(element, "id") ? |_| Unknown
+		Ok(BookmarkEnd(within.bookmarks.get(id) ? |_| Unknown))
+	} else {
+		Err(Unknown)
+	}
+
+run : List(XmlTree.Node), Reading -> Document.Run
+run = |children, within| {
 	var $properties = Err(Missing)
 	var $content = List.with_capacity(children.len())
 	for child in children {
@@ -747,7 +926,7 @@ run = |children| {
 
 			_ => {
 				if is_content(child) {
-					$content = List.append($content, run_content(child))
+					$content = List.append($content, run_content(child, within))
 				}
 			}
 		}
@@ -755,29 +934,116 @@ run = |children| {
 	{ properties: $properties ?? { preserved: [] }, content: $content }
 }
 
-run_content : XmlTree.Node -> Document.RunContent
-run_content = |node|
+run_content : XmlTree.Node, Reading -> Document.RunContent
+run_content = |node, within|
 	match node {
 		Element(element) if element.name.namespace == Uri(wordprocessingml) =>
 			match element.name.local {
-				"t" => text(element) ?? Preserved(node)
+				"t" => text(element).map_ok(|value| Text(value)) ?? Preserved(node)
 				"tab" => Tab
 				"br" => break_of(element) ?? Preserved(node)
 				"cr" => Break({ kind: Line, clear: NoClear })
 				"sym" => symbol(element) ?? Preserved(node)
 				"softHyphen" => SoftHyphen
 				"noBreakHyphen" => NonBreakingHyphen
+				"footnoteReference" => note_reference(element, Footnote, within.footnotes) ?? Preserved(node)
+				"endnoteReference" => note_reference(element, Endnote, within.endnotes) ?? Preserved(node)
+				"footnoteRef" => NoteMark(Footnote)
+				"endnoteRef" => NoteMark(Endnote)
+				"fldChar" => field_mark(element, node) ?? Preserved(node)
+				"instrText" => text(element).map_ok(|code| FieldCode(code)) ?? Preserved(node)
+				"drawing" => picture(element, node, within) ?? Preserved(node)
 				_ => Preserved(node)
 			}
 
 		_ => Preserved(node)
 	}
 
-# The text of `w:t`, which holds only character data. Unless the element
-# says `xml:space="preserve"`, its whitespace is the producer's layout, as
-# Word and LibreOffice read it: leading and trailing whitespace is removed,
-# and each tab, carriage return and line feed left is a space.
-text : Element -> Try(Document.RunContent, [NotText])
+# A note reference: `w:id` names a note of its part. A reference whose mark
+# is the text that follows it, `w:customMarkFollows`, is not modelled.
+note_reference : Element, Document.NoteKind, Dict(Str, U64) -> Try(Document.RunContent, [Unknown])
+note_reference = |element, kind, notes|
+	if only(element, ["id"]) {
+		id = value_of(element, "id") ? |_| Unknown
+		Ok(NoteReference({ kind, note: notes.get(id) ? |_| Unknown }))
+	} else {
+		Err(Unknown)
+	}
+
+field_mark : Element, XmlTree.Node -> Try(Document.RunContent, [Unknown])
+field_mark = |element, node| {
+	kind = match value_of(element, "fldCharType") {
+		Ok("begin") => Begin
+		Ok("separate") => Separate
+		Ok("end") => End
+		_ => return Err(Unknown)
+	}
+	Ok(FieldMark({ kind, element: node }))
+}
+
+# An inline picture: a drawing whose one element is `wp:inline`, with the
+# `wp:extent` of its size and an `a:blip` embedding an image part of the
+# package by `r:embed`.
+picture : Element, XmlTree.Node, Reading -> Try(Document.RunContent, [NotPicture])
+picture = |element, node, within| {
+	inline_drawing = match element.children.keep_if(|child| is_content(child)) {
+		[Element(child)] if child.name.namespace == Uri(drawing_namespace) and child.name.local == "inline" => child
+		_ => return Err(NotPicture)
+	}
+	extent = inline_drawing.children.find_first(|child| is_named(child, drawing_namespace, "extent")) ? |_| NotPicture
+	(across, down) = match extent {
+		Element(sized) => (emus(unqualified(sized, "cx")) ? |_| NotPicture, emus(unqualified(sized, "cy")) ? |_| NotPicture)
+		Text(_) => return Err(NotPicture)
+	}
+	id = embedded(Element(inline_drawing)) ? |_| NotPicture
+	media = match within.relationships.get(id) {
+		Ok({ id: _, kind: _, target, mode: Internal }) => target
+		_ => return Err(NotPicture)
+	}
+	Ok(Picture({ media, size: { width: across, height: down }, drawing: node }))
+}
+
+# The `r:embed` of the first `a:blip` in a tree.
+embedded : XmlTree.Node -> Try(Str, [NotFound])
+embedded = |root| {
+	var $pending = [root]
+	while !$pending.is_empty() {
+		match $pending.last() {
+			Ok(Element(element)) => {
+				if element.name.namespace == Uri(drawingml) and element.name.local == "blip" {
+					return relationship_of(element, "embed")
+				}
+				$pending = List.drop_last($pending, 1)
+				var $index = element.children.len()
+				while $index > 0 {
+					$index = $index - 1
+					$pending = List.append($pending, element.children.get($index) ?? Text(""))
+				}
+			}
+
+			_ => {
+				$pending = List.drop_last($pending, 1)
+			}
+		}
+	}
+	Err(NotFound)
+}
+
+# A length in English Metric Units: decimal digits, at most nineteen.
+emus : Try(Str, [NotFound]) -> Try(U64, [NotLength])
+emus = |value| {
+	digits = (value ? |_| NotLength).to_utf8()
+	if digits.is_empty() or digits.len() > 19 {
+		return Err(NotLength)
+	}
+	digits.fold(Ok(0.U64), |sum, digit| if (digit >= '0' and digit <= '9') Ok((sum?) * 10 + (digit - '0').to_u64()) else Err(NotLength))
+}
+
+# The text of `w:t` or `w:instrText`, which hold only character data. Unless
+# the element says `xml:space="preserve"`, its whitespace is the producer's
+# layout, as Word and LibreOffice read it: leading and trailing whitespace is
+# removed, and each tab, carriage return and line feed left is a space.
+text : Element -> Try(Str, [NotText])
 text = |element| {
 	var $value = List.with_capacity(16)
 	for child in element.children {
@@ -805,7 +1071,7 @@ text = |element| {
 		}
 		$value.sublist({ start: $start, len: $end - $start }).map(|byte| if (is_space(byte)) 32 else byte)
 	}
-	Ok(Text(Str.from_utf8(value) ?? ""))
+	Ok(Str.from_utf8(value) ?? "")
 }
 
 is_space : U8 -> Bool
@@ -895,11 +1161,50 @@ value_of : Element, Str -> Try(Str, [NotFound])
 value_of = |element, local|
 	element.attributes.find_first(|attribute| is_w(attribute.name, local)).map_ok(|attribute| attribute.value)
 
+relationships_namespace : Str
+relationships_namespace = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+
+drawing_namespace : Str
+drawing_namespace = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+
+drawingml : Str
+drawingml = "http://schemas.openxmlformats.org/drawingml/2006/main"
+
+is_r : XmlTree.Name, Str -> Bool
+is_r = |name, local| name.namespace == Uri(relationships_namespace) and name.local == local
+
+is_named : XmlTree.Node, Str, Str -> Bool
+is_named = |node, namespace, local|
+	match node {
+		Element(element) => element.name.namespace == Uri(namespace) and element.name.local == local
+		Text(_) => Bool.False
+	}
+
+# The value of a relationship attribute of an element, such as `r:id`.
+relationship_of : Element, Str -> Try(Str, [NotFound])
+relationship_of = |element, local|
+	element.attributes.find_first(|attribute| is_r(attribute.name, local)).map_ok(|attribute| attribute.value)
+
+# The value of an attribute in no namespace.
+unqualified : Element, Str -> Try(Str, [NotFound])
+unqualified = |element, local|
+	element.attributes.find_first(|attribute| attribute.name.namespace == NoNamespace and attribute.name.local == local).map_ok(|attribute| attribute.value)
+
+# Whether an element's attributes are all WordprocessingML attributes the
+# model holds.
+only : Element, List(Str) -> Bool
+only = |element, locals| element.attributes.all(|attribute| is_w_in(attribute.name, locals))
+
 # The blocks of a main document part with this body content.
 read : Str -> List(Document.Block)
-read = |content| {
-	tree = XmlTree.parse("<w:document xmlns:w='${wordprocessingml}'><w:body>${content}</w:body></w:document>".to_utf8(), {}) ?? Text("")
-	WmlRead.body(tree)
+read = |content| read_in(content, { relationships: [], footnotes: [], endnotes: [] })
+
+# The blocks of a main document part with this body content, in a package.
+read_in : Str, WmlRead.Context -> List(Document.Block)
+read_in = |content, context| {
+	namespaces = "xmlns:w='${wordprocessingml}' xmlns:r='${relationships_namespace}' xmlns:wp='${drawing_namespace}' xmlns:a='${drawingml}'"
+	tree = XmlTree.parse("<w:document ${namespaces}><w:body>${content}</w:body></w:document>".to_utf8(), {}) ?? Text("")
+	WmlRead.body(tree, context)
 }
 
 ## A run's text, tab, breaks, symbol and hyphens are read in order.
@@ -955,27 +1260,140 @@ expect {
 	}
 }
 
-## Hyperlinks, revisions and content controls keep their element and have
-## their content read; bookmarks and comment ranges stay in their place.
+## Revisions and content controls keep their element and have their content
+## read; comment ranges stay in their place.
 expect {
-	content = "<w:pPr><w:pStyle w:val='Body'/></w:pPr><w:bookmarkStart w:id='1' w:name='b'/><w:hyperlink w:anchor='b'><w:r><w:t>link</w:t></w:r></w:hyperlink><w:ins w:id='2' w:author='A'><w:r><w:t>new</w:t></w:r></w:ins><w:del w:id='3' w:author='A'><w:r><w:delText>old</w:delText></w:r></w:del><w:sdt><w:sdtPr/><w:sdtContent><w:r><w:t>field</w:t></w:r></w:sdtContent></w:sdt><w:bookmarkEnd w:id='1'/>"
+	content = "<w:pPr><w:pStyle w:val='Body'/></w:pPr><w:commentRangeStart w:id='1'/><w:ins w:id='2' w:author='A'><w:r><w:t>new</w:t></w:r></w:ins><w:del w:id='3' w:author='A'><w:r><w:delText>old</w:delText></w:r></w:del><w:sdt><w:sdtPr/><w:sdtContent><w:r><w:t>field</w:t></w:r></w:sdtContent></w:sdt><w:commentRangeEnd w:id='1'/>"
 	match read("<w:p>${content}</w:p>") {
-		[Paragraph({ properties, content: [Preserved(_), Container(link), Container(ins), Container(del), Container(sdt), Preserved(_)] })] =>
+		[Paragraph({ properties, content: [Preserved(_), Container(ins), Container(del), Container(sdt), Preserved(_)] })] =>
 			properties.preserved.len() == 1
-				and link.content.len() == 1
 				and ins.content.len() == 1
 				and del.content.len() == 1
 				and match sdt.content {
 					[Preserved(_), Container(inner)] => inner.content.len() == 1
 					_ => Bool.False
 				}
-				and match link.element {
-					Element(element) => element.children.is_empty() and element.attributes.len() == 1
+				and match ins.element {
+					Element(element) => element.children.is_empty() and element.attributes.len() == 2
 					Text(_) => Bool.False
 				}
 
 		_ => Bool.False
 	}
+}
+
+## A hyperlink's target is its external relationship's address, with its
+## location when it has one, or a bookmark; its other attributes are kept.
+## One whose relationship is missing or internal, or that has no target, is
+## a container of its content.
+expect {
+	relationships = [
+		{ id: "rId1", kind: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink", target: "https://example.org/a b", mode: External },
+		{ id: "rId2", kind: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles", target: "/word/styles.xml", mode: Internal },
+	]
+	link = |attributes| "<w:hyperlink ${attributes}><w:r><w:t>x</w:t></w:r></w:hyperlink>"
+	links = [link("r:id='rId1' w:tooltip='Tip'"), link("r:id='rId1' w:anchor='part'"), link("w:anchor='terms' w:history='1'"), link("r:id='rId9'"), link("r:id='rId2'"), link("w:tgtFrame='_blank'")]
+	match read_in("<w:p>${Str.join_with(links, "")}</w:p>", { relationships, footnotes: [], endnotes: [] }) {
+		[Paragraph({ properties: _, content: [Hyperlink(external), Hyperlink(located), Hyperlink(internal), Container(missing), Container(part), Container(untargeted)] })] =>
+			external.target == External("https://example.org/a b")
+				and external.preserved.map(|attribute| attribute.value) == ["Tip"]
+				and located.target == ExternalAt({ url: "https://example.org/a b", location: "part" })
+				and located.preserved == []
+				and internal.target == Internal("terms")
+				and internal.preserved.map(|attribute| attribute.name.local) == ["history"]
+				and external.content.len() == 1
+				and [missing.content, part.content, untargeted.content].all(|content| content.len() == 1)
+
+		_ => Bool.False
+	}
+}
+
+## A bookmark's start and end are named by its name, wherever its start is;
+## an end without a start and a bookmark spanning table columns are kept.
+expect {
+	content = "<w:p><w:bookmarkStart w:id='7' w:name='terms'/><w:r><w:t>a</w:t></w:r><w:bookmarkEnd w:id='5'/><w:bookmarkEnd w:id='9'/></w:p><w:p><w:bookmarkStart w:id='5' w:name='later'/><w:bookmarkEnd w:id='7'/><w:bookmarkStart w:id='8' w:name='c' w:colFirst='0' w:colLast='1'/></w:p>"
+	match read(content) {
+		[Paragraph(first), Paragraph(second)] =>
+			match (first.content, second.content) {
+				([BookmarkStart("terms"), Run(_), BookmarkEnd("later"), Preserved(_)], [BookmarkStart("later"), BookmarkEnd("terms"), Preserved(_)]) => Bool.True
+				_ => Bool.False
+			}
+
+		_ => Bool.False
+	}
+}
+
+## Note references name their note by its place among the notes; a
+## reference to a missing note or with a custom mark is kept, and a note's
+## own mark is read.
+expect {
+	run_xml = "<w:r><w:footnoteReference w:id='4'/><w:endnoteReference w:id='4'/><w:footnoteReference w:id='3'/><w:footnoteReference w:customMarkFollows='1' w:id='4'/><w:t>*</w:t><w:footnoteRef/><w:endnoteRef/></w:r>"
+	match read_in("<w:p>${run_xml}</w:p>", { relationships: [], footnotes: ["-1", "0", "4"], endnotes: ["4"] }) {
+		[Paragraph({ properties: _, content: [Run(r)] })] =>
+			match r.content {
+				[NoteReference(footnote), NoteReference(endnote), Preserved(_), Preserved(_), Text("*"), NoteMark(Footnote), NoteMark(Endnote)] =>
+					footnote == { kind: Footnote, note: 2 } and endnote == { kind: Endnote, note: 0 }
+
+				_ => Bool.False
+			}
+
+		_ => Bool.False
+	}
+}
+
+## A complex field's marks keep their elements and its code is read as text;
+## a simple field holds its code and its result as content.
+expect {
+	complex = "<w:r><w:fldChar w:fldCharType='begin' w:dirty='true'/></w:r><w:r><w:instrText xml:space='preserve'> PAGE </w:instrText></w:r><w:r><w:fldChar w:fldCharType='separate'/></w:r><w:r><w:t>3</w:t></w:r><w:r><w:fldChar w:fldCharType='end'/><w:fldChar w:fldCharType='sideways'/></w:r>"
+	simple = "<w:fldSimple w:instr=' NUMPAGES ' w:fldLock='1'><w:r><w:t>9</w:t></w:r></w:fldSimple><w:fldSimple><w:r><w:t>?</w:t></w:r></w:fldSimple>"
+	match read("<w:p>${complex}${simple}</w:p>") {
+		[Paragraph({ properties: _, content: [Run(begin), Run(code), Run(separate), Run(result), Run(end), SimpleField(field), Container(_)] })] =>
+			match (begin.content, code.content, separate.content, end.content) {
+				([FieldMark(b)], [FieldCode(" PAGE ")], [FieldMark(s)], [FieldMark(e), Preserved(_)]) =>
+					b.kind == Begin
+						and s.kind == Separate
+						and e.kind == End
+						and result.content == [Text("3")]
+						and field.code == " NUMPAGES "
+						and field.preserved.len() == 1
+						and field.content.len() == 1
+
+				_ => Bool.False
+			}
+
+		_ => Bool.False
+	}
+}
+
+## An inline picture names its media part and its size and keeps its
+## drawing; a floating drawing, or one whose image is not in the package, is
+## kept as it was read.
+expect {
+	relationships = [{ id: "rId4", kind: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image", target: "/word/media/image1.png", mode: Internal }]
+	drawing = |placement, extent, id| "<w:drawing><wp:${placement}>${extent}<wp:docPr id='1' name='Picture 1'/><a:graphic><a:graphicData uri='http://schemas.openxmlformats.org/drawingml/2006/picture'><a:blip r:embed='${id}'/></a:graphicData></a:graphic></wp:${placement}></w:drawing>"
+	extent = "<wp:extent cx='1828800' cy='914400'/>"
+	drawings = [drawing("inline", extent, "rId4"), drawing("anchor", extent, "rId4"), drawing("inline", extent, "rId5"), drawing("inline", "<wp:extent cx='1.5' cy='2'/>", "rId4")]
+	match read_in("<w:p><w:r>${Str.join_with(drawings, "")}</w:r></w:p>", { relationships, footnotes: [], endnotes: [] }) {
+		[Paragraph({ properties: _, content: [Run(r)] })] =>
+			match r.content {
+				[Picture(inline_picture), Preserved(_), Preserved(_), Preserved(_)] => inline_picture.media == "/word/media/image1.png" and inline_picture.size == { width: 1828800, height: 914400 }
+				_ => Bool.False
+			}
+
+		_ => Bool.False
+	}
+}
+
+## A notes part's notes are read in order with their kinds and content, and
+## their identifiers listed in the same order.
+expect {
+	notes = "<w:footnote w:type='separator' w:id='-1'><w:p><w:r><w:separator/></w:r></w:p></w:footnote><w:footnote w:id='0' w:type='continuationSeparator'/><w:footnote w:id='2'><w:p><w:r><w:footnoteRef/><w:t>Note.</w:t></w:r></w:p></w:footnote>"
+	tree = XmlTree.parse("<w:footnotes xmlns:w='${wordprocessingml}'>${notes}<w:other/></w:footnotes>".to_utf8(), {}) ?? Text("")
+	read_notes = WmlRead.notes(tree, { relationships: [], footnotes: [], endnotes: [] })
+	WmlRead.note_ids(tree) == ["-1", "0", "2"]
+		and read_notes.map(|note| note.kind) == [Separator, ContinuationSeparator, Note]
+		and read_notes.map(|note| note.content.len()) == [1, 0, 1]
+		and WmlRead.notes(Text("x"), { relationships: [], footnotes: [], endnotes: [] }) == []
 }
 
 ## A table holds its properties, grid, rows and cells, a cell holds its
@@ -1054,7 +1472,7 @@ expect {
 expect {
 	xml = "<w:tbl><w:tblPr><w:tblW w:w='33.3333%' w:type='pct'/></w:tblPr><w:tblGrid><w:gridCol w:w='10470.0'/><w:gridCol w:w='99.5'/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w='50%' w:type='pct'/><w:vMerge/></w:tcPr><w:p/></w:tc></w:tr></w:tbl>"
 	tree = XmlTree.parse("<w:document xmlns:w='${wordprocessingml}'><w:body>${xml}</w:body></w:document>".to_utf8(), {}) ?? Text("")
-	result = WmlRead.read_body(tree)
+	result = WmlRead.read_body(tree, { relationships: [], footnotes: [], endnotes: [] })
 	match result.blocks {
 		[Table({ properties, grid: columns_read, content: [Row({ properties: _, content: [Cell(cell_read)] })] })] =>
 			properties.width == Fiftieths(1667)
@@ -1118,7 +1536,7 @@ expect {
 	choice = "<mc:AlternateContent><mc:Choice Requires='x'><x:shape/></mc:Choice><mc:Fallback><w:t>fallback</w:t></mc:Fallback></mc:AlternateContent>"
 	xml = "<w:document xmlns:w='${wordprocessingml}' ${mc}><w:body><x:block/><w:p x:id='1'><w:r>${choice}</w:r></w:p></w:body></w:document>"
 	tree = XmlTree.parse(xml.to_utf8(), {}) ?? Text("")
-	match WmlRead.body(tree) {
+	match WmlRead.body(tree, { relationships: [], footnotes: [], endnotes: [] }) {
 		[Paragraph({ properties: _, content: [Run(r)] })] => r.content == [Text("fallback")]
 		_ => Bool.False
 	}
@@ -1129,5 +1547,6 @@ expect {
 expect {
 	other = XmlTree.parse("<w:styles xmlns:w='${wordprocessingml}'><w:body><w:p/></w:body></w:styles>".to_utf8(), {}) ?? Text("")
 	bare = XmlTree.parse("<w:document xmlns:w='${wordprocessingml}'/>".to_utf8(), {}) ?? Text("")
-	WmlRead.body(other) == [] and WmlRead.body(bare) == []
+	none = { relationships: [], footnotes: [], endnotes: [] }
+	WmlRead.body(other, none) == [] and WmlRead.body(bare, none) == []
 }

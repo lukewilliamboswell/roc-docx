@@ -2,7 +2,8 @@
 ## back.
 ##
 ## `Docx.parse` opens the package within the default `Limits` and reads it as
-## a [Document]; `Docx.body` and `Docx.text` read what its body says;
+## a [Document]; `Docx.body` and `Docx.text` read what its body says,
+## `Docx.footnotes` and `Docx.endnotes` its notes and `Docx.fields` its fields;
 ## `Docx.to_bytes` writes a document as a package. What reading drops comes
 ## back as diagnostics beside the document, never printed.
 import Document
@@ -56,10 +57,34 @@ Docx :: [].{
 	## the schema does not allow, as [WmlRead.read_body] gives it.
 	read_body : Document -> { blocks : List(Document.Block), diagnostics : List(WmlRead.Diagnostic) }
 	read_body = |document|
-		match Document.main_document(document) {
-			Ok(tree) => WmlRead.read_body(tree)
-			Err(NoMainDocument) => { blocks: [], diagnostics: [] }
+		match Document.related(document, "/", Opc.officedocument_relationship) {
+			Ok(main) => {
+				ids = |kind|
+					match Document.related(document, main.name, kind) {
+						Ok(notes) => WmlRead.note_ids(notes.tree)
+						Err(NotFound) => []
+					}
+				WmlRead.read_body(main.tree, { relationships: main.relationships, footnotes: ids(footnotes_relationship), endnotes: ids(endnotes_relationship) })
+			}
+
+			Err(NotFound) => { blocks: [], diagnostics: [] }
 		}
+
+	## A document's footnotes in the order of their part, as [WmlRead.notes]
+	## reads them from the part the main document's footnotes relationship
+	## targets; a note reference names a note by its place in this list. A
+	## document without footnotes has none.
+	footnotes : Document -> List(Document.Note)
+	footnotes = |document| notes(document, footnotes_relationship)
+
+	## A document's endnotes, as [Docx.footnotes] gives its footnotes.
+	endnotes : Document -> List(Document.Note)
+	endnotes = |document| notes(document, endnotes_relationship)
+
+	## The fields of a document's body, as [Document.fields] gathers them:
+	## each field's code and its result as last calculated.
+	fields : Document -> List(Document.Field)
+	fields = |document| Document.fields(Docx.body(document))
 
 	## The current text of a document's body, its tracked changes as they
 	## stand: every paragraph's text, as [Document.paragraph_text] gives it,
@@ -75,6 +100,25 @@ Docx :: [].{
 			$state = block_text($state, block)
 		}
 		Str.from_utf8(line_end($state).text) ?? ""
+	}
+}
+
+footnotes_relationship : Str
+footnotes_relationship = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes"
+
+endnotes_relationship : Str
+endnotes_relationship = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/endnotes"
+
+# The notes of the part the main document's relationship of `kind` targets.
+notes : Document, Str -> List(Document.Note)
+notes = |document, kind| {
+	found = match Document.related(document, "/", Opc.officedocument_relationship) {
+		Ok(main) => Document.related(document, main.name, kind)
+		Err(NotFound) => Err(NotFound)
+	}
+	match found {
+		Ok(part) => WmlRead.notes(part.tree, { relationships: part.relationships, footnotes: [], endnotes: [] })
+		Err(NotFound) => []
 	}
 }
 
@@ -181,4 +225,79 @@ expect {
 		and Str.from_utf8(part).map_ok(|text| text.contains(declared)) == Ok(Bool.True)
 		and undeclared(parsed.document) == Ok(1)
 		and undeclared(again.document) == Ok(0)
+}
+
+# A package whose main document holds an inline picture of a media part, a
+# footnote reference and a field, with a footnotes part whose note links
+# outside through a relationship of its own.
+illustrated : List(U8) -> Try(List(U8), Opc.WriteError)
+illustrated = |image| {
+	relationships = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+	declarations = "xmlns:w='http://schemas.openxmlformats.org/wordprocessingml/2006/main' xmlns:r='${relationships}' xmlns:wp='http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing' xmlns:a='http://schemas.openxmlformats.org/drawingml/2006/main'"
+	graph = {
+		relationships: [{ id: "rId1", kind: Opc.officedocument_relationship, target: "/word/document.xml", mode: Internal }],
+		parts: [
+			{
+				name: "/word/document.xml",
+				content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml",
+				relationships: [
+					{ id: "rId7", kind: "${relationships}/image", target: "/word/media/image1.png", mode: Internal },
+					{ id: "rId8", kind: "${relationships}/footnotes", target: "/word/footnotes.xml", mode: Internal },
+				],
+			},
+			{
+				name: "/word/footnotes.xml",
+				content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml",
+				relationships: [{ id: "rId7", kind: "${relationships}/hyperlink", target: "https://example.org/rates", mode: External }],
+			},
+			{ name: "/word/media/image1.png", content_type: "image/png", relationships: [] },
+		],
+	}
+	picture = "<w:drawing><wp:inline><wp:extent cx='952500' cy='476250'/><wp:docPr id='1' name='Logo'/><a:graphic><a:graphicData uri='http://schemas.openxmlformats.org/drawingml/2006/picture'><a:blip r:embed='rId7'/></a:graphicData></a:graphic></wp:inline></w:drawing>"
+	field = "<w:r><w:fldChar w:fldCharType='begin'/><w:instrText xml:space='preserve'> PAGE </w:instrText><w:fldChar w:fldCharType='separate'/><w:t>1</w:t><w:fldChar w:fldCharType='end'/></w:r>"
+	body = "<w:p><w:r>${picture}<w:t>Rates</w:t><w:footnoteReference w:id='2'/></w:r>${field}</w:p>"
+	footnotes = "<w:footnote w:type='separator' w:id='0'><w:p><w:r><w:separator/></w:r></w:p></w:footnote><w:footnote w:id='2'><w:p><w:r><w:footnoteRef/></w:r><w:hyperlink r:id='rId7'><w:r><w:t>Published</w:t></w:r></w:hyperlink></w:p></w:footnote>"
+	Opc.to_bytes(
+		graph,
+		|name|
+			if name == "/word/document.xml" {
+				Bytes("<w:document ${declarations}><w:body>${body}</w:body></w:document>".to_utf8())
+			} else if name == "/word/footnotes.xml" {
+				Bytes("<w:footnotes ${declarations}>${footnotes}</w:footnotes>".to_utf8())
+			} else {
+				Bytes(image)
+			},
+	)
+}
+
+## A picture names its media part and size, a note reference its place among
+## the footnotes, whose hyperlinks resolve through the footnotes part's own
+## relationships, and fields give their code and result.
+expect {
+	parsed = Docx.parse(illustrated([0x89, 0x50, 0x4E, 0x47])?)?
+	body_ok = match Docx.body(parsed.document) {
+		[Paragraph({ properties: _, content: [Run(r), Run(_)] })] =>
+			match r.content {
+				[Picture(picture), Text("Rates"), NoteReference(reference)] =>
+					picture.media == "/word/media/image1.png" and picture.size == { width: 952500, height: 476250 } and reference == { kind: Footnote, note: 1 }
+
+				_ => Bool.False
+			}
+
+		_ => Bool.False
+	}
+	notes_ok = match Docx.footnotes(parsed.document) {
+		[separator, { kind: Note, content: [Paragraph({ properties: _, content: [Run(_), Hyperlink(link)] })] }] =>
+			separator.kind == Separator and link.target == External("https://example.org/rates")
+
+		_ => Bool.False
+	}
+	body_ok and notes_ok and Docx.endnotes(parsed.document) == [] and Docx.fields(parsed.document) == [{ code: " PAGE ", result: "1" }]
+}
+
+## A picture's media part is written back byte for byte as it was read.
+expect {
+	image = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0xFF, 0xFE, 0x3C, 0x26]
+	written = Docx.to_bytes(Docx.parse(illustrated(image)?)?.document)?
+	Opc.part_bytes(Opc.open(written, {})?, "/word/media/image1.png") == Ok(image)
 }
