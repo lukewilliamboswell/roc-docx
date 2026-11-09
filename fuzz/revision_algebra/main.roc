@@ -46,29 +46,65 @@ import docx.XmlTree
 ## between two line starts deleted by `Revisions.delete_blocks`: the text
 ## is spliced, and silent and tracked edits fail alike.
 ##
-## Allocation ratchets, which only ever move down: the final and original
-## text of the tracked body take at most linearly many allocations and bytes
-## live in the program's length, and each declared example allocates no more
-## than it did when its ceiling was set. The large declared program, sixteen
-## times the small one, allocates, requests and holds live at most sixteen
-## times what the small one does in the same run. Raising a ceiling needs a
-## cause recorded in the pull request.
+## The document read back gives its changes through `Docx.revisions`;
+## `Docx.accept_all` and `Docx.reject_all` give documents whose text is the
+## final and original text, and accepting the changes with even ids by
+## `Docx.accept` with an `Ids` selection, or rejecting those with odd ids by
+## `Docx.reject`, leaves no more changes than the others, fewer when a
+## resolved change held some, and the final or original text as it was.
+## Each edit is also made on the untracked body written as a document, as
+## tracked changes: `Docx.replace_text` of the span, `Docx.insert_text` of
+## the replacement at the span's start, `Docx.delete_text` of the span,
+## `Docx.insert_blocks` and `Docx.delete_blocks`; where the same tracked edit
+## of the body succeeds, the edited document's final and original texts
+## must be that edit's final text and the text before, and where it fails,
+## the document edit must fail.
+##
+## Allocation ratchets, which only ever move down: `Revisions.text` in the
+## final and original views, `Docx.revisions`, the accepts and rejects and
+## the five document edits each allocate at most linearly many times and
+## hold at most linearly many bytes live in the program's length, and each declared
+## example allocates no more than it did when its ceiling was set. Two pairs
+## bound growth: the program above, sixteen times as often in the large one
+## as in the small one, and changes of every kind, 256 against 16. Running a
+## large example runs its small one again and fails if any region allocates
+## more than sixteen times as often, or requests or holds live more than
+## `byte_ratio` times as many bytes. Raising a ceiling needs a cause recorded
+## in the pull request.
 test! : List(U8) => Fuzz.Outcome
 test! = |program| {
-	cost = texts!(program)
-	match exact_ceiling(program) {
-		Ok(ceiling) =>
-			if cost.allocations > ceiling {
-				crash "a declared program allocated more than its ceiling"
+	costs = algebra!(program)
+	match exact_ceilings(program) {
+		Ok(ceilings) =>
+			for (region, ceiling) in ceilings {
+				match costs.find_first(|(name, _)| name == region) {
+					Ok((_, stats)) =>
+						if stats.allocs + stats.reallocs > ceiling {
+							crash "a declared program allocated more than its ceiling in ${region}"
+						}
+
+					Err(_) => crash "a declared program did not measure ${region}"
+				}
 			}
 
 		Err(NotDeclared) => {}
 	}
-	if program == large_program {
-		small = texts!(small_program)
-		if cost.allocations > 16 * small.allocations or cost.requested_bytes > 16 * small.requested_bytes or cost.held_bytes > 16 * small.held_bytes {
-			crash "the large program cost more than sixteen times the small one"
+	match small_of(program) {
+		Ok(small_program) => {
+			small = algebra!(small_program)
+			for (region, stats) in costs {
+				match small.find_first(|(name, _)| name == region) {
+					Ok((_, base)) =>
+						if stats.allocs + stats.reallocs > 16 * (base.allocs + base.reallocs) or stats.requested_bytes > byte_ratio * base.requested_bytes or held(stats) > byte_ratio * held(base) {
+							crash "a large program cost more than its small one allows in ${region}"
+						}
+
+					Err(_) => crash "a small program did not measure ${region}"
+				}
+			}
 		}
+
+		Err(NotAPair) => {}
 	}
 	Fuzz.keep
 }
@@ -76,38 +112,45 @@ test! = |program| {
 generator : Fuzz.Generator(List(U8))
 generator = Fuzz.bytes
 
+# What a program's regions cost, by region.
+Costs : List((Str, Fuzz.Stats))
+
+# The bytes a region held live beyond those live when it began.
+held : Fuzz.Stats -> U64
+held = |stats| stats.peak_live_bytes - stats.entry_live_bytes
+
+# Fail when a region cost more than linearly in the program's length.
+check_linear : Str, Fuzz.Stats, U64 -> {}
+check_linear = |region, stats, length| {
+	if stats.allocs + stats.reallocs > linear_allocation_ceiling(region, length) {
+		crash "${region} allocated more than linearly in the program's length"
+	}
+	if held(stats) > linear_memory_ceiling(region, length) {
+		crash "${region} held more than linearly many bytes live"
+	}
+	{}
+}
+
 # Build a program's bodies, measure the tracked body's final and original
 # text, and check them against the untracked bodies and through writing and
-# reading. Returns the allocations and reallocations the texts took, the
-# bytes they requested and the most they held live beyond entry.
-texts! : List(U8) => { allocations : U64, requested_bytes : U64, held_bytes : U64 }
-texts! = |program| {
+# reading; then measure and check the document's changes, accepting and
+# rejecting them, and the edits.
+algebra! : List(U8) => Costs
+algebra! = |program| {
 	built = bodies(program)
-	{ value: (final, original), stats } = Fuzz.measure!("revisions-text", || (Revisions.text(built.tracked, Final), Revisions.text(built.tracked, Original)))
-	if stats.allocs + stats.reallocs > linear_allocation_ceiling(program.len()) {
-		crash "the texts allocated more than linearly in the program's length"
-	}
-	if stats.peak_live_bytes - stats.entry_live_bytes > linear_memory_ceiling(program.len()) {
-		crash "the texts held more than linearly many bytes live"
-	}
+	{ value: (final, original), stats: texts } = Fuzz.measure!("revisions-text", || (Revisions.text(built.tracked, Final), Revisions.text(built.tracked, Original)))
+	check_linear("revisions-text", texts, program.len())
 	if final != Revisions.text(built.final, Current) {
 		crash "the final text differs from the text of the accepted body"
 	}
 	if original != Revisions.text(built.original, Current) {
 		crash "the original text differs from the text of the rejected body"
 	}
-	written = WmlWrite.document(shell, built.tracked, context) ?? crash "a tracked body did not write"
-	main = XmlTree.render(written.tree) ?? crash "a written body did not render"
-	graph = {
-		relationships: [{ id: "rId1", kind: Opc.officedocument_relationship, target: "/word/document.xml", mode: Internal }],
-		parts: [{ name: "/word/document.xml", content_type: main_type, relationships: written.relationships }],
-	}
-	bytes = Opc.to_bytes(graph, |_| Bytes(main)) ?? crash "a written body did not package"
-	parsed = Docx.parse(bytes) ?? crash "a written document did not parse"
-	if Docx.body(parsed.document) != built.tracked {
+	document = document_of(built.tracked)
+	if Docx.body(document) != built.tracked {
 		crash "a written body read back differently"
 	}
-	if Docx.final_text(parsed.document) != final or Docx.original_text(parsed.document) != original {
+	if Docx.final_text(document) != final or Docx.original_text(document) != original {
 		crash "a written document's final or original text differs"
 	}
 	if Revisions.accept(built.tracked, All) != Ok(built.final) {
@@ -116,57 +159,68 @@ texts! = |program| {
 	if Revisions.reject(built.tracked, All) != Ok(built.original) {
 		crash "rejecting every change differs from the rejected body"
 	}
-	body = if (program.len() % 2 == 0) built.original else built.final
-	edited(program, body)
-	blocks_inserted(program, body)
-	blocks_deleted(program, body)
-	{ allocations: stats.allocs + stats.reallocs, requested_bytes: stats.requested_bytes, held_bytes: stats.peak_live_bytes - stats.entry_live_bytes }
+	{ value: listed, stats: listing } = Fuzz.measure!("docx-revisions", || Docx.revisions(document))
+	if listed != Revisions.list(built.tracked) {
+		crash "the document's changes differ from the body's"
+	}
+	{ value: accepted, stats: accepting_all } = Fuzz.measure!("docx-accept-all", || Docx.accept_all(document))
+	{ value: rejected, stats: rejecting_all } = Fuzz.measure!("docx-reject-all", || Docx.reject_all(document))
+	if Docx.text(accepted ?? crash "accepting every change failed") != final or Docx.text(rejected ?? crash "rejecting every change failed") != original {
+		crash "accepting or rejecting every change differs from the final or original text"
+	}
+	evens = listed.keep_if(|change| change.id % 2 == 0).map(|change| change.id)
+	odds = listed.keep_if(|change| change.id % 2 == 1).map(|change| change.id)
+	{ value: some_accepted, stats: accepting } = Fuzz.measure!("docx-accept", || Docx.accept(document, Ids(evens)))
+	{ value: some_rejected, stats: rejecting } = Fuzz.measure!("docx-reject", || Docx.reject(document, Ids(odds)))
+	left_accepted = some_accepted ?? crash "accepting selected changes failed"
+	left_rejected = some_rejected ?? crash "rejecting selected changes failed"
+	if Docx.final_text(left_accepted) != final or Docx.revisions(left_accepted).len() > odds.len() {
+		crash "accepting the changes with even ids changed the final text or left a selected change"
+	}
+	if Docx.original_text(left_rejected) != original or Docx.revisions(left_rejected).len() > evens.len() {
+		crash "rejecting the changes with odd ids changed the original text or left a selected change"
+	}
+	measured = [("revisions-text", texts), ("docx-revisions", listing), ("docx-accept-all", accepting_all), ("docx-reject-all", rejecting_all), ("docx-accept", accepting), ("docx-reject", rejecting)]
+	for (region, stats) in measured {
+		check_linear(region, stats, program.len())
+	}
+	List.concat(measured, edits!(program, if (program.len() % 2 == 0) built.original else built.final))
 }
 
-# Measured on nightly-2026-11-07: the declared programs, of 68 and 1,088
-# bytes, take 3.3 and 3.1 allocations a byte and hold 1,289 and 4,593 bytes
-# live. A program of tables alone costs most: 15.2 allocations a byte for
-# tables of a deleted row (394 for 26 bytes) and 16.1 for tables of three
-# cells (676 for 42), so the allocation ceiling allows 20 a byte.
-linear_allocation_ceiling : U64 -> U64
-linear_allocation_ceiling = |length| 64 + 20 * length
-
-linear_memory_ceiling : U64 -> U64
-linear_memory_ceiling = |length| 16_384 + 64 * length
-
-# Exact ceilings: the allocations and reallocations of the declared
-# programs' texts, as measured on nightly-2026-11-07 when the ceiling was
-# set.
-exact_ceiling : List(U8) -> Try(U64, [NotDeclared])
-exact_ceiling = |program|
-	if program == small_program {
-		Ok(224)
-	} else if program == large_program {
-		Ok(3_352)
-	} else {
-		Err(NotDeclared)
+# A body written by `WmlWrite.document` as the main document of a package,
+# read back.
+document_of : List(Document.Block) -> Document
+document_of = |body| {
+	written = WmlWrite.document(shell, body, context) ?? crash "a body did not write"
+	main = XmlTree.render(written.tree) ?? crash "a written body did not render"
+	graph = {
+		relationships: [{ id: "rId1", kind: Opc.officedocument_relationship, target: "/word/document.xml", mode: Internal }],
+		parts: [{ name: "/word/document.xml", content_type: main_type, relationships: written.relationships }],
 	}
+	bytes = Opc.to_bytes(graph, |_| Bytes(main)) ?? crash "a written body did not package"
+	(Docx.parse(bytes) ?? crash "a written document did not parse").document
+}
 
-# The small and large declared programs repeat one program, the large one
-# sixteen times as often. Their texts take 224 and 3,352 allocations, request
-# 18,606 and 263,290 bytes and hold 1,289 and 4,593 live, ratios of 15.0,
-# 14.2 and 3.6 against the sixteen the test allows.
-small_program : List(U8)
-small_program = List.join(List.repeat(program_unit, 4))
+# The body's edits, each checked against the same edit made silently and
+# made again as tracked changes in the body written as a document,
+# measured.
+edits! : List(U8), List(Document.Block) => Costs
+edits! = |program, body| {
+	document = document_of(body)
+	before = Revisions.text(body, Current)
+	measured = List.join([edited!(program, body, document, before), blocks_inserted!(program, body, document, before), blocks_deleted!(program, body, document, before)])
+	for (region, stats) in measured {
+		check_linear(region, stats, program.len())
+	}
+	measured
+}
 
-large_program : List(U8)
-large_program = List.join(List.repeat(program_unit, 64))
-
-# Plain text, an insertion, a deletion, a deleted mark, a move's source, an
-# inserted mark, a nested change, a move's destination, formatting, a
-# table, a hyperlink, a deleted field and marks moved away and here.
-program_unit : List(U8)
-program_unit = [1, 2, 3, 6, 4, 7, 8, 5, 0, 9, 10, 11, 12, 13, 1, 14, 0]
-
-# A tracked edit of an untracked body against the same edit made silently.
-edited : List(U8), List(Document.Block) -> {}
-edited = |program, body| {
-	text = Revisions.text(body, Current).to_utf8()
+# A tracked edit of an untracked body against the same edit made silently;
+# then that edit, an insertion of its replacement at the span's start and a
+# deletion of its span, made in the document.
+edited! : List(U8), List(Document.Block), Document, Str => Costs
+edited! = |program, body, document, before| {
+	text = before.to_utf8()
 	first = (program.first() ?? 0).to_u64() % text.len()
 	last = first + (program.last() ?? 0).to_u64() % 24
 	span = { start: first, end: if (last < text.len()) last else text.len() }
@@ -189,12 +243,19 @@ edited = |program, body| {
 		(Err(LineFeedInSpan(_)), Err(LineFeedInSpan(_))) if across => {}
 		_ => crash "a silent and a tracked edit did not both succeed or both fail for a line feed in the span"
 	}
+	at = { start: span.start, end: span.start }
+	[
+		measured_edit!("docx-replace-text", final_of(Revisions.replace(body, span, replacement, by_morgan)), before, || Docx.replace_text(document, span, replacement, by_morgan)),
+		measured_edit!("docx-insert-text", final_of(Revisions.replace(body, at, replacement, by_morgan)), before, || Docx.insert_text(document, span.start, replacement, by_morgan)),
+		measured_edit!("docx-delete-text", final_of(Revisions.replace(body, span, "", by_morgan)), before, || Docx.delete_text(document, span, by_morgan)),
+	]
 }
 
-# Blocks inserted where a line begins, silently and tracked.
-blocks_inserted : List(U8), List(Document.Block) -> {}
-blocks_inserted = |program, body| {
-	text = Revisions.text(body, Current).to_utf8()
+# Blocks inserted where a line begins, silently and tracked, and in the
+# document.
+blocks_inserted! : List(U8), List(Document.Block), Document, Str => Costs
+blocks_inserted! = |program, body, document, before| {
+	text = before.to_utf8()
 	starts = line_starts(text)
 	at = starts.get((program.get(1) ?? 0).to_u64() % starts.len()) ?? 0
 	new = match program.len() % 4 {
@@ -215,12 +276,14 @@ blocks_inserted = |program, body| {
 		(Err(NoParagraphToJoin(one)), Err(NoParagraphToJoin(other))) if one == at and other == at => {}
 		_ => crash "a silent and a tracked block insertion did not both succeed or both fail for want of a paragraph to join"
 	}
+	[measured_edit!("docx-insert-blocks", final_of(Revisions.insert_blocks(body, at, new, by_morgan)), before, || Docx.insert_blocks(document, at, new, by_morgan))]
 }
 
-# The blocks between two line starts deleted, silently and tracked.
-blocks_deleted : List(U8), List(Document.Block) -> {}
-blocks_deleted = |program, body| {
-	text = Revisions.text(body, Current).to_utf8()
+# The blocks between two line starts deleted, silently and tracked, and in
+# the document.
+blocks_deleted! : List(U8), List(Document.Block), Document, Str => Costs
+blocks_deleted! = |program, body, document, before| {
+	text = before.to_utf8()
 	starts = line_starts(text)
 	one = starts.get((program.get(1) ?? 0).to_u64() % starts.len()) ?? 0
 	other = starts.get((program.get(2) ?? 0).to_u64() % starts.len()) ?? 0
@@ -238,7 +301,132 @@ blocks_deleted = |program, body| {
 		(Err(NoParagraphToJoin(at)), Err(NoParagraphToJoin(again))) if at == again => {}
 		_ => crash "a silent and a tracked block deletion did not both succeed or both fail alike"
 	}
+	[measured_edit!("docx-delete-blocks", final_of(Revisions.delete_blocks(body, span, by_morgan)), before, || Docx.delete_blocks(document, span, by_morgan))]
 }
+
+# The final text of a tracked edit of the body, or that it fails.
+final_of : Try(List(Document.Block), _) -> Try(Str, [Fails])
+final_of = |edit|
+	match edit {
+		Ok(tracked) => Ok(Revisions.text(tracked, Final))
+		Err(_) => Err(Fails)
+	}
+
+# An edit of the document measured: where the same tracked edit of its body
+# succeeds, the edited document's final and original text are that edit's
+# final text and the text before; where it fails, the document edit fails.
+measured_edit! : Str, Try(Str, [Fails]), Str, (() -> Try(Document, Docx.EditError)) => (Str, Fuzz.Stats)
+measured_edit! = |region, expected, before, edit| {
+	{ value: done, stats } = Fuzz.measure!(region, || edit())
+	match (done, expected) {
+		(Ok(edited), Ok(final)) =>
+			if Docx.final_text(edited) != final or Docx.original_text(edited) != before {
+				crash "a tracked edit of a document has a different final or original text in ${region}"
+			}
+
+		(Err(_), Err(Fails)) => {}
+		_ => crash "a tracked edit of a document succeeded or failed unlike the same edit of its body in ${region}"
+	}
+	(region, stats)
+}
+
+# Linear ceilings in the program's length, by region. Measured on
+# nightly-2026-11-07: the texts take two to four allocations whatever the
+# program, the growth of the two texts' bytes, and hold 4.0 bytes live a
+# byte of the large program. Listing changes takes 1.0 allocation a byte of
+# the large program and 7.1 a byte of a program of tables; accepting,
+# rejecting and editing, each of which writes the whole document, take 4.6
+# to 10.3 a byte of the large program and 34.9 to 65.6 a byte of programs
+# of tables, the costliest step, which also hold most live: 10.7 KB a byte
+# for tables of three cells.
+linear_allocation_ceiling : Str, U64 -> U64
+linear_allocation_ceiling = |region, length|
+	match region {
+		"revisions-text" => 16 + length // 16
+		"docx-revisions" => 64 + 16 * length
+		_ => 1024 + 96 * length
+	}
+
+linear_memory_ceiling : Str, U64 -> U64
+linear_memory_ceiling = |region, length|
+	match region {
+		"revisions-text" => 16_384 + 64 * length
+		"docx-revisions" => 16_384 + 2048 * length
+		_ => 262_144 + 16_384 * length
+	}
+
+# Exact ceilings: the allocations and reallocations of each region of each
+# declared program, as measured on nightly-2026-11-07 when the ceiling was
+# set.
+exact_ceilings : List(U8) -> Try(List((Str, U64)), [NotDeclared])
+exact_ceilings = |program|
+	if program == small_program {
+		Ok([("revisions-text", 2), ("docx-revisions", 80), ("docx-accept-all", 656), ("docx-reject-all", 600), ("docx-accept", 848), ("docx-reject", 854), ("docx-replace-text", 782), ("docx-insert-text", 776), ("docx-delete-text", 767), ("docx-insert-blocks", 417), ("docx-delete-blocks", 410)])
+	} else if program == large_program {
+		Ok([("revisions-text", 4), ("docx-revisions", 1227), ("docx-accept-all", 10_076), ("docx-reject-all", 9180), ("docx-accept", 13_044), ("docx-reject", 13_214), ("docx-replace-text", 11_769), ("docx-insert-text", 11_763), ("docx-delete-text", 11_754), ("docx-insert-blocks", 5937), ("docx-delete-blocks", 5930)])
+	} else if program == few_changes {
+		Ok([("revisions-text", 2), ("docx-revisions", 31), ("docx-accept-all", 290), ("docx-reject-all", 286), ("docx-accept", 399), ("docx-reject", 390), ("docx-replace-text", 383), ("docx-insert-text", 377), ("docx-delete-text", 368), ("docx-insert-blocks", 228), ("docx-delete-blocks", 221)])
+	} else if program == many_changes {
+		Ok([("revisions-text", 2), ("docx-revisions", 488), ("docx-accept-all", 4220), ("docx-reject-all", 4156), ("docx-accept", 5910), ("docx-reject", 5766), ("docx-replace-text", 5399), ("docx-insert-text", 5393), ("docx-delete-text", 5384), ("docx-insert-blocks", 2913), ("docx-delete-blocks", 2906)])
+	} else {
+		Err(NotDeclared)
+	}
+
+# The small example of a pair whose large example this is.
+small_of : List(U8) -> Try(List(U8), [NotAPair])
+small_of = |program|
+	if program == large_program {
+		Ok(small_program)
+	} else if program == many_changes {
+		Ok(few_changes)
+	} else {
+		Err(NotAPair)
+	}
+
+# How many times its small example's bytes requested and held live a large
+# example may take: thirty-two, twice the sixteen of the count, since a list
+# grows geometrically from a fixed capacity and so requests, over its
+# growth, up to about twice its final size, while the small example's list
+# may never have grown. The list of changes starts with room for sixteen,
+# which few-changes fills, so many-changes' 256 request 31.1 times as many
+# bytes in `docx-revisions` and hold 23.1 times; every other region takes
+# at most 17.8 times. A quadratic step costs sixteen times more again.
+byte_ratio : U64
+byte_ratio = 32
+
+# The small and large declared programs repeat one program, the large one
+# sixteen times as often. Each declared program begins with a plain
+# paragraph and ends with plain text, its length a multiple of four, so that
+# in both of a pair the edits are the same and succeed: the replacement
+# `new` over the second character, a paragraph inserted before the second
+# line and the first line's paragraph deleted.
+small_program : List(U8)
+small_program = List.join(List.repeat(program_unit, 4))
+
+large_program : List(U8)
+large_program = List.join(List.repeat(program_unit, 64))
+
+# A plain paragraph, then an insertion, a deletion, a deleted mark, a move's
+# source, an inserted mark, a nested change, a move's destination,
+# formatting, a table, a hyperlink, a deleted field and marks moved away and
+# here.
+program_unit : List(U8)
+program_unit = [1, 1, 0, 2, 3, 6, 4, 7, 8, 5, 0, 9, 10, 11, 12, 13, 1, 14, 0, 1]
+
+# Sixteen and 256 changes of every kind.
+few_changes : List(U8)
+few_changes = changes_unit
+
+many_changes : List(U8)
+many_changes = List.join(List.repeat(changes_unit, 16))
+
+# A plain paragraph, then sixteen changes: an insertion, a move's source and
+# destination, a deleted and an inserted mark, a deletion holding an
+# insertion, changed formatting, an inserted row, a deleted row, an inserted
+# and a deleted cell, an insertion in a hyperlink, a deleted field and marks
+# moved away and here, with text between them.
+changes_unit : List(U8)
+changes_unit = [1, 1, 0, 2, 4, 5, 6, 1, 7, 8, 9, 0x0A, 0x1A, 0x2A, 11, 12, 1, 13, 1, 14, 0, 1, 1, 1]
 
 # The laws of a tracked edit against the same edit made silently: its final
 # and original text are the silent edit's and the body's; accepting its
@@ -508,8 +696,10 @@ tabled = |state, variant| {
 target = Fuzz.target_with!({
 	name: "revision-algebra",
 	examples: [
-		Fuzz.example({ name: "small-program", revision: "1", make: || small_program }),
-		Fuzz.example({ name: "large-program", revision: "1", make: || large_program }),
+		Fuzz.example({ name: "small-program", revision: "2", make: || small_program }),
+		Fuzz.example({ name: "large-program", revision: "2", make: || large_program }),
+		Fuzz.example({ name: "few-changes", revision: "1", make: || few_changes }),
+		Fuzz.example({ name: "many-changes", revision: "1", make: || many_changes }),
 	],
 	generator,
 	test!,

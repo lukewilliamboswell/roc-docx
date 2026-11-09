@@ -521,7 +521,7 @@ inline_bytes = |text, inline, view|
 		Hyperlink({ target: _, preserved: _, content }) => content.fold(text, |inner, child| inline_bytes(inner, child, view))
 		SimpleField({ code: _, preserved: _, content }) => content.fold(text, |inner, child| inline_bytes(inner, child, view))
 		Container({ element: _, content }) => content.fold(text, |inner, child| inline_bytes(inner, child, view))
-		_ => List.concat(text, Document.inline_text(inline).to_utf8())
+		_ => Document.append_inline_text(text, inline)
 	}
 
 # Whether a view leaves out a change's content.
@@ -539,7 +539,12 @@ block_text : TextState, Document.Block, Revisions.View -> TextState
 block_text = |state, block, view|
 	match block {
 		Paragraph(paragraph) => {
-			text = List.concat(state.text, Revisions.paragraph_text(paragraph, view).to_utf8())
+			shown_in = match view {
+				Current => Current
+				Final => Final
+				Original => Original
+			}
+			text = paragraph.content.fold(state.text, |bytes, inline| inline_bytes(bytes, inline, shown_in))
 			if joins_next(paragraph, view) {
 				{ text, joining: Bool.True }
 			} else {
@@ -547,19 +552,34 @@ block_text = |state, block, view|
 			}
 		}
 
-		Table(table) =>
-			line_end(
-				Document.table_rows(table).drop_if(|row| row_taken(row.properties, view)).fold(
-					line_end(state),
-					|row_state, row| line_end(Document.row_cells(row).drop_if(|cell| cell_taken(cell.properties.revision, view)).fold(line_end(row_state), |cell_state, cell| line_end(cell.content.fold(line_end(cell_state), |inner, child| block_text(inner, child, view))))),
-				),
-			)
+		Table(table) => line_end(table.content.fold(line_end(state), |inner, item| table_text(inner, item, view)))
 
 		Container({ element: _, content }) => content.fold(state, |inner, child| block_text(inner, child, view))
 		Section(_) => state
 		CommentStart(_) => state
 		CommentEnd(_) => state
 		Preserved(_) => state
+	}
+
+# A table's row in a view, unless the view takes it away, through the
+# content controls and custom XML that hold rows, written straight into the
+# text rather than through lists of rows and cells.
+table_text : TextState, Document.TableContent, Revisions.View -> TextState
+table_text = |state, item, view|
+	match item {
+		Row(row) if !row_taken(row.properties, view) => line_end(row.content.fold(line_end(state), |inner, cell| row_text(inner, cell, view)))
+		Container({ element: _, content }) => content.fold(state, |inner, child| table_text(inner, child, view))
+		_ => state
+	}
+
+# A row's cell in a view, unless the view takes it away, as `table_text`
+# gives rows.
+row_text : TextState, Document.RowContent, Revisions.View -> TextState
+row_text = |state, item, view|
+	match item {
+		Cell(cell) if !cell_taken(cell.properties.revision, view) => line_end(cell.content.fold(line_end(state), |inner, child| block_text(inner, child, view)))
+		Container({ element: _, content }) => content.fold(state, |inner, child| row_text(inner, child, view))
+		_ => state
 	}
 
 # The line feed a joining paragraph owes where nothing follows it to join.

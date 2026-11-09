@@ -456,13 +456,13 @@ join_memory_ceiling = |nodes| 16_384 + 512 * nodes
 exact_ceilings : List(U8) -> Try(List((Str, U64)), [NotDeclared])
 exact_ceilings = |program|
 	if program == small_program {
-		Ok([("wml-write-comments", 472), ("comments-split", 105), ("docx-comments", 838), ("docx-add-comment", 2107), ("docx-reply", 2744), ("docx-resolve", 2670), ("docx-remove-comment", 2683)])
+		Ok([("wml-write-comments", 472), ("comments-split", 105), ("docx-comments", 822), ("docx-add-comment", 2091), ("docx-reply", 2744), ("docx-resolve", 2670), ("docx-remove-comment", 2683)])
 	} else if program == large_program {
-		Ok([("wml-write-comments", 7388), ("comments-split", 1485), ("docx-comments", 12_501), ("docx-add-comment", 30_363), ("docx-reply", 38_806), ("docx-resolve", 37_292), ("docx-remove-comment", 38_746)])
+		Ok([("wml-write-comments", 7388), ("comments-split", 1485), ("docx-comments", 12_245), ("docx-add-comment", 30_107), ("docx-reply", 38_806), ("docx-resolve", 37_292), ("docx-remove-comment", 38_746)])
 	} else if program == few_comments {
-		Ok([("wml-write-comments", 316), ("comments-split", 181), ("docx-comments", 557), ("docx-add-comment", 1666), ("docx-reply", 2127), ("docx-resolve", 2054), ("docx-remove-comment", 2119)])
+		Ok([("wml-write-comments", 316), ("comments-split", 181), ("docx-comments", 549), ("docx-add-comment", 1658), ("docx-reply", 2127), ("docx-resolve", 2054), ("docx-remove-comment", 2119)])
 	} else if program == many_comments {
-		Ok([("wml-write-comments", 4891), ("comments-split", 2701), ("docx-comments", 8020), ("docx-add-comment", 23_434), ("docx-reply", 29_056), ("docx-resolve", 27_452), ("docx-remove-comment", 29_071)])
+		Ok([("wml-write-comments", 4891), ("comments-split", 2701), ("docx-comments", 7892), ("docx-add-comment", 23_306), ("docx-reply", 29_056), ("docx-resolve", 27_452), ("docx-remove-comment", 29_071)])
 	} else {
 		Err(NotDeclared)
 	}

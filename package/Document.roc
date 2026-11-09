@@ -732,6 +732,12 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 	inline_text : Inline -> Str
 	inline_text = |inline| Str.from_utf8(inline_text_bytes(List.with_capacity(16), inline)) ?? ""
 
+	## An inline's text, as [Document.inline_text] gives it, appended to
+	## `text` as UTF-8, so that a text built from many inlines takes no
+	## allocation for each.
+	append_inline_text : List(U8), Inline -> List(U8)
+	append_inline_text = |text, inline| inline_text_bytes(text, inline)
+
 	## The fields of blocks in the order they begin, through containers,
 	## hyperlinks and other fields: each simple field, with its content's text
 	## as its result, and each complex field, with the code between its
@@ -1310,10 +1316,12 @@ to_results = |state, text|
 		{ open, done: state.done, begun: state.begun }
 	}
 
+# Run content's text appended as UTF-8. Text is appended byte by byte: a
+# short string is held inline, so its bytes as a list would be allocated.
 run_content_text : List(U8), Document.RunContent -> List(U8)
 run_content_text = |text, content|
 	match content {
-		Text(value) => List.concat(text, value.to_utf8())
+		Text(value) => value.iter_utf8().fold(text, |bytes, byte| List.append(bytes, byte))
 		Tab => List.append(text, 9)
 		Break(_) => List.append(text, 10)
 		Symbol({ font: _, code }) => List.concat(text, utf8(code))

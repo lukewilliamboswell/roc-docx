@@ -18,6 +18,24 @@ one, resolves a thread and removes a comment with its replies, leaving the
 text unchanged; LibreOffice reads each edited document as edited. See
 [Comments](docs/comments.adoc) in the manual.
 
+**Tracked changes.** roc-docx reads the tracked changes in a document's
+body: inserted, deleted and moved text, inserted, deleted and moved paragraph
+marks, changed formatting of text, paragraphs, sections, tables, rows and
+cells, and inserted, deleted and merged rows and cells, each with its author
+and date, and gives the text as it would read with every change accepted or
+every change rejected. It agrees with LibreOffice and pandoc on the changes
+in the documents Word, LibreOffice and pandoc write, apart from recorded
+differences. It writes every kind back schema-valid: LibreOffice reads the
+written changes it lists as the same changes, and Word for Mac opens and
+saves the written documents with every kind kept. It accepts or rejects
+every change, an author's or those made in a period, in the body, notes,
+headers, footers and comments, or chosen changes of the body, and, silently
+or as tracked changes by a named author, replaces, inserts and deletes
+text, across paragraphs too, and inserts and deletes paragraphs and tables;
+LibreOffice reads the edited documents as the package does, and Word for
+Mac's *Accept All* and *Reject All* give the same text as the package on the
+documents it was tried on. See [Tracked changes](docs/tracked-changes.adoc) in the manual.
+
 - [The manual](docs/index.adoc), for application authors and contributors:
   what the package is, how to use it, the enduring
   [architecture](docs/architecture.adoc) and how to
