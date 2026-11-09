@@ -714,7 +714,7 @@ expect {
 expect {
 	cell = |text| "<w:tc><w:p><w:r><w:t>${text}</w:t></w:r></w:p></w:tc>"
 	table = "<w:tbl><w:tr><w:commentRangeStart w:id='1'/>${cell("a")}${cell("b")}<w:commentRangeEnd w:id='1'/></w:tr></w:tbl>"
-	joined = "<w:p><w:pPr><w:rPr><w:del w:id='9'/></w:rPr></w:pPr><w:r><w:t>c</w:t></w:r></w:p><w:p><w:r><w:t>d</w:t></w:r></w:p>"
+	joined = "<w:p><w:pPr><w:rPr><w:del w:id='9' w:author='A'/></w:rPr></w:pPr><w:r><w:t>c</w:t></w:r></w:p><w:p><w:r><w:t>d</w:t></w:r></w:p>"
 	anchors_of("<w:commentRangeStart w:id='0'/>${table}<w:commentRangeEnd w:id='0'/><w:commentRangeStart w:id='2'/>${joined}", ["0", "1", "2"])
 		== [
 			{ id: 0, anchor: Range("a\nb\n") },

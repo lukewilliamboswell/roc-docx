@@ -18,8 +18,10 @@ import docx.XmlTree
 ## content, hyperlinks of each kind of target, bookmarks whose ends may come
 ## before their starts, simple and complex fields, tracked insertions holding
 ## runs, kept comment ranges whose identifiers bookmarks must avoid, nested
-## tables with row and cell properties, and sections in a paragraph's
-## properties, in a cell and at the body's end. The body is written by
+## tables with row and cell properties, sections in a paragraph's
+## properties, in a cell and at the body's end, and tracked changes of
+## paragraph marks, of paragraph, run, table, row, cell and section
+## properties and of rows and cells. The body is written by
 ## `WmlWrite.document` into a package, which `Docx.parse` must read back as
 ## exactly the blocks written; `Docx.to_bytes` must then give the same bytes
 ## twice, and bytes that read back as an equivalent document that writes the
@@ -217,7 +219,7 @@ step = |state, kind, variant, position|
 	match kind {
 		0 => end_paragraph(state)
 		1 => with_inline(state, plain([Text(pick(["plain", " leading", "trailing ", "in\tside", "", "a & b < c", "line\nend"], variant, ""))]))
-		2 => with_inline(state, run(run_properties(variant), [Text("formatted")]))
+		2 => with_inline(state, run(run_properties(variant, []), [Text("formatted")]))
 		3 => with_inline(state, plain(pick([[Tab], [Break({ kind: Line, clear: NoClear })], [Break({ kind: Page, clear: NoClear })], [Break({ kind: Column, clear: All })], [Symbol({ font: "Wingdings", code: 0xF0E0 })], [Symbol({ font: "", code: 0x41 })], [SoftHyphen, NonBreakingHyphen]], variant, [Tab])))
 		4 => {
 			target = pick([External("https://example.org/${variant.to_str()}"), ExternalAt({ url: "https://example.org/a", location: "part" }), Internal("mark${(variant % 3).to_str()}")], variant, Internal("x"))
@@ -242,18 +244,20 @@ step = |state, kind, variant, position|
 			}
 		}
 
-		8 => { ..state, properties: paragraph_properties(variant) }
+		8 => { ..state, properties: paragraph_properties(variant, []) }
 		9 => with_block(state, Table(table(variant, position)))
 		10 => with_block(end_paragraph(state), Section(section(variant)))
 		11 => with_inline(state, Revision({ kind: Insertion, author: "Ada", date: Unset, content: [plain([Text("added")])], preserved: [] }))
 		12 => with_inline(state, Preserved(node("commentRangeStart", [("id", (variant % 4).to_str())], [])))
-		_ => with_inline(state, plain([Text("x")]))
+		13 => { ..state, properties: { ..paragraph_properties(variant, [{ author: "Lin", date: Unset, preserved: [], previous: paragraph_properties(variant + 1, Unset) }]), mark: mark(variant) } }
+		14 => with_inline(state, run(run_properties(variant, [{ author: "Grace", date: Date(stamp), preserved: [], previous: run_properties(variant + 1, Unset) }]), [Text("reformatted")]))
+		_ => with_block(state, Table(tracked_table(variant)))
 	}
 
-run_properties : U64 -> Document.RunProperties
-run_properties = |variant| {
+run_properties : U64, change -> Document.RunPropertiesOf(change)
+run_properties = |variant, change| {
 	on = if (variant % 2 == 0) On else Off
-	base = Document.no_run_properties
+	base = Document.run_properties_with(change)
 	match variant % 6 {
 		0 => { ..base, bold: on, italic: On, size: HalfPoints(24) }
 		1 => { ..base, style: Style("Emphasis"), underline: Underline(Double), vertical_align: Superscript }
@@ -264,9 +268,9 @@ run_properties = |variant| {
 	}
 }
 
-paragraph_properties : U64 -> Document.ParagraphProperties
-paragraph_properties = |variant| {
-	base = Document.no_paragraph_properties
+paragraph_properties : U64, change -> Document.ParagraphPropertiesOf(change)
+paragraph_properties = |variant, change| {
+	base = Document.paragraph_properties_with(change)
 	border = |edge| { edge, line: "single", size: Eighths(4), space: Points(1), color: Rgb("FF0000") }
 	match variant % 5 {
 		0 => { ..base, style: Style("Heading1"), keep_next: On, keep_lines: Off, outline_level: Level(0) }
@@ -281,26 +285,65 @@ table : U64, U64 -> Document.Table
 table = |variant, position| {
 	text = |label| Paragraph({ properties: Document.no_paragraph_properties, content: [plain([Text(label)])] })
 	cell = |properties, content| Cell({ properties, content })
-	plain_cell = { width: Unset, span: Unset, merge: Unset, borders: [], shading: Unset, alignment: Unset, preserved: [] }
-	inner = Table({ properties: { style: Unset, width: Auto, borders: [], shading: Unset, preserved: [] }, grid: [Column(1000)], content: [Row({ properties: { header: Unset, grid_before: Unset, grid_after: Unset, preserved: [] }, content: [cell(plain_cell, [text("inner")])] })] })
+	plain_cell = { width: Unset, span: Unset, merge: Unset, borders: [], shading: Unset, alignment: Unset, preserved: [], revision: Unset, change: [] }
+	inner = Table({ properties: { style: Unset, width: Auto, borders: [], shading: Unset, preserved: [], change: [] }, grid: [Column(1000)], content: [Row({ properties: plain_row([]), content: [cell(plain_cell, [text("inner")])] })] })
 	nested = if (variant % 2 == 0) [inner, text("after")] else [text("c${position.to_str()}")]
 	first = cell({ ..plain_cell, width: Twips(2000), merge: Restart, alignment: Center, shading: Shading({ pattern: "pct25", color: Unset, fill: Auto }) }, nested)
 	second = cell({ ..plain_cell, width: Fiftieths(2500), span: Columns(2), borders: [{ edge: Top, line: "double", size: Unset, space: Unset, color: Unset }, { edge: DiagonalDown, line: "nil", size: Unset, space: Unset, color: Unset }] }, [text("b"), Section(section(variant))])
 	below = cell({ ..plain_cell, merge: Continue, width: Nil }, [text("")])
 	rows = [
-		Row({ properties: { header: On, grid_before: Unset, grid_after: Columns(1), preserved: [] }, content: [first, second] }),
-		Row({ properties: { header: Off, grid_before: Columns(1), grid_after: Unset, preserved: [] }, content: [below] }),
+		Row({ properties: { ..plain_row([]), header: On, grid_after: Columns(1) }, content: [first, second] }),
+		Row({ properties: { ..plain_row([]), header: Off, grid_before: Columns(1) }, content: [below] }),
 	]
-	{ properties: { style: Style("Grid"), width: Fiftieths(5000), borders: [{ edge: Top, line: "single", size: Eighths(8), space: Points(0), color: Auto }, { edge: InsideVertical, line: "nil", size: Unset, space: Unset, color: Unset }], shading: Unset, preserved: [] }, grid: [Column(2000), Column(1000), Column(1500)], content: rows }
+	{ properties: { style: Style("Grid"), width: Fiftieths(5000), borders: [{ edge: Top, line: "single", size: Eighths(8), space: Points(0), color: Auto }, { edge: InsideVertical, line: "nil", size: Unset, space: Unset, color: Unset }], shading: Unset, preserved: [], change: [] }, grid: [Column(2000), Column(1000), Column(1500)], content: rows }
 }
 
 section : U64 -> Document.Section
-section = |variant|
+section = |variant| section_of(variant, if (variant % 3 == 2) [{ author: "Ada", date: Date(stamp), preserved: [], previous: section_of(0, Unset) }] else [])
+
+section_of : U64, change -> Document.SectionOf(change)
+section_of = |variant, change|
 	match variant % 3 {
-		0 => { start: NextPage, page_size: Size({ width: 11906, height: 16838, orientation: Portrait }), margins: Margins({ top: 1440, right: 1440, bottom: 1440, left: 1800, header: 708, footer: 708, gutter: 0 }), columns: Equal({ count: 1, space: 720, separator: NoLine }), page_numbers: Unset, title_page: Unset, headers: [], footers: [], preserved: [] }
-		1 => { start: Continuous, page_size: Size({ width: 16838, height: 11906, orientation: Landscape }), margins: Margins({ top: -720, right: 720, bottom: 720, left: 720, header: 360, footer: 360, gutter: 100 }), columns: Equal({ count: 2, space: 360, separator: Line }), page_numbers: PageNumbers({ format: Format("lowerRoman"), start: Start(3) }), title_page: On, headers: [], footers: [], preserved: [] }
-		_ => { start: Unset, page_size: Unset, margins: Unset, columns: Unequal({ widths: [{ width: 4000, space: 500 }, { width: 5000, space: 0 }], separator: NoLine }), page_numbers: PageNumbers({ format: Unset, start: Unset }), title_page: Off, headers: [], footers: [], preserved: [] }
+		0 => { start: NextPage, page_size: Size({ width: 11906, height: 16838, orientation: Portrait }), margins: Margins({ top: 1440, right: 1440, bottom: 1440, left: 1800, header: 708, footer: 708, gutter: 0 }), columns: Equal({ count: 1, space: 720, separator: NoLine }), page_numbers: Unset, title_page: Unset, headers: [], footers: [], preserved: [], change }
+		1 => { start: Continuous, page_size: Size({ width: 16838, height: 11906, orientation: Landscape }), margins: Margins({ top: -720, right: 720, bottom: 720, left: 720, header: 360, footer: 360, gutter: 100 }), columns: Equal({ count: 2, space: 360, separator: Line }), page_numbers: PageNumbers({ format: Format("lowerRoman"), start: Start(3) }), title_page: On, headers: [], footers: [], preserved: [], change }
+		_ => { start: Unset, page_size: Unset, margins: Unset, columns: Unequal({ widths: [{ width: 4000, space: 500 }, { width: 5000, space: 0 }], separator: NoLine }), page_numbers: PageNumbers({ format: Unset, start: Unset }), title_page: Off, headers: [], footers: [], preserved: [], change }
 	}
+
+plain_row : change -> Document.RowPropertiesOf(change)
+plain_row = |change| { header: Unset, grid_before: Unset, grid_after: Unset, preserved: [], inserted: Unset, deleted: Unset, change }
+
+stamp : Document.Timestamp
+stamp = { written: "2026-05-07T09:00:00Z", utc_seconds: 1778144400 }
+
+# A paragraph mark's changes: inserted, deleted, both, or moved away or here.
+mark : U64 -> List(Document.MarkChange)
+mark = |variant| {
+	by = |kind| { kind, author: "Ada", date: Date(stamp), preserved: [] }
+	match variant % 4 {
+		0 => [by(Insertion)]
+		1 => [by(Deletion)]
+		2 => [by(Insertion), by(Deletion)]
+		_ => [by(MoveSource), by(MoveDestination)]
+	}
+}
+
+# A table whose properties, row and cell changed, its row inserted, deleted
+# or both and its cell inserted, deleted, merged or none of these.
+tracked_table : U64 -> Document.Table
+tracked_table = |variant| {
+	by = { author: "Ada", date: Unset, preserved: [] }
+	plain_cell = |change| { width: Unset, span: Unset, merge: Unset, borders: [], shading: Unset, alignment: Unset, preserved: [], revision: Unset, change }
+	plain_table = |change| { style: Unset, width: Unset, borders: [], shading: Unset, preserved: [], change }
+	revision = pick([Inserted(by), Deleted(by), Merged({ author: "Ada", date: Unset, preserved: [], merge: Continue, previous: Restart }), Unset], variant, Unset)
+	cell = Cell({ properties: { ..plain_cell([{ author: "Lin", date: Unset, preserved: [], previous: { ..plain_cell(Unset), width: Twips(1000) } }]), revision }, content: [Paragraph({ properties: Document.no_paragraph_properties, content: [plain([Text("tracked")])] })] })
+	row_properties = {
+		..plain_row([{ author: "Lin", date: Unset, preserved: [], previous: { ..plain_row(Unset), header: On } }]),
+		inserted: if (variant % 2 == 0) Tracked(by) else Unset,
+		deleted: if (variant % 3 == 0) Tracked(by) else Unset,
+	}
+	properties = plain_table([{ author: "Lin", date: Date(stamp), preserved: [], previous: { ..plain_table(Unset), style: Style("Grid") } }])
+	{ properties, grid: [Column(1000)], content: [Row({ properties: row_properties, content: [cell] })] }
+}
 
 target = Fuzz.target_with!({
 	name: "document-roundtrip",

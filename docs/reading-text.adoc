@@ -21,7 +21,8 @@ The text is the current text, the document with its tracked changes as
 they stand: inserted text and text moved in are included, deleted text and
 text moved away are not. A paragraph whose mark was deleted, or moved away,
 runs on into the next paragraph without a line feed, as it does when the
-change is accepted, but never into or out of a table cell. Field
+change is accepted, but never into or out of a table cell. A deleted table
+row or cell is still there, empty of the text deleted from it. Field
 instructions, note and comment references and drawings contribute nothing;
 a field contributes the result it last displayed. Inside a run:
 

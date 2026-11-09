@@ -67,7 +67,13 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 	## A property element the model does not hold, or one whose attributes it
 	## cannot represent (a theme colour on a border, spacing in lines), is kept
 	## in `preserved` as it was read, in order, and so is a repeated element.
-	ParagraphProperties : {
+	##
+	## Under tracking, `mark` holds the tracked changes of the paragraph's
+	## mark, which ends it, and `change` a tracked change of these properties
+	## with the properties as they were before it. The paragraph mark's own
+	## character properties are kept in `preserved`, a change of them with
+	## them.
+	ParagraphPropertiesOf(change) : {
 		style : [Unset, Style(Str)],
 		alignment : [Unset, Aligned(Alignment)],
 		indentation : Indentation,
@@ -82,11 +88,49 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 		tabs : [Unset, Tabs(List(TabStop))],
 		numbering : Numbering,
 		preserved : List(XmlTree.Node),
+		mark : List(MarkChange),
+		change : change,
 	}
+
+	## A paragraph's properties as they stand. `change` holds the tracked
+	## change of them, if there is one, with the properties as they were
+	## before it. The properties before a change are read as the properties
+	## they replace are, but hold no tracked changes of their own: what the
+	## schema does not allow there, such as a paragraph mark's changes, is
+	## kept in their `preserved`, and the changes they hold are not written.
+	ParagraphProperties : ParagraphPropertiesOf(List(PropertyChange(ParagraphPropertiesOf([Unset]))))
+
+	## A tracked change of a paragraph's mark: the mark was inserted, deleted,
+	## moved away from here or moved here, by whom and when, as
+	## [Document.Change] holds it. A paragraph whose mark is deleted or moved
+	## away runs on into the next once the change is accepted, and one whose
+	## mark is inserted or moved here once it is rejected. A paragraph's mark
+	## has at most one change of each kind, read and written in the order
+	## inserted, deleted, moved away, moved here.
+	MarkChange : { kind : RevisionKind, author : Str, date : [Unset, Date(Timestamp)], preserved : List(XmlTree.Attribute) }
+
+	## A tracked change of structure, such as a table's row or a cell, made or
+	## not.
+	Tracked : [Unset, Tracked(Change)]
+
+	## Who made a tracked change and when, as [Document.Timestamp] holds a
+	## date. Every attribute the model does not hold, and a date that is not
+	## a date and time, is kept in `preserved` as it was read.
+	Change : { author : Str, date : [Unset, Date(Timestamp)], preserved : List(XmlTree.Attribute) }
+
+	## A tracked change of properties: who changed them and when, as
+	## [Document.Change] holds it, and the properties as they were before.
+	PropertyChange(properties) : { author : Str, date : [Unset, Date(Timestamp)], preserved : List(XmlTree.Attribute), previous : properties }
 
 	## A paragraph's properties when nothing is stated.
 	no_paragraph_properties : ParagraphProperties
-	no_paragraph_properties = {
+	no_paragraph_properties = Document.paragraph_properties_with([])
+
+	## A paragraph's properties when nothing is stated but `change`: no
+	## change, `[]`, for properties that stand, or `Unset` for the properties
+	## before a change.
+	paragraph_properties_with : change -> ParagraphPropertiesOf(change)
+	paragraph_properties_with = |change| {
 		style: Unset,
 		alignment: Unset,
 		indentation: { left: Unset, right: Unset, first_line: Unset },
@@ -101,6 +145,8 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 		tabs: Unset,
 		numbering: { instance: Unset, level: Unset },
 		preserved: [],
+		mark: [],
+		change,
 	}
 
 	## A property that is on or off, or `Unset` where nothing is stated.
@@ -220,8 +266,9 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 	## A property element the model does not hold, or one whose attributes it
 	## cannot represent (an underline with its own colour, a font hint), is
 	## kept in `preserved` as it was read, in order, and so is a repeated
-	## element.
-	RunProperties : {
+	## element. Under tracking, `change` is a tracked change of these
+	## properties with the properties as they were before it.
+	RunPropertiesOf(change) : {
 		style : [Unset, Style(Str)],
 		bold : OnOff,
 		italic : OnOff,
@@ -238,11 +285,21 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 		fonts : Fonts,
 		language : Language,
 		preserved : List(XmlTree.Node),
+		change : change,
 	}
+
+	## A run's properties as they stand, with the tracked change of them, if
+	## there is one, as [Document.ParagraphProperties] holds a paragraph's.
+	RunProperties : RunPropertiesOf(List(PropertyChange(RunPropertiesOf([Unset]))))
 
 	## A run's properties when nothing is stated.
 	no_run_properties : RunProperties
-	no_run_properties = {
+	no_run_properties = Document.run_properties_with([])
+
+	## A run's properties when nothing is stated but `change`, as
+	## [Document.paragraph_properties_with] gives a paragraph's.
+	run_properties_with : change -> RunPropertiesOf(change)
+	run_properties_with = |change| {
 		style: Unset,
 		bold: Unset,
 		italic: Unset,
@@ -259,6 +316,7 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 		fonts: { ascii: Unset, high_ansi: Unset, east_asia: Unset, complex: Unset, ascii_theme: Unset, high_ansi_theme: Unset, east_asia_theme: Unset, complex_theme: Unset },
 		language: { latin: Unset, east_asia: Unset, complex: Unset },
 		preserved: [],
+		change,
 	}
 
 	## An underline's line, as the schema names it; `NoUnderline` removes one
@@ -344,12 +402,19 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 	## contributes: the identifier of its table style in the document's
 	## styles, its preferred width, its borders and its shading. Every other
 	## property element is kept as it was read, in order, and so is a
-	## property element whose attributes the model cannot hold.
-	TableProperties : { style : [Unset, Style(Str)], width : Width, borders : List(Border), shading : Shading, preserved : List(XmlTree.Node) }
+	## property element whose attributes the model cannot hold. Under
+	## tracking, `change` is a tracked change of these properties with the
+	## properties as they were before it.
+	TablePropertiesOf(change) : { style : [Unset, Style(Str)], width : Width, borders : List(Border), shading : Shading, preserved : List(XmlTree.Node), change : change }
+
+	## A table's properties as they stand, with the tracked change of them, if
+	## there is one, as [Document.ParagraphProperties] holds a paragraph's.
+	TableProperties : TablePropertiesOf(List(PropertyChange(TablePropertiesOf([Unset]))))
 
 	## A column of a table's grid, its width in twips; any other element of
-	## the grid, such as a column without a width or a revision of the grid,
-	## is kept in its place as it was read.
+	## the grid, such as a column without a width or the grid as it was
+	## before a tracked change, which names no author, is kept in its place
+	## as it was read.
 	GridColumn : [Column(U64), Preserved(XmlTree.Node)]
 
 	## A table's content, in order: a row; the start or end of a comment's
@@ -376,7 +441,23 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 	## each page the table spans, and how many grid columns come before its
 	## first cell and after its last. Every other property element is kept as
 	## it was read, in order.
-	RowProperties : { header : [Unset, On, Off], grid_before : [Unset, Columns(U64)], grid_after : [Unset, Columns(U64)], preserved : List(XmlTree.Node) }
+	##
+	## Under tracking, `inserted` and `deleted` say whether the row was
+	## inserted or deleted, and `change` is a tracked change of these
+	## properties with the properties as they were before it.
+	RowPropertiesOf(change) : {
+		header : [Unset, On, Off],
+		grid_before : [Unset, Columns(U64)],
+		grid_after : [Unset, Columns(U64)],
+		preserved : List(XmlTree.Node),
+		inserted : Tracked,
+		deleted : Tracked,
+		change : change,
+	}
+
+	## A row's properties as they stand, with the tracked change of them, if
+	## there is one, as [Document.ParagraphProperties] holds a paragraph's.
+	RowProperties : RowPropertiesOf(List(PropertyChange(RowPropertiesOf([Unset]))))
 
 	## A row's content, in order: a cell; the start or end of a comment's
 	## range between cells; an element the model does not represent whose
@@ -405,7 +486,12 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 	## content. Every other property element is kept as it was read, in
 	## order, and so is a property element whose attributes the model cannot
 	## hold.
-	CellProperties : {
+	##
+	## Under tracking, `revision` says whether the cell was inserted, deleted
+	## or merged with the cell above, a merge with the vertical merge it
+	## made and the one it replaced, and `change` is a tracked change of
+	## these properties with the properties as they were before it.
+	CellPropertiesOf(change) : {
 		width : Width,
 		span : [Unset, Columns(U64)],
 		merge : [Unset, Restart, Continue],
@@ -413,7 +499,20 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 		shading : Shading,
 		alignment : [Unset, Top, Center, Bottom, Both],
 		preserved : List(XmlTree.Node),
+		revision : [Unset, Inserted(Change), Deleted(Change), Merged(CellMerge)],
+		change : change,
 	}
+
+	## A cell's properties as they stand, with the tracked change of them, if
+	## there is one, as [Document.ParagraphProperties] holds a paragraph's.
+	CellProperties : CellPropertiesOf(List(PropertyChange(CellPropertiesOf([Unset]))))
+
+	## A tracked merge of a cell with the cell above, by whom and when as
+	## [Document.Change] holds it: the vertical merge the cell has with it,
+	## `merge`, and the one it had before, `previous`, each continuing the
+	## merge above or restarting it, or `Unset` where the document does not
+	## say.
+	CellMerge : { author : Str, date : [Unset, Date(Timestamp)], preserved : List(XmlTree.Attribute), merge : [Unset, Restart, Continue], previous : [Unset, Restart, Continue] }
 
 	## A preferred width: automatic, zero, in twips, or a share of the
 	## available width in fiftieths of a per cent.
@@ -509,8 +608,10 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 	## first page starts from; whether its first page has its own header and
 	## footer; and its headers and footers. Every other property element is
 	## kept as it was read, in order, and so is a property element whose
-	## attributes the model cannot hold.
-	Section : {
+	## attributes the model cannot hold. Under tracking, `change` is a
+	## tracked change of these properties with the properties as they were
+	## before it.
+	SectionOf(change) : {
 		start : [Unset, NextPage, Continuous, EvenPage, OddPage, NextColumn],
 		page_size : [Unset, Size({ width : U64, height : U64, orientation : [Portrait, Landscape] })],
 		margins : [Unset, Margins({ top : I64, right : U64, bottom : I64, left : U64, header : U64, footer : U64, gutter : U64 })],
@@ -520,7 +621,12 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 		headers : List(HeaderFooter),
 		footers : List(HeaderFooter),
 		preserved : List(XmlTree.Node),
+		change : change,
 	}
+
+	## A section's properties as they stand, with the tracked change of them, if
+	## there is one, as [Document.ParagraphProperties] holds a paragraph's.
+	Section : SectionOf(List(PropertyChange(SectionOf([Unset]))))
 
 	## A section's header or footer: which pages it is for, every page, the
 	## section's first page or even pages, and the part holding its content,
@@ -675,14 +781,7 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 	## Whether a paragraph's mark is deleted or moved away under tracking, so
 	## that in the current text the paragraph runs on into the next one.
 	joins_next : Paragraph -> Bool
-	joins_next = |paragraph|
-		paragraph.properties.preserved.any(
-			|property|
-				match property {
-					Element(element) if is_w_in(element.name, ["rPr"]) => element.children.any(is_removal)
-					_ => Bool.False
-				},
-		)
+	joins_next = |paragraph| paragraph.properties.mark.any(|change| change.kind == Deletion or change.kind == MoveSource)
 
 	## The tree of the main document part, the target of the package's
 	## `officeDocument` relationship, as reading left it: without the body's
@@ -1026,17 +1125,6 @@ cells_of = |cells, content|
 		CommentEnd(_) => cells
 		Preserved(_) => cells
 	}
-
-# Whether an element marks content deleted or moved away under tracking.
-is_removal : XmlTree.Node -> Bool
-is_removal = |node|
-	match node {
-		Element(element) => is_w_in(element.name, ["del", "moveFrom"])
-		Text(_) => Bool.False
-	}
-
-is_w_in : XmlTree.Name, List(Str) -> Bool
-is_w_in = |name, locals| name.namespace == Uri(wordprocessingml) and locals.contains(name.local)
 
 # A field code's words and quoted arguments, in order.
 field_tokens : Str -> List({ text : Str, quoted : Bool })

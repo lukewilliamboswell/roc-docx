@@ -428,8 +428,8 @@ comment = |variant, place, parent| {
 		Ok(found) => Date(found)
 		Err(_) => Unset
 	}
-	cell = Cell({ properties: { width: Unset, span: Unset, merge: Unset, borders: [], shading: Unset, alignment: Unset, preserved: [] }, content: [paragraph([text("in a cell")])] })
-	table = Table({ properties: { style: Unset, width: Unset, borders: [], shading: Unset, preserved: [] }, grid: [Column(2000)], content: [Row({ properties: { header: Unset, grid_before: Unset, grid_after: Unset, preserved: [] }, content: [cell] })] })
+	cell = Cell({ properties: { width: Unset, span: Unset, merge: Unset, borders: [], shading: Unset, alignment: Unset, preserved: [], revision: Unset, change: [] }, content: [paragraph([text("in a cell")])] })
+	table = Table({ properties: { style: Unset, width: Unset, borders: [], shading: Unset, preserved: [], change: [] }, grid: [Column(2000)], content: [Row({ properties: { header: Unset, grid_before: Unset, grid_after: Unset, preserved: [], inserted: Unset, deleted: Unset, change: [] }, content: [cell] })] })
 	name = "note${place.to_str()}"
 	content = pick(
 		[

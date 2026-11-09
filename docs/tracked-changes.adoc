@@ -1,8 +1,10 @@
 = Read a document's tracked changes
 
 This chapter reads the changes a document records under tracking: what was
-inserted, deleted or moved, by whom and when, and the document's text with
-every change accepted or every change rejected. It continues from
+inserted, deleted or moved, which paragraph marks, table rows and cells were
+added or removed, which properties changed, by whom and when; the
+document's text with every change accepted or every change rejected; and
+whether the document tracks changes at all. It continues from
 <<read-a-documents-text>>, whose blocks and current text it builds on.
 
 == The text before and after review
@@ -22,18 +24,23 @@ by a line feed, and differ in what the changes leave:
 
 * In the final text, inserted text and text moved in are included, and
   deleted text and text moved away are not. A paragraph whose mark was
-  deleted or moved away runs on into the next paragraph.
+  deleted or moved away runs on into the next paragraph, and deleted table
+  rows and cells are left out.
 * In the original text, deleted text and text moved away are included, and
   inserted text and text moved in are not. A paragraph whose mark was
-  inserted or moved in runs on into the next paragraph.
+  inserted or moved in runs on into the next paragraph, and inserted table
+  rows and cells are left out.
 
 A paragraph never runs on into or out of a table cell. A deleted field
 contributes the result it last displayed, as any field does; its deleted
 instructions contribute nothing.
 
 `Docx.text` is the current text, as LibreOffice and pandoc show a document
-with its changes as they stand. For the changes the package reads it is the
-final text.
+with its changes as they stand. It is the final text except that a deleted
+row or cell is still there, without the text deleted from it.
+
+`Revisions.text` gives the same three texts of any blocks, such as a table
+cell's, with `Current`, `Final` or `Original`.
 
 == The changes
 
@@ -44,11 +51,12 @@ including those in tables, content controls, hyperlinks and fields:
 ----
 summaries = Docx.revisions(document).map(
     |change|
-        match change.kind {
-            Insertion => "${change.author} inserted ${change.text}"
-            Deletion => "${change.author} deleted ${change.text}"
-            MoveSource => "${change.author} moved ${change.text} away"
-            MoveDestination => "${change.author} moved ${change.text} here"
+        match (change.kind, change.of) {
+            (Insertion, Content) => "${change.author} inserted ${change.text}"
+            (Deletion, Content) => "${change.author} deleted ${change.text}"
+            (Insertion, Row) => "${change.author} inserted a row"
+            (Formatting, Run) => "${change.author} formatted ${change.text}"
+            _ => "${change.author} changed the document"
         },
 )
 ----
@@ -59,21 +67,35 @@ Each entry is a `Revisions.Listed` record:
   identifies it; the document's own numbers for its changes are not part of
   the model;
 * `kind`: `Insertion`, `Deletion`, `MoveSource` for content moved away from
-  here, or `MoveDestination` for the same content arriving elsewhere;
+  here, `MoveDestination` for the same content arriving elsewhere, `Merge`
+  for a cell merged with the cell above, or `Formatting` for a change of
+  properties;
+* `of`, what changed: `Content` of a paragraph, a `ParagraphMark`, a `Row`
+  or `Cell` of a table, or, for `Formatting`, the properties of a `Run`,
+  `Paragraph`, `Section`, `Table`, `Row` or `Cell`;
 * `author`, the name of the person who made the change;
 * `date`, `Date(timestamp)` or `Unset`, a `Document.Timestamp` as a
   comment's date is, so `utc_seconds` gives the instant whatever zone the
   document wrote;
-* `content`, the inlines the change covers;
+* `content`, the inlines the change covers: a content change's, the run a
+  run's formatting changed, or the content of a paragraph whose formatting
+  changed; the other changes cover none;
 * `move`, `Move(name)` for a move's source or destination that stands
   inside a range of its side, naming the move, or `Unpaired`;
 * `text`, the content's text, with the changes inside it shown, so a
-  deletion's text is the text it deleted;
+  deletion's text is the text it deleted; a paragraph mark's change has a
+  line feed, the text a paragraph ends with, and a change of a section, table,
+  row or cell none;
 * `follows`, whether the change comes directly after the one listed before
-  it, nothing between them, as one change split in two does.
+  it, nothing between them, as one change split in two does, or a change
+  that runs on over a paragraph's mark into the next paragraph.
 
 A change inside another, such as an insertion made inside text that was
-later moved, is listed after the change that holds it.
+later moved, is listed after the change that holds it. A paragraph's
+formatting is listed before the changes of its content and its mark's
+changes after them; a table's formatting before its rows, a row's insertion,
+deletion and formatting before its cells, and a cell's insertion, deletion or
+merge and its formatting before its content.
 
 == Changes in the model
 
@@ -96,9 +118,46 @@ author, and its deleted text stays `Preserved`. A move's range without a
 name or author, or whose end names no range that started, is kept as
 `Preserved`.
 
-A change to a paragraph's mark stays in the paragraph's `preserved`
-properties, where the texts above find it, and is not listed. Changes to
-properties and to table rows and cells are not read yet. They stay where
-they were read, in the `preserved` properties of their paragraph, run,
-table, row, cell or section, and a document is written back with them
-unchanged.
+A paragraph's mark, which ends it, is the subject of its own changes, held
+in its properties as `mark`: a list of `{ kind, author, date, preserved }`,
+at most one of each kind, in the order inserted, deleted, moved away, moved
+here.
+The mark's own character properties, and a change of them, stay in the
+paragraph's `preserved` properties.
+
+A table row's properties hold `inserted` and `deleted`, each
+`Tracked({ author, date, preserved })` or `Unset`, and a
+cell's properties hold `revision`: `Inserted`, `Deleted`, or `Merged` with
+the vertical merge the change made and the one it replaced.
+
+A change of properties is part of the properties it changed. The
+properties of a paragraph, run, table, row, cell and section each have a
+`change`, a list holding the change, `{ author, date, preserved, previous }`,
+when there is one, where `previous` holds the properties as they were
+before it. The properties before a change have no changes of their own:
+their `change` is `Unset`, reading leaves their `mark` empty and keeps what
+the schema does not allow there, such as a section's headers, in their
+`preserved`, and writing does not write them.
+
+A table's grid as it was before a change, which names no author, and a
+row's table property exceptions with their changes are kept as they were
+read, in the grid and the row, and written back unchanged.
+
+When a document is written, each change takes an identifier from the space
+the document's comments and bookmarks share, in the order it is written.
+
+== Whether a document tracks changes
+
+`Docx.tracks_revisions` says whether the document asks its editor to record
+edits as tracked changes, as Word's Track Changes setting does:
+
+[source,roc]
+----
+if Docx.tracks_revisions(document) {
+    "Edits to this document are tracked"
+} else {
+    "Edits to this document are not tracked"
+}
+----
+
+A document without settings does not track changes.

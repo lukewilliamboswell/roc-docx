@@ -72,6 +72,12 @@ WmlRead :: [].{
 	## element that gives it in a form the model can hold; every other
 	## property element stays in `preserved`, in order.
 	##
+	## Under tracking, a row's `w:ins` and `w:del` are its insertion and
+	## deletion, a cell's `w:cellIns`, `w:cellDel` and `w:cellMerge` its
+	## insertion, deletion or merge, and a `w:tblPrChange`, `w:trPrChange`,
+	## `w:tcPrChange` or `w:sectPrChange` a change of the properties that hold
+	## it, as [WmlRead.paragraph_properties] reads a paragraph's.
+	##
 	## A `w:sectPr` in the body, or in a paragraph's `w:pPr`, ends a section:
 	## it is a section block, after the paragraph whose mark ends the
 	## section, and a `w:headerReference` or `w:footerReference` names the
@@ -286,6 +292,22 @@ WmlRead :: [].{
 				},
 		)
 
+	## Whether a settings part's tree says that changes are tracked: its
+	## first `w:trackRevisions` is on, in any spelling the schema allows. A
+	## tree whose root is not WordprocessingML settings, or that has none, or
+	## whose value is not one the schema allows, does not.
+	tracks_revisions : XmlTree.Node -> Bool
+	tracks_revisions = |tree|
+		match tree {
+			Element(root) if is_w(root.name, "settings") =>
+				match root.children.find_first(|child| is_element(child, "trackRevisions")) {
+					Ok(Element(element)) => on_off(element) == Ok(On)
+					_ => Bool.False
+				}
+
+			_ => Bool.False
+		}
+
 	## Something the reader accepted that the schema does not allow: a number
 	## the schema wants whole written with a fraction, such as the width
 	## `w:w="10470.0"` that Google Docs exports write, or a percentage finer
@@ -314,64 +336,22 @@ WmlRead :: [].{
 	## kept in `preserved` as they were read, in order. On and off values
 	## take every spelling the schema allows (`true`, `1`, `on` and their
 	## opposites, and no value for on).
+	##
+	## Under tracking, the `w:ins`, `w:del`, `w:moveFrom` and `w:moveTo` of
+	## the first `w:rPr`, the paragraph mark's character properties, are the
+	## mark's changes, its other children staying in a `w:rPr` kept in
+	## `preserved`, and `w:pPrChange` is a change of the properties, the
+	## properties it holds read as these are. A change without the author the
+	## schema requires is kept as it was read.
 	paragraph_properties : List(XmlTree.Node) -> Document.ParagraphProperties
-	paragraph_properties = |nodes| {
-		var $properties = Document.no_paragraph_properties
-		var $taken = List.with_capacity(8)
-		for node in nodes {
-			match node {
-				Element(element) if element.name.namespace == Uri(wordprocessingml) and !$taken.contains(element.name.local) =>
-					match paragraph_property($properties, element) {
-						Ok(next) => {
-							$properties = next
-							$taken = List.append($taken, element.name.local)
-						}
-
-						Err(CannotHold) => {
-							$properties = { ..$properties, preserved: List.append($properties.preserved, node) }
-						}
-					}
-
-				_ => {
-					if is_content(node) {
-						$properties = { ..$properties, preserved: List.append($properties.preserved, node) }
-					}
-				}
-			}
-		}
-		$properties
-	}
+	paragraph_properties = |nodes| paragraph_properties_from(nodes, Document.no_paragraph_properties, tracked_paragraph)
 
 	## A run's properties from the children of its `w:rPr`, or of a style's
 	## or the document defaults' `w:rPr`, read as
-	## [WmlRead.paragraph_properties] reads a paragraph's.
+	## [WmlRead.paragraph_properties] reads a paragraph's; `w:rPrChange` is a
+	## change of the properties.
 	run_properties : List(XmlTree.Node) -> Document.RunProperties
-	run_properties = |nodes| {
-		var $properties = Document.no_run_properties
-		var $taken = List.with_capacity(8)
-		for node in nodes {
-			match node {
-				Element(element) if element.name.namespace == Uri(wordprocessingml) and !$taken.contains(element.name.local) =>
-					match run_property($properties, element) {
-						Ok(next) => {
-							$properties = next
-							$taken = List.append($taken, element.name.local)
-						}
-
-						Err(CannotHold) => {
-							$properties = { ..$properties, preserved: List.append($properties.preserved, node) }
-						}
-					}
-
-				_ => {
-					if is_content(node) {
-						$properties = { ..$properties, preserved: List.append($properties.preserved, node) }
-					}
-				}
-			}
-		}
-		$properties
-	}
+	run_properties = |nodes| run_properties_from(nodes, Document.no_run_properties, tracked_run)
 
 	## The alignment a paragraph's `w:jc` or a list level's `w:lvlJc` names,
 	## as the schema spells it.
@@ -638,9 +618,215 @@ days_from_civil = |year, month, day| {
 	era * 146097 + of_era * 365 + of_era // 4 - of_era // 100 + of_year - 719468
 }
 
+# How a reader of properties reads a tracked change among them: given the
+# properties read so far, an element and the local names of the property
+# elements already read, the properties with the element read into them, or
+# `NotTracking` when the element is not a change it reads. The properties a
+# change replaced are read with `untracked`, as they have no changes of their
+# own.
+Tracking(p) : p, Element, List(Str) -> Try(p, [NotTracking])
+
+untracked : Tracking(p)
+untracked = |_, _, _| Err(NotTracking)
+
+paragraph_properties_from : List(XmlTree.Node), Document.ParagraphPropertiesOf(c), Tracking(Document.ParagraphPropertiesOf(c)) -> Document.ParagraphPropertiesOf(c)
+paragraph_properties_from = |nodes, start, tracking| {
+	var $properties = start
+	var $taken = List.with_capacity(8)
+	for node in nodes {
+		tracked = match node {
+			Element(element) => tracking($properties, element, $taken)
+			Text(_) => Err(NotTracking)
+		}
+		match (tracked, node) {
+			(Ok(next), Element(element)) => {
+				$properties = next
+				$taken = List.append($taken, element.name.local)
+			}
+
+			(_, Element(element)) if element.name.namespace == Uri(wordprocessingml) and !$taken.contains(element.name.local) =>
+				match paragraph_property($properties, element) {
+					Ok(next) => {
+						$properties = next
+						$taken = List.append($taken, element.name.local)
+					}
+
+					Err(CannotHold) => {
+						$properties = { ..$properties, preserved: List.append($properties.preserved, node) }
+					}
+				}
+
+			_ => {
+				if is_content(node) {
+					$properties = { ..$properties, preserved: List.append($properties.preserved, node) }
+				}
+			}
+		}
+	}
+	$properties
+}
+
+# A paragraph mark's changes in the first `w:rPr`, and the first
+# `w:pPrChange`.
+tracked_paragraph : Tracking(Document.ParagraphProperties)
+tracked_paragraph = |properties, element, taken|
+	if element.name.local == "rPr" and !taken.contains("rPr") and element.children.any(
+		|child| match child {
+			Element(change) => mark_kind(change.name.local).is_ok()
+			Text(_) => Bool.False
+		},
+	) and is_w(element.name, "rPr") {
+		read = mark_of(element)
+		Ok({ ..properties, mark: read.mark, preserved: List.concat(properties.preserved, read.rest) })
+	} else if element.name.local == "pPrChange" and !taken.contains("pPrChange") and is_w(element.name, "pPrChange") {
+		match property_change(element, "pPr") {
+			Ok({ change, previous }) => Ok({ ..properties, change: [{ author: change.author, date: change.date, preserved: change.preserved, previous: paragraph_properties_from(previous, Document.paragraph_properties_with(Unset), untracked) }] })
+			Err(CannotHold) => Ok({ ..properties, preserved: List.append(properties.preserved, Element(element)) })
+		}
+	} else {
+		Err(NotTracking)
+	}
+
+run_properties_from : List(XmlTree.Node), Document.RunPropertiesOf(c), Tracking(Document.RunPropertiesOf(c)) -> Document.RunPropertiesOf(c)
+run_properties_from = |nodes, start, tracking| {
+	var $properties = start
+	var $taken = List.with_capacity(8)
+	for node in nodes {
+		tracked = match node {
+			Element(element) => tracking($properties, element, $taken)
+			Text(_) => Err(NotTracking)
+		}
+		match (tracked, node) {
+			(Ok(next), Element(element)) => {
+				$properties = next
+				$taken = List.append($taken, element.name.local)
+			}
+
+			(_, Element(element)) if element.name.namespace == Uri(wordprocessingml) and !$taken.contains(element.name.local) =>
+				match run_property($properties, element) {
+					Ok(next) => {
+						$properties = next
+						$taken = List.append($taken, element.name.local)
+					}
+
+					Err(CannotHold) => {
+						$properties = { ..$properties, preserved: List.append($properties.preserved, node) }
+					}
+				}
+
+			_ => {
+				if is_content(node) {
+					$properties = { ..$properties, preserved: List.append($properties.preserved, node) }
+				}
+			}
+		}
+	}
+	$properties
+}
+
+# The first `w:rPrChange`.
+tracked_run : Tracking(Document.RunProperties)
+tracked_run = |properties, element, taken|
+	if element.name.local == "rPrChange" and !taken.contains("rPrChange") and is_w(element.name, "rPrChange") {
+		match property_change(element, "rPr") {
+			Ok({ change, previous }) => Ok({ ..properties, change: [{ author: change.author, date: change.date, preserved: change.preserved, previous: run_properties_from(previous, Document.run_properties_with(Unset), untracked) }] })
+			Err(CannotHold) => Ok({ ..properties, preserved: List.append(properties.preserved, Element(element)) })
+		}
+	} else {
+		Err(NotTracking)
+	}
+
+# A paragraph mark's character properties: the first change of each kind
+# that names its author and holds nothing is the mark's, and what is left,
+# unless nothing is, stays a `w:rPr` of its own.
+mark_of : Element -> { mark : List(Document.MarkChange), rest : List(XmlTree.Node) }
+mark_of = |element| {
+	var $mark = List.with_capacity(0)
+	var $rest = List.with_capacity(element.children.len())
+	for child in element.children {
+		read = match child {
+			Element(change) if kept(change.children).is_empty() =>
+				match (mark_kind(change.name.local), change_of(change)) {
+					(Ok(kind), Ok(tracked)) if is_w(change.name, change.name.local) and !$mark.any(|found| found.kind == kind) => Ok({ kind, author: tracked.author, date: tracked.date, preserved: tracked.preserved })
+					_ => Err(CannotHold)
+				}
+
+			_ => Err(CannotHold)
+		}
+		match read {
+			Ok(found) => {
+				$mark = List.append($mark, found)
+			}
+
+			Err(CannotHold) => {
+				$rest = List.append($rest, child)
+			}
+		}
+	}
+	rest =
+		if $mark.is_empty() {
+			[Element(element)]
+		} else if kept($rest).is_empty() and element.attributes.is_empty() {
+			[]
+		} else {
+			[Element({ name: element.name, bindings: element.bindings, attributes: element.attributes, children: $rest })]
+		}
+	{ mark: $mark.sort_with(|one, other| by_mark_order(one.kind, other.kind)), rest }
+}
+
+# The kind of change a paragraph mark's change element records.
+mark_kind : Str -> Try(Document.RevisionKind, [NotMark])
+mark_kind = |local|
+	match local {
+		"ins" => Ok(Insertion)
+		"del" => Ok(Deletion)
+		"moveFrom" => Ok(MoveSource)
+		"moveTo" => Ok(MoveDestination)
+		_ => Err(NotMark)
+	}
+
+# The schema's order of a paragraph mark's changes: inserted, deleted, moved
+# away, moved here.
+by_mark_order : Document.RevisionKind, Document.RevisionKind -> [Before, Same, After]
+by_mark_order = |one, other| {
+	rank = |kind|
+		match kind {
+			Insertion => 0.U8
+			Deletion => 1
+			MoveSource => 2
+			MoveDestination => 3
+		}
+	if (rank(one) < rank(other)) Before else if (rank(one) > rank(other)) After else Same
+}
+
+# Who made a tracked change and when: `w:author`, which the schema requires,
+# and `w:date`. The change's document identifier, `w:id`, is replaced by its
+# place, and every other attribute is kept.
+change_of : Element -> Try(Document.Change, [CannotHold])
+change_of = |element| {
+	author = value_of(element, "author") ? |_| CannotHold
+	stamp = date_of(element)
+	Ok({ author, date: stamp, preserved: element.attributes.drop_if(|attribute| is_w_in(attribute.name, ["id", "author"]) or (is_w(attribute.name, "date") and stamp != Unset)) })
+}
+
+# A change of properties: who made it and when, and the children of the one
+# property element `inner` it holds, without attributes, the properties as
+# they were. One that holds nothing, as LibreOffice writes a change of
+# properties that had none, which the schema does not allow, had none.
+property_change : Element, Str -> Try({ change : Document.Change, previous : List(XmlTree.Node) }, [CannotHold])
+property_change = |element, inner| {
+	change = change_of(element)?
+	held = kept(element.children)
+	match held.first() {
+		Err(ListWasEmpty) => Ok({ change, previous: [] })
+		Ok(Element(properties)) if held.len() == 1 and is_w(properties.name, inner) and properties.attributes.is_empty() => Ok({ change, previous: properties.children })
+		_ => Err(CannotHold)
+	}
+}
+
 # One paragraph property element read into the properties, or `CannotHold`
 # when the model cannot represent it.
-paragraph_property : Document.ParagraphProperties, Element -> Try(Document.ParagraphProperties, [CannotHold])
+paragraph_property : Document.ParagraphPropertiesOf(c), Element -> Try(Document.ParagraphPropertiesOf(c), [CannotHold])
 paragraph_property = |properties, element|
 	match element.name.local {
 		"pStyle" => Ok({ ..properties, style: Style(only_value(element)?) })
@@ -751,7 +937,7 @@ paragraph_property = |properties, element|
 
 # One run property element read into the properties, or `CannotHold` when
 # the model cannot represent it.
-run_property : Document.RunProperties, Element -> Try(Document.RunProperties, [CannotHold])
+run_property : Document.RunPropertiesOf(c), Element -> Try(Document.RunPropertiesOf(c), [CannotHold])
 run_property = |properties, element|
 	match element.name.local {
 		"rStyle" => Ok({ ..properties, style: Style(only_value(element)?) })
@@ -1040,38 +1226,55 @@ section_end = |paragraph, within, diagnostics| {
 # A section's properties: each the model holds is read from the first
 # element that gives it in a form the model can hold, a header or footer
 # from the first reference of its kind to a header or footer part of the
-# package.
+# package. Under tracking, `w:sectPrChange` is a change of the properties.
 section : List(XmlTree.Node), Reading, List(WmlRead.Diagnostic) -> { section : Document.Section, diagnostics : List(WmlRead.Diagnostic) }
-section = |children, within, diagnostics| {
-	var $section = { start: Unset, page_size: Unset, margins: Unset, columns: Unset, page_numbers: Unset, title_page: Unset, headers: List.with_capacity(3), footers: List.with_capacity(3), preserved: List.with_capacity(children.len()) }
+section = |children, within, diagnostics| section_from(children, diagnostics, unstated_section([]), |found, element| tracked_section(within, found, element))
+
+# How a reader of a section's or a table's, row's or cell's properties reads
+# what only the properties that stand hold, such as a tracked change of
+# them: the properties with the element read into them and what reading it
+# noticed, `CannotHold` when the element is one it reads but cannot hold, or
+# `NotTracking` when it is not one it reads.
+TrackingRead(p) : p, Element -> Try(Read(p), [CannotHold, NotTracking])
+
+untracked_read : TrackingRead(p)
+untracked_read = |_, _| Err(NotTracking)
+
+unstated_section : change -> Document.SectionOf(change)
+unstated_section = |change| { start: Unset, page_size: Unset, margins: Unset, columns: Unset, page_numbers: Unset, title_page: Unset, headers: [], footers: [], preserved: [], change }
+
+# A section's headers and footers, which the properties a change replaced do
+# not have, and its first `w:sectPrChange`.
+tracked_section : Reading, Document.Section, Element -> Try(Read(Document.Section), [CannotHold, NotTracking])
+tracked_section = |within, found, element|
+	if element.name.local == "headerReference" and is_w(element.name, "headerReference") {
+		reference = header_footer_reference(element, within, header_relationship, found.headers) ? |_| CannotHold
+		Ok({ value: { ..found, headers: List.append(found.headers, reference) }, noticed: [] })
+	} else if element.name.local == "footerReference" and is_w(element.name, "footerReference") {
+		reference = header_footer_reference(element, within, footer_relationship, found.footers) ? |_| CannotHold
+		Ok({ value: { ..found, footers: List.append(found.footers, reference) }, noticed: [] })
+	} else if element.name.local == "sectPrChange" and found.change.is_empty() and is_w(element.name, "sectPrChange") {
+		{ change, previous } = property_change(element, "sectPr") ? |_| CannotHold
+		before = section_from(previous, [], unstated_section(Unset), untracked_read)
+		Ok({ value: { ..found, change: [{ author: change.author, date: change.date, preserved: change.preserved, previous: before.section }] }, noticed: before.diagnostics })
+	} else {
+		Err(NotTracking)
+	}
+
+section_from : List(XmlTree.Node), List(WmlRead.Diagnostic), Document.SectionOf(c), TrackingRead(Document.SectionOf(c)) -> { section : Document.SectionOf(c), diagnostics : List(WmlRead.Diagnostic) }
+section_from = |children, diagnostics, start, tracking| {
+	var $section = { ..start, preserved: List.with_capacity(children.len()) }
 	var $diagnostics = diagnostics
 	for child in kept(children) {
 		read = match child {
-			Element(element) if is_w(element.name, "headerReference") =>
-				header_footer_reference(element, within, header_relationship, $section.headers).map_ok(|reference| { value: { ..$section, headers: List.append($section.headers, reference) }, noticed: [] })
+			Element(element) =>
+				match tracking($section, element) {
+					Ok(found) => Ok(found)
+					Err(CannotHold) => Err(CannotHold)
+					Err(NotTracking) => section_property($section, element)
+				}
 
-			Element(element) if is_w(element.name, "footerReference") =>
-				header_footer_reference(element, within, footer_relationship, $section.footers).map_ok(|reference| { value: { ..$section, footers: List.append($section.footers, reference) }, noticed: [] })
-
-			Element(element) if is_w(element.name, "type") and $section.start == Unset =>
-				section_start(element).map_ok(|start| { value: { ..$section, start }, noticed: [] })
-
-			Element(element) if is_w(element.name, "pgSz") and $section.page_size == Unset =>
-				page_size(element).map_ok(|size| { value: { ..$section, page_size: size.value }, noticed: size.noticed })
-
-			Element(element) if is_w(element.name, "pgMar") and $section.margins == Unset =>
-				margins(element).map_ok(|margins_read| { value: { ..$section, margins: margins_read.value }, noticed: margins_read.noticed })
-
-			Element(element) if is_w(element.name, "cols") and $section.columns == Unset =>
-				section_columns(element).map_ok(|columns_read| { value: { ..$section, columns: columns_read.value }, noticed: columns_read.noticed })
-
-			Element(element) if is_w(element.name, "pgNumType") and $section.page_numbers == Unset =>
-				page_numbers(element).map_ok(|numbers| { value: { ..$section, page_numbers: numbers.value }, noticed: numbers.noticed })
-
-			Element(element) if is_w(element.name, "titlePg") and $section.title_page == Unset =>
-				on_off(element).map_ok(|title_page| { value: { ..$section, title_page }, noticed: [] })
-
-			_ => Err(CannotHold)
+			Text(_) => Err(CannotHold)
 		}
 		match read {
 			Ok({ value, noticed }) => {
@@ -1086,6 +1289,26 @@ section = |children, within, diagnostics| {
 	}
 	{ section: $section, diagnostics: $diagnostics }
 }
+
+# One section property element read into the properties, unless it was
+# given before.
+section_property : Document.SectionOf(c), Element -> Try(Read(Document.SectionOf(c)), [CannotHold])
+section_property = |found, element|
+	if is_w(element.name, "type") and found.start == Unset {
+		section_start(element).map_ok(|start| { value: { ..found, start }, noticed: [] })
+	} else if is_w(element.name, "pgSz") and found.page_size == Unset {
+		page_size(element).map_ok(|size| { value: { ..found, page_size: size.value }, noticed: size.noticed })
+	} else if is_w(element.name, "pgMar") and found.margins == Unset {
+		margins(element).map_ok(|margins_read| { value: { ..found, margins: margins_read.value }, noticed: margins_read.noticed })
+	} else if is_w(element.name, "cols") and found.columns == Unset {
+		section_columns(element).map_ok(|columns_read| { value: { ..found, columns: columns_read.value }, noticed: columns_read.noticed })
+	} else if is_w(element.name, "pgNumType") and found.page_numbers == Unset {
+		page_numbers(element).map_ok(|numbers| { value: { ..found, page_numbers: numbers.value }, noticed: numbers.noticed })
+	} else if is_w(element.name, "titlePg") and found.title_page == Unset {
+		on_off(element).map_ok(|title_page| { value: { ..found, title_page }, noticed: [] })
+	} else {
+		Err(CannotHold)
+	}
 
 # A reference to a header or footer: its kind, and `r:id` naming an internal
 # relationship of the expected type; a section has one of each kind.
@@ -1500,7 +1723,7 @@ table = |children, within, diagnostics| {
 	for child in children {
 		match ($properties, $grid, child) {
 			(Err(Missing), _, Element(element)) if is_w(element.name, "tblPr") => {
-				read = table_properties(element.children, $diagnostics)
+				read = table_properties(element.children, $diagnostics, unstated_table([]), tracked_table)
 				$properties = Ok(read.properties)
 				$diagnostics = read.diagnostics
 			}
@@ -1520,7 +1743,7 @@ table = |children, within, diagnostics| {
 			}
 		}
 	}
-	properties = $properties ?? { style: Unset, width: Unset, borders: [], shading: Unset, preserved: [] }
+	properties = $properties ?? { style: Unset, width: Unset, borders: [], shading: Unset, preserved: [], change: [] }
 	{ table: { properties, grid: $grid ?? [], content: $content }, diagnostics: $diagnostics }
 }
 
@@ -1558,7 +1781,7 @@ row = |children, within, diagnostics| {
 	for child in children {
 		match ($properties, child) {
 			(Err(Missing), Element(element)) if is_w(element.name, "trPr") => {
-				read = row_properties(element.children, $diagnostics)
+				read = row_properties(element.children, $diagnostics, unstated_row([]), tracked_row)
 				$properties = Ok(read.properties)
 				$diagnostics = read.diagnostics
 			}
@@ -1572,7 +1795,7 @@ row = |children, within, diagnostics| {
 			}
 		}
 	}
-	properties = $properties ?? { header: Unset, grid_before: Unset, grid_after: Unset, preserved: [] }
+	properties = $properties ?? { header: Unset, grid_before: Unset, grid_after: Unset, preserved: [], inserted: Unset, deleted: Unset, change: [] }
 	{ row: { properties, content: $content }, diagnostics: $diagnostics }
 }
 
@@ -1610,7 +1833,7 @@ cell = |children, within, diagnostics| {
 	for child in children {
 		match ($properties, child) {
 			(Err(Missing), Element(element)) if is_w(element.name, "tcPr") => {
-				read = cell_properties(element.children, $diagnostics)
+				read = cell_properties(element.children, $diagnostics, unstated_cell([]), tracked_cell)
 				$properties = Ok(read.properties)
 				$diagnostics = read.diagnostics
 			}
@@ -1624,7 +1847,7 @@ cell = |children, within, diagnostics| {
 			}
 		}
 	}
-	properties = $properties ?? { width: Unset, span: Unset, merge: Unset, borders: [], shading: Unset, alignment: Unset, preserved: [] }
+	properties = $properties ?? { width: Unset, span: Unset, merge: Unset, borders: [], shading: Unset, alignment: Unset, preserved: [], revision: Unset, change: [] }
 	{ cell: { properties, content: $content }, diagnostics: $diagnostics }
 }
 
@@ -1652,196 +1875,318 @@ grid = |children, diagnostics| {
 	{ grid: $columns, diagnostics: $diagnostics }
 }
 
-table_properties : List(XmlTree.Node), List(WmlRead.Diagnostic) -> { properties : Document.TableProperties, diagnostics : List(WmlRead.Diagnostic) }
-table_properties = |children, diagnostics| {
-	var $properties = { style: Unset, width: Unset, borders: [], shading: Unset, preserved: List.with_capacity(children.len()) }
+table_properties : List(XmlTree.Node), List(WmlRead.Diagnostic), Document.TablePropertiesOf(c), TrackingRead(Document.TablePropertiesOf(c)) -> { properties : Document.TablePropertiesOf(c), diagnostics : List(WmlRead.Diagnostic) }
+table_properties = |children, diagnostics, start, tracking| {
+	var $properties = { ..start, preserved: List.with_capacity(children.len()) }
 	var $diagnostics = diagnostics
 	for child in kept(children) {
-		match child {
-			Element(element) if is_w(element.name, "tblStyle") and $properties.style == Unset and holds(element, ["val"]) =>
-				match value_of(element, "val") {
-					Ok(id) => {
-						$properties = { ..$properties, style: Style(id) }
-					}
+		tracked = match child {
+			Element(element) => tracking($properties, element)
+			Text(_) => Err(NotTracking)
+		}
+		match tracked {
+			Ok({ value, noticed }) => {
+				$properties = value
+				$diagnostics = List.concat($diagnostics, noticed)
+			}
 
-					Err(NotFound) => {
-						$properties = { ..$properties, preserved: List.append($properties.preserved, child) }
-					}
-				}
-
-			Element(element) if is_w(element.name, "tblW") and $properties.width == Unset =>
-				match width(element) {
-					Ok({ value, noticed }) => {
-						$properties = { ..$properties, width: value }
-						$diagnostics = List.concat($diagnostics, noticed)
-					}
-
-					Err(CannotHold) => {
-						$properties = { ..$properties, preserved: List.append($properties.preserved, child) }
-					}
-				}
-
-			Element(element) if is_w(element.name, "tblBorders") and $properties.borders.is_empty() =>
-				match borders(element, table_edges) {
-					Ok({ value, noticed }) => {
-						$properties = { ..$properties, borders: value }
-						$diagnostics = List.concat($diagnostics, noticed)
-					}
-
-					Err(CannotHold) => {
-						$properties = { ..$properties, preserved: List.append($properties.preserved, child) }
-					}
-				}
-
-			Element(element) if is_w(element.name, "shd") and $properties.shading == Unset =>
-				match shading(element) {
-					Ok(value) => {
-						$properties = { ..$properties, shading: value }
-					}
-
-					Err(CannotHold) => {
-						$properties = { ..$properties, preserved: List.append($properties.preserved, child) }
-					}
-				}
-
-			_ => {
+			Err(CannotHold) => {
 				$properties = { ..$properties, preserved: List.append($properties.preserved, child) }
 			}
+
+			Err(NotTracking) =>
+				match child {
+					Element(element) if is_w(element.name, "tblStyle") and $properties.style == Unset and holds(element, ["val"]) =>
+						match value_of(element, "val") {
+							Ok(id) => {
+								$properties = { ..$properties, style: Style(id) }
+							}
+
+							Err(NotFound) => {
+								$properties = { ..$properties, preserved: List.append($properties.preserved, child) }
+							}
+						}
+
+					Element(element) if is_w(element.name, "tblW") and $properties.width == Unset =>
+						match width(element) {
+							Ok({ value, noticed }) => {
+								$properties = { ..$properties, width: value }
+								$diagnostics = List.concat($diagnostics, noticed)
+							}
+
+							Err(CannotHold) => {
+								$properties = { ..$properties, preserved: List.append($properties.preserved, child) }
+							}
+						}
+
+					Element(element) if is_w(element.name, "tblBorders") and $properties.borders.is_empty() =>
+						match borders(element, table_edges) {
+							Ok({ value, noticed }) => {
+								$properties = { ..$properties, borders: value }
+								$diagnostics = List.concat($diagnostics, noticed)
+							}
+
+							Err(CannotHold) => {
+								$properties = { ..$properties, preserved: List.append($properties.preserved, child) }
+							}
+						}
+
+					Element(element) if is_w(element.name, "shd") and $properties.shading == Unset =>
+						match shading(element) {
+							Ok(value) => {
+								$properties = { ..$properties, shading: value }
+							}
+
+							Err(CannotHold) => {
+								$properties = { ..$properties, preserved: List.append($properties.preserved, child) }
+							}
+						}
+
+					_ => {
+						$properties = { ..$properties, preserved: List.append($properties.preserved, child) }
+					}
+				}
 		}
 	}
 	{ properties: $properties, diagnostics: $diagnostics }
 }
 
-row_properties : List(XmlTree.Node), List(WmlRead.Diagnostic) -> { properties : Document.RowProperties, diagnostics : List(WmlRead.Diagnostic) }
-row_properties = |children, diagnostics| {
-	var $properties = { header: Unset, grid_before: Unset, grid_after: Unset, preserved: List.with_capacity(children.len()) }
+row_properties : List(XmlTree.Node), List(WmlRead.Diagnostic), Document.RowPropertiesOf(c), TrackingRead(Document.RowPropertiesOf(c)) -> { properties : Document.RowPropertiesOf(c), diagnostics : List(WmlRead.Diagnostic) }
+row_properties = |children, diagnostics, start, tracking| {
+	var $properties = { ..start, preserved: List.with_capacity(children.len()) }
 	var $diagnostics = diagnostics
 	for child in kept(children) {
-		match child {
-			Element(element) if is_w(element.name, "tblHeader") and $properties.header == Unset =>
-				match on_off(element) {
-					Ok(value) => {
-						$properties = { ..$properties, header: value }
-					}
+		tracked = match child {
+			Element(element) => tracking($properties, element)
+			Text(_) => Err(NotTracking)
+		}
+		match tracked {
+			Ok({ value, noticed }) => {
+				$properties = value
+				$diagnostics = List.concat($diagnostics, noticed)
+			}
 
-					Err(CannotHold) => {
-						$properties = { ..$properties, preserved: List.append($properties.preserved, child) }
-					}
-				}
-
-			Element(element) if is_w(element.name, "gridBefore") and $properties.grid_before == Unset =>
-				match columns(element) {
-					Ok({ value, noticed }) => {
-						$properties = { ..$properties, grid_before: value }
-						$diagnostics = List.concat($diagnostics, noticed)
-					}
-
-					Err(CannotHold) => {
-						$properties = { ..$properties, preserved: List.append($properties.preserved, child) }
-					}
-				}
-
-			Element(element) if is_w(element.name, "gridAfter") and $properties.grid_after == Unset =>
-				match columns(element) {
-					Ok({ value, noticed }) => {
-						$properties = { ..$properties, grid_after: value }
-						$diagnostics = List.concat($diagnostics, noticed)
-					}
-
-					Err(CannotHold) => {
-						$properties = { ..$properties, preserved: List.append($properties.preserved, child) }
-					}
-				}
-
-			_ => {
+			Err(CannotHold) => {
 				$properties = { ..$properties, preserved: List.append($properties.preserved, child) }
 			}
+
+			Err(NotTracking) =>
+				match child {
+					Element(element) if is_w(element.name, "tblHeader") and $properties.header == Unset =>
+						match on_off(element) {
+							Ok(value) => {
+								$properties = { ..$properties, header: value }
+							}
+
+							Err(CannotHold) => {
+								$properties = { ..$properties, preserved: List.append($properties.preserved, child) }
+							}
+						}
+
+					Element(element) if is_w(element.name, "gridBefore") and $properties.grid_before == Unset =>
+						match columns(element) {
+							Ok({ value, noticed }) => {
+								$properties = { ..$properties, grid_before: value }
+								$diagnostics = List.concat($diagnostics, noticed)
+							}
+
+							Err(CannotHold) => {
+								$properties = { ..$properties, preserved: List.append($properties.preserved, child) }
+							}
+						}
+
+					Element(element) if is_w(element.name, "gridAfter") and $properties.grid_after == Unset =>
+						match columns(element) {
+							Ok({ value, noticed }) => {
+								$properties = { ..$properties, grid_after: value }
+								$diagnostics = List.concat($diagnostics, noticed)
+							}
+
+							Err(CannotHold) => {
+								$properties = { ..$properties, preserved: List.append($properties.preserved, child) }
+							}
+						}
+
+					_ => {
+						$properties = { ..$properties, preserved: List.append($properties.preserved, child) }
+					}
+				}
 		}
 	}
 	{ properties: $properties, diagnostics: $diagnostics }
 }
 
-cell_properties : List(XmlTree.Node), List(WmlRead.Diagnostic) -> { properties : Document.CellProperties, diagnostics : List(WmlRead.Diagnostic) }
-cell_properties = |children, diagnostics| {
-	var $properties = { width: Unset, span: Unset, merge: Unset, borders: [], shading: Unset, alignment: Unset, preserved: List.with_capacity(children.len()) }
+cell_properties : List(XmlTree.Node), List(WmlRead.Diagnostic), Document.CellPropertiesOf(c), TrackingRead(Document.CellPropertiesOf(c)) -> { properties : Document.CellPropertiesOf(c), diagnostics : List(WmlRead.Diagnostic) }
+cell_properties = |children, diagnostics, start, tracking| {
+	var $properties = { ..start, preserved: List.with_capacity(children.len()) }
 	var $diagnostics = diagnostics
 	for child in kept(children) {
-		match child {
-			Element(element) if is_w(element.name, "tcW") and $properties.width == Unset =>
-				match width(element) {
-					Ok({ value, noticed }) => {
-						$properties = { ..$properties, width: value }
-						$diagnostics = List.concat($diagnostics, noticed)
-					}
+		tracked = match child {
+			Element(element) => tracking($properties, element)
+			Text(_) => Err(NotTracking)
+		}
+		match tracked {
+			Ok({ value, noticed }) => {
+				$properties = value
+				$diagnostics = List.concat($diagnostics, noticed)
+			}
 
-					Err(CannotHold) => {
-						$properties = { ..$properties, preserved: List.append($properties.preserved, child) }
-					}
-				}
-
-			Element(element) if is_w(element.name, "gridSpan") and $properties.span == Unset =>
-				match columns(element) {
-					Ok({ value, noticed }) => {
-						$properties = { ..$properties, span: value }
-						$diagnostics = List.concat($diagnostics, noticed)
-					}
-
-					Err(CannotHold) => {
-						$properties = { ..$properties, preserved: List.append($properties.preserved, child) }
-					}
-				}
-
-			Element(element) if is_w(element.name, "vMerge") and $properties.merge == Unset =>
-				match merge(element) {
-					Ok(value) => {
-						$properties = { ..$properties, merge: value }
-					}
-
-					Err(CannotHold) => {
-						$properties = { ..$properties, preserved: List.append($properties.preserved, child) }
-					}
-				}
-
-			Element(element) if is_w(element.name, "tcBorders") and $properties.borders.is_empty() =>
-				match borders(element, cell_edges) {
-					Ok({ value, noticed }) => {
-						$properties = { ..$properties, borders: value }
-						$diagnostics = List.concat($diagnostics, noticed)
-					}
-
-					Err(CannotHold) => {
-						$properties = { ..$properties, preserved: List.append($properties.preserved, child) }
-					}
-				}
-
-			Element(element) if is_w(element.name, "shd") and $properties.shading == Unset =>
-				match shading(element) {
-					Ok(value) => {
-						$properties = { ..$properties, shading: value }
-					}
-
-					Err(CannotHold) => {
-						$properties = { ..$properties, preserved: List.append($properties.preserved, child) }
-					}
-				}
-
-			Element(element) if is_w(element.name, "vAlign") and $properties.alignment == Unset =>
-				match alignment(element) {
-					Ok(value) => {
-						$properties = { ..$properties, alignment: value }
-					}
-
-					Err(CannotHold) => {
-						$properties = { ..$properties, preserved: List.append($properties.preserved, child) }
-					}
-				}
-
-			_ => {
+			Err(CannotHold) => {
 				$properties = { ..$properties, preserved: List.append($properties.preserved, child) }
 			}
+
+			Err(NotTracking) =>
+				match child {
+					Element(element) if is_w(element.name, "tcW") and $properties.width == Unset =>
+						match width(element) {
+							Ok({ value, noticed }) => {
+								$properties = { ..$properties, width: value }
+								$diagnostics = List.concat($diagnostics, noticed)
+							}
+
+							Err(CannotHold) => {
+								$properties = { ..$properties, preserved: List.append($properties.preserved, child) }
+							}
+						}
+
+					Element(element) if is_w(element.name, "gridSpan") and $properties.span == Unset =>
+						match columns(element) {
+							Ok({ value, noticed }) => {
+								$properties = { ..$properties, span: value }
+								$diagnostics = List.concat($diagnostics, noticed)
+							}
+
+							Err(CannotHold) => {
+								$properties = { ..$properties, preserved: List.append($properties.preserved, child) }
+							}
+						}
+
+					Element(element) if is_w(element.name, "vMerge") and $properties.merge == Unset =>
+						match merge(element) {
+							Ok(value) => {
+								$properties = { ..$properties, merge: value }
+							}
+
+							Err(CannotHold) => {
+								$properties = { ..$properties, preserved: List.append($properties.preserved, child) }
+							}
+						}
+
+					Element(element) if is_w(element.name, "tcBorders") and $properties.borders.is_empty() =>
+						match borders(element, cell_edges) {
+							Ok({ value, noticed }) => {
+								$properties = { ..$properties, borders: value }
+								$diagnostics = List.concat($diagnostics, noticed)
+							}
+
+							Err(CannotHold) => {
+								$properties = { ..$properties, preserved: List.append($properties.preserved, child) }
+							}
+						}
+
+					Element(element) if is_w(element.name, "shd") and $properties.shading == Unset =>
+						match shading(element) {
+							Ok(value) => {
+								$properties = { ..$properties, shading: value }
+							}
+
+							Err(CannotHold) => {
+								$properties = { ..$properties, preserved: List.append($properties.preserved, child) }
+							}
+						}
+
+					Element(element) if is_w(element.name, "vAlign") and $properties.alignment == Unset =>
+						match alignment(element) {
+							Ok(value) => {
+								$properties = { ..$properties, alignment: value }
+							}
+
+							Err(CannotHold) => {
+								$properties = { ..$properties, preserved: List.append($properties.preserved, child) }
+							}
+						}
+
+					_ => {
+						$properties = { ..$properties, preserved: List.append($properties.preserved, child) }
+					}
+				}
 		}
 	}
 	{ properties: $properties, diagnostics: $diagnostics }
+}
+
+unstated_table : change -> Document.TablePropertiesOf(change)
+unstated_table = |change| { style: Unset, width: Unset, borders: [], shading: Unset, preserved: [], change }
+
+unstated_row : change -> Document.RowPropertiesOf(change)
+unstated_row = |change| { header: Unset, grid_before: Unset, grid_after: Unset, preserved: [], inserted: Unset, deleted: Unset, change }
+
+unstated_cell : change -> Document.CellPropertiesOf(change)
+unstated_cell = |change| { width: Unset, span: Unset, merge: Unset, borders: [], shading: Unset, alignment: Unset, preserved: [], revision: Unset, change }
+
+# A table's first `w:tblPrChange`.
+tracked_table : TrackingRead(Document.TableProperties)
+tracked_table = |found, element|
+	if element.name.local == "tblPrChange" and found.change.is_empty() and is_w(element.name, "tblPrChange") {
+		{ change, previous } = property_change(element, "tblPr") ? |_| CannotHold
+		before = table_properties(previous, [], unstated_table(Unset), untracked_read)
+		Ok({ value: { ..found, change: [{ author: change.author, date: change.date, preserved: change.preserved, previous: before.properties }] }, noticed: before.diagnostics })
+	} else {
+		Err(NotTracking)
+	}
+
+# A row's first `w:ins` and `w:del`, which hold nothing, and its first
+# `w:trPrChange`.
+tracked_row : TrackingRead(Document.RowProperties)
+tracked_row = |found, element|
+	if element.name.local == "ins" and found.inserted == Unset and kept(element.children).is_empty() and is_w(element.name, "ins") {
+		Ok({ value: { ..found, inserted: Tracked(change_of(element)?) }, noticed: [] })
+	} else if element.name.local == "del" and found.deleted == Unset and kept(element.children).is_empty() and is_w(element.name, "del") {
+		Ok({ value: { ..found, deleted: Tracked(change_of(element)?) }, noticed: [] })
+	} else if element.name.local == "trPrChange" and found.change.is_empty() and is_w(element.name, "trPrChange") {
+		{ change, previous } = property_change(element, "trPr") ? |_| CannotHold
+		before = row_properties(previous, [], unstated_row(Unset), untracked_read)
+		Ok({ value: { ..found, change: [{ author: change.author, date: change.date, preserved: change.preserved, previous: before.properties }] }, noticed: before.diagnostics })
+	} else {
+		Err(NotTracking)
+	}
+
+# A cell's first `w:cellIns`, `w:cellDel` or `w:cellMerge`, and its first
+# `w:tcPrChange`.
+tracked_cell : TrackingRead(Document.CellProperties)
+tracked_cell = |found, element|
+	if (element.name.local == "cellIns" or element.name.local == "cellDel" or element.name.local == "cellMerge") and found.revision == Unset and is_w_in(element.name, ["cellIns", "cellDel", "cellMerge"]) {
+		Ok({ value: { ..found, revision: cell_revision(element)? }, noticed: [] })
+	} else if element.name.local == "tcPrChange" and found.change.is_empty() and is_w(element.name, "tcPrChange") {
+		{ change, previous } = property_change(element, "tcPr") ? |_| CannotHold
+		before = cell_properties(previous, [], unstated_cell(Unset), untracked_read)
+		Ok({ value: { ..found, change: [{ author: change.author, date: change.date, preserved: change.preserved, previous: before.properties }] }, noticed: before.diagnostics })
+	} else {
+		Err(NotTracking)
+	}
+
+# A cell's tracked insertion, deletion or merge, which holds nothing; a
+# merge's `w:vMerge` and `w:vMergeOrig` are `cont` or `rest`.
+cell_revision : Element -> Try([Unset, Inserted(Document.Change), Deleted(Document.Change), Merged(Document.CellMerge)], [CannotHold])
+cell_revision = |element| {
+	if !kept(element.children).is_empty() {
+		return Err(CannotHold)
+	}
+	change = change_of(element)?
+	match element.name.local {
+		"cellIns" => Ok(Inserted(change))
+		"cellDel" => Ok(Deleted(change))
+		_ => {
+			vertical = |local|
+				match value_of(element, local) {
+					Ok("cont") => Ok(Continue)
+					Ok("rest") => Ok(Restart)
+					Ok(_) => Err(CannotHold)
+					Err(NotFound) => Ok(Unset)
+				}
+			Ok(Merged({ author: change.author, date: change.date, preserved: change.preserved.drop_if(|attribute| is_w_in(attribute.name, ["vMerge", "vMergeOrig"])), merge: vertical("vMerge")?, previous: vertical("vMergeOrig")? }))
+		}
+	}
 }
 
 # A value read from a property element, with what reading it noticed.
@@ -2587,6 +2932,8 @@ expect {
 		tabs: Tabs([{ kind: Clear, position: 720, leader: Unset }, { kind: Right, position: 9000, leader: Dot }]),
 		numbering: { instance: Instance(5), level: Level(2) },
 		preserved: properties_of(unheld),
+		mark: [],
+		change: [],
 	}
 	properties == expected
 }
@@ -2615,6 +2962,7 @@ expect {
 		fonts: { ascii: Named("Aptos"), high_ansi: Named("Aptos"), east_asia: Named(""), complex: Unset, ascii_theme: Theme(MinorHighAnsi), high_ansi_theme: Unset, east_asia_theme: Unset, complex_theme: Theme(MajorBidi) },
 		language: { latin: Tag("en-GB"), east_asia: Tag("zh-CN"), complex: Unset },
 		preserved: properties_of(unheld),
+		change: [],
 	}
 	properties == expected
 }
@@ -2841,13 +3189,101 @@ expect {
 	match read("<w:p/>\n  ${table_xml}\n  <w:sectPr/>") {
 		[Paragraph(empty), Table({ properties, grid: [], content: [Row({ properties: row_properties_read, content: [Cell({ properties: cell_properties_read, content: [Paragraph(in_cell)] })] })] }), Section(_)] =>
 			empty == { properties: Document.no_paragraph_properties, content: [] }
-				and properties == { style: Unset, width: Unset, borders: [], shading: Unset, preserved: [] }
-				and row_properties_read == { header: Unset, grid_before: Unset, grid_after: Unset, preserved: [] }
-				and cell_properties_read == { width: Unset, span: Unset, merge: Unset, borders: [], shading: Unset, alignment: Unset, preserved: [] }
+				and properties == { style: Unset, width: Unset, borders: [], shading: Unset, preserved: [], change: [] }
+				and row_properties_read == { header: Unset, grid_before: Unset, grid_after: Unset, preserved: [], inserted: Unset, deleted: Unset, change: [] }
+				and cell_properties_read == { width: Unset, span: Unset, merge: Unset, borders: [], shading: Unset, alignment: Unset, preserved: [], revision: Unset, change: [] }
 				and in_cell.content.len() == 1
 
 		_ => Bool.False
 	}
+}
+
+## A paragraph mark's changes are read from its character properties, which
+## keep what else they hold, one without the author the schema requires
+## staying as it was read; a change of a paragraph's or run's properties
+## holds the properties before it, and a date that is not a date and time
+## is kept among its attributes.
+expect {
+	stamp = Date({ written: "2026-05-07T09:00:00Z", utc_seconds: 1778144400 })
+	marked = "<w:pPr><w:jc w:val='center'/><w:rPr><w:ins w:id='1' w:author='A' w:date='2026-05-07T09:00:00Z'/><w:del w:id='2' w:author='B'/><w:b/></w:rPr><w:pPrChange w:id='3' w:author='C'><w:pPr><w:jc w:val='left'/></w:pPr></w:pPrChange></w:pPr>"
+	formatted = "<w:r><w:rPr><w:i/><w:rPrChange w:id='4' w:author='D' w:date='soon'><w:rPr><w:b/><w:rPrChange w:id='5' w:author='E'><w:rPr/></w:rPrChange></w:rPr></w:rPrChange></w:rPr><w:t>x</w:t></w:r>"
+	anonymous = "<w:pPr><w:rPr><w:moveFrom w:id='6'/></w:rPr></w:pPr>"
+	match read("<w:p>${marked}${formatted}</w:p><w:p>${anonymous}</w:p>") {
+		[Paragraph({ properties, content: [Run(formatted_run)] }), Paragraph(other)] =>
+			properties.mark == [{ kind: Insertion, author: "A", date: stamp, preserved: [] }, { kind: Deletion, author: "B", date: Unset, preserved: [] }]
+				and properties.preserved == properties_of("<w:rPr><w:b/></w:rPr>")
+				and properties.alignment == Aligned(Center)
+				and properties.change == [{ author: "C", date: Unset, preserved: [], previous: { ..Document.paragraph_properties_with(Unset), alignment: Aligned(Left) } }]
+				and match formatted_run.properties.change {
+					[{ author: "D", date: Unset, preserved: [{ name: _, value: "soon" }], previous }] =>
+						previous.bold == On and previous.change == Unset and previous.preserved.len() == 1
+
+					_ => Bool.False
+				}
+				and other.properties.mark == []
+				and other.properties.preserved == properties_of("<w:rPr><w:moveFrom w:id='6'/></w:rPr>")
+
+		_ => Bool.False
+	}
+}
+
+## A row's insertion and deletion, a cell's insertion, deletion or merge and
+## a change of a table's, row's, cell's or section's properties are read;
+## the properties before a change hold no changes, headers or footers of
+## their own, which stay as they were read.
+expect {
+	change = |local, id, inner| "<w:${local} w:id='${id}' w:author='A'>${inner}</w:${local}>"
+	table_properties_xml = "<w:tblPr><w:tblW w:w='0' w:type='auto'/>${change("tblPrChange", "1", "<w:tblPr/>")}</w:tblPr><w:tblGrid/>"
+	row_properties_xml = "<w:trPr>${change("ins", "2", "")}${change("del", "3", "")}${change("trPrChange", "4", "<w:trPr>${change("ins", "5", "")}</w:trPr>")}</w:trPr>"
+	merged = "<w:tc><w:tcPr><w:cellMerge w:id='6' w:author='A' w:vMerge='cont' w:vMergeOrig='rest'/>${change("tcPrChange", "7", "<w:tcPr><w:tcW w:w='0' w:type='auto'/></w:tcPr>")}</w:tcPr><w:p/></w:tc>"
+	cell_with = |tracked| "<w:tc><w:tcPr>${tracked}</w:tcPr><w:p/></w:tc>"
+	section_xml = "<w:sectPr><w:pgSz w:w='11906' w:h='16838'/>${change("sectPrChange", "10", "<w:sectPr><w:headerReference w:type='default' r:id='rId1'/><w:pgSz w:w='12240' w:h='15840'/></w:sectPr>")}</w:sectPr>"
+	body = "<w:tbl>${table_properties_xml}<w:tr>${row_properties_xml}${merged}${cell_with(change("cellIns", "8", ""))}${cell_with(change("cellDel", "9", ""))}</w:tr></w:tbl>${section_xml}"
+	by_a = { author: "A", date: Unset, preserved: [] }
+	header = { id: "rId1", kind: header_relationship, target: "/word/header1.xml", mode: Internal }
+	match read_in(body, { relationships: [header], footnotes: [], endnotes: [], comments: [] }) {
+		[Table({ properties, grid: [], content: [Row({ properties: row_properties_read, content: [Cell(first), Cell(second), Cell(third)] })] }), Section(ended)] =>
+			properties.change == [{ author: "A", date: Unset, preserved: [], previous: { style: Unset, width: Unset, borders: [], shading: Unset, preserved: [], change: Unset } }]
+				and row_properties_read.inserted == Tracked(by_a)
+				and row_properties_read.deleted == Tracked(by_a)
+				and match row_properties_read.change {
+					[{ author: "A", date: Unset, preserved: [], previous }] => previous.inserted == Unset and previous.preserved.len() == 1
+					_ => Bool.False
+				}
+				and first.properties.revision == Merged({ author: "A", date: Unset, preserved: [], merge: Continue, previous: Restart })
+				and match first.properties.change {
+					[{ author: "A", date: Unset, preserved: [], previous }] => previous.width == Auto
+					_ => Bool.False
+				}
+				and second.properties.revision == Inserted(by_a)
+				and third.properties.revision == Deleted(by_a)
+				and match ended.change {
+					[{ author: "A", date: Unset, preserved: [], previous }] =>
+						previous.page_size == Size({ width: 12240, height: 15840, orientation: Portrait }) and previous.headers == [] and previous.preserved.len() == 1
+
+					_ => Bool.False
+				}
+
+		_ => Bool.False
+	}
+}
+
+## A change of a run's properties that holds no properties, as LibreOffice
+## writes one, changed properties that stated nothing.
+expect {
+	match read("<w:p><w:r><w:rPr><w:b/><w:rPrChange w:id='0' w:author='A'></w:rPrChange></w:rPr><w:t>x</w:t></w:r></w:p>") {
+		[Paragraph({ properties: _, content: [Run(formatted_run)] })] => formatted_run.properties.change == [{ author: "A", date: Unset, preserved: [], previous: Document.run_properties_with(Unset) }]
+		_ => Bool.False
+	}
+}
+
+## A settings part tracks changes when its `w:trackRevisions` is on.
+expect {
+	settings = |content| XmlTree.parse("<w:settings xmlns:w='${wordprocessingml}'>${content}</w:settings>".to_utf8(), {}) ?? Text("")
+	WmlRead.tracks_revisions(settings("<w:zoom w:percent='100'/><w:trackRevisions/>"))
+		and !WmlRead.tracks_revisions(settings("<w:trackRevisions w:val='false'/>"))
+		and !WmlRead.tracks_revisions(settings(""))
+		and !WmlRead.tracks_revisions(Text(""))
 }
 
 ## Table, row and cell properties the model holds are read and the rest are

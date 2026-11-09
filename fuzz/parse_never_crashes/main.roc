@@ -262,7 +262,7 @@ exact_ceiling = |input|
 		Generated(program) if program == small_program => Ok({ parse: 579, write: 654 })
 		Generated(program) if program == large_program => Ok({ parse: 5_324, write: 3_911 })
 		Generated(program) if program == undeclared_program => Ok({ parse: 578, write: 764 })
-		Generated(program) if program == repaired_program => Ok({ parse: 753, write: 739 })
+		Generated(program) if program == repaired_program => Ok({ parse: 749, write: 739 })
 		Fixture(index) => fixtures.get(index).map_ok(|fixture| { parse: fixture.parse, write: fixture.write }).map_err(|_| NotDeclared)
 		_ => Err(NotDeclared)
 	}
@@ -301,10 +301,10 @@ program_unit = [7, 4, 3, 5, 1, 2, 6, 2, 0]
 # one table, and one from each of pandoc and LibreOffice.
 fixtures : List({ name : Str, bytes : List(U8), parse : U64, write : U64 })
 fixtures = [
-	{ name: "word-report", bytes: word_report, parse: 10_357, write: 10_492 },
-	{ name: "gdocs-resume", bytes: gdocs_resume, parse: 20_466, write: 17_793 },
-	{ name: "pandoc-basics", bytes: pandoc_basics, parse: 9_160, write: 8_339 },
-	{ name: "libreoffice-basics", bytes: libreoffice_basics, parse: 8_025, write: 7_543 },
+	{ name: "word-report", bytes: word_report, parse: 10_339, write: 10_492 },
+	{ name: "gdocs-resume", bytes: gdocs_resume, parse: 20_458, write: 17_793 },
+	{ name: "pandoc-basics", bytes: pandoc_basics, parse: 9_156, write: 8_339 },
+	{ name: "libreoffice-basics", bytes: libreoffice_basics, parse: 8_009, write: 7_543 },
 ]
 
 wordprocessingml : Str

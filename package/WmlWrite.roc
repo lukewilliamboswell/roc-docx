@@ -52,8 +52,8 @@ WmlWrite :: [].{
 	## before it, a section is written where it stands.
 	##
 	## Bookmark identifiers come from one space shared with the identifiers
-	## of the comments and those the kept content uses, such as a paragraph
-	## mark's revision: each bookmark takes the lowest number no kept element
+	## of the comments and those the kept content uses, such as a grid's
+	## kept change: each bookmark takes the lowest number no kept element
 	## and no earlier bookmark uses, in the order the bookmarks begin, and its
 	## end takes its start's. Tracked changes and moves' ranges then take the
 	## lowest numbers left, in the order they are written, a range's end its
@@ -61,7 +61,11 @@ WmlWrite :: [].{
 	##
 	## A tracked change is written with its identifier, author, date as it
 	## was written and the attributes it kept; in a deletion, text is
-	## `w:delText` and a piece of field code `w:delInstrText`.
+	## `w:delText` and a piece of field code `w:delInstrText`. A paragraph
+	## mark's changes are written first in the mark's character properties,
+	## the first kept `w:rPr` of the paragraph's properties or one of their
+	## own, and a change of properties around the properties before it, whose
+	## own changes are not written.
 	## A relationship is reused when the part has one to the same
 	## target in the same mode, of the kind the reference needs where the
 	## reader asks for one; otherwise it is added as `rId` with the lowest
@@ -390,10 +394,10 @@ free_id = |used, from| {
 scan_block : WmlWrite.Context, Scan, Document.Block -> Scan
 scan_block = |context, scan, block|
 	match block {
-		Paragraph(paragraph) => paragraph.content.fold(scan_nodes(scan, paragraph.properties.preserved), |found, item| scan_inline(context, found, item))
+		Paragraph(paragraph) => paragraph.content.fold(scan_nodes(scan, followed_by(paragraph.properties.preserved, before(paragraph.properties.change, |previous| previous.preserved))), |found, item| scan_inline(context, found, item))
 		Table(table) => {
 			grid = table.grid.fold(
-				scan_nodes(scan, table.properties.preserved),
+				scan_nodes(scan, followed_by(table.properties.preserved, before(table.properties.change, |previous| previous.preserved))),
 				|found, column|
 					match column {
 						Column(_) => found
@@ -403,7 +407,7 @@ scan_block = |context, scan, block|
 			table.content.fold(grid, |found, item| scan_table_content(context, found, item))
 		}
 
-		Section(section) => scan_nodes(scan, section.preserved)
+		Section(section) => scan_nodes(scan, followed_by(section.preserved, before(section.change, |previous| previous.preserved)))
 		CommentStart(place) => scan_comment(context, scan, place)
 		CommentEnd(place) => scan_comment(context, scan, place)
 		Container({ element: node, content }) => content.fold(scan_node(scan, node), |found, item| scan_block(context, found, item))
@@ -413,7 +417,7 @@ scan_block = |context, scan, block|
 scan_table_content : WmlWrite.Context, Scan, Document.TableContent -> Scan
 scan_table_content = |context, scan, item|
 	match item {
-		Row(row) => row.content.fold(scan_nodes(scan, row.properties.preserved), |found, inner| scan_row_content(context, found, inner))
+		Row(row) => row.content.fold(scan_nodes(scan, followed_by(row.properties.preserved, before(row.properties.change, |previous| previous.preserved))), |found, inner| scan_row_content(context, found, inner))
 		CommentStart(place) => scan_comment(context, scan, place)
 		CommentEnd(place) => scan_comment(context, scan, place)
 		Container({ element: node, content }) => content.fold(scan_node(scan, node), |found, inner| scan_table_content(context, found, inner))
@@ -423,7 +427,7 @@ scan_table_content = |context, scan, item|
 scan_row_content : WmlWrite.Context, Scan, Document.RowContent -> Scan
 scan_row_content = |context, scan, item|
 	match item {
-		Cell(cell) => cell.content.fold(scan_nodes(scan, cell.properties.preserved), |found, block| scan_block(context, found, block))
+		Cell(cell) => cell.content.fold(scan_nodes(scan, followed_by(cell.properties.preserved, before(cell.properties.change, |previous| previous.preserved))), |found, block| scan_block(context, found, block))
 		CommentStart(place) => scan_comment(context, scan, place)
 		CommentEnd(place) => scan_comment(context, scan, place)
 		Container({ element: node, content }) => content.fold(scan_node(scan, node), |found, inner| scan_row_content(context, found, inner))
@@ -433,7 +437,7 @@ scan_row_content = |context, scan, item|
 scan_inline : WmlWrite.Context, Scan, Document.Inline -> Scan
 scan_inline = |context, scan, item|
 	match item {
-		Run(run) => run.content.fold(scan_nodes(scan, run.properties.preserved), |found, content| scan_run_content(context, found, content))
+		Run(run) => run.content.fold(scan_nodes(scan, followed_by(run.properties.preserved, before(run.properties.change, |previous| previous.preserved))), |found, content| scan_run_content(context, found, content))
 		Hyperlink({ target: _, preserved: _, content }) => content.fold(scan, |found, inner| scan_inline(context, found, inner))
 		SimpleField({ code: _, preserved: _, content }) => content.fold(scan, |found, inner| scan_inline(context, found, inner))
 		BookmarkStart(name) => { ..scan, starts: List.append(scan.starts, name) }
@@ -475,6 +479,11 @@ scan_comment = |context, scan, place|
 		Ok(id) => { ..scan, used: scan.used.insert(id) }
 		Err(_) => if (scan.missing.is_err()) scan else { ..scan, missing: Err(MissingComment(place)) }
 	}
+
+# What `kept` gives of the properties a tracked change replaced, if there is
+# one.
+before : List(Document.PropertyChange(p)), (p -> List(XmlTree.Node)) -> List(XmlTree.Node)
+before = |changes, kept| changes.fold([], |nodes, changed| List.concat(nodes, kept(changed.previous)))
 
 scan_nodes : Scan, List(XmlTree.Node) -> Scan
 scan_nodes = |scan, nodes| nodes.fold(scan, scan_node)
@@ -575,17 +584,19 @@ blocks = |content, mode, state| {
 
 paragraph_node : Document.Paragraph, Try(Document.Section, [NoSection]), State -> Written
 paragraph_node = |paragraph, ending, state| {
-	typed = paragraph_properties(paragraph.properties)
+	marked = mark_nodes(paragraph.properties.mark, state)
+	(typed, preserved) = with_mark(paragraph_properties(paragraph.properties), paragraph.properties.preserved, marked.nodes)
 	with_section = match ending {
 		Ok(section) => {
-			written = section_node(section, state)
+			written = section_node(section, marked.state)
 			{ typed: List.append(typed, written.node), state: written.state }
 		}
 
-		Err(NoSection) => { typed, state }
+		Err(NoSection) => { typed, state: marked.state }
 	}
-	properties = ordered(paragraph_order, with_section.typed, paragraph.properties.preserved)
-	out = paragraph.content.fold({ nodes: List.with_capacity(paragraph.content.len() + 1), state: with_section.state }, inline)
+	changed = property_change("pPrChange", "pPr", paragraph.properties.change, |previous| ordered(paragraph_order, paragraph_properties(previous), previous.preserved), with_section.state)
+	properties = ordered(paragraph_order, followed_by(with_section.typed, changed.nodes), preserved)
+	out = paragraph.content.fold({ nodes: List.with_capacity(paragraph.content.len() + 1), state: changed.state }, inline)
 	nodes = if (properties.is_empty()) out.nodes else List.prepend(out.nodes, element("pPr", [], properties))
 	{ node: element("p", [], nodes), state: out.state }
 }
@@ -690,6 +701,74 @@ inline = |out, item|
 		Preserved(node) => { ..out, nodes: List.append(out.nodes, node) }
 	}
 
+# A paragraph mark's changes in the schema's order, each with a fresh
+# identifier.
+mark_nodes : List(Document.MarkChange), State -> Out
+mark_nodes = |mark, state|
+	if mark.is_empty() {
+		{ nodes: [], state }
+	} else {
+		[(Insertion, "ins"), (Deletion, "del"), (MoveSource, "moveFrom"), (MoveDestination, "moveTo")].fold(
+			{ nodes: List.with_capacity(mark.len()), state },
+			|out, (kind, local)|
+				match mark.find_first(|change| change.kind == kind) {
+					Ok(change) => {
+						written = change_node(local, { author: change.author, date: change.date, preserved: change.preserved }, [], out.state)
+						{ nodes: List.append(out.nodes, written.node), state: written.state }
+					}
+
+					Err(_) => out
+				},
+		)
+	}
+
+# A paragraph's typed and kept properties with its mark's changes first in
+# the mark's character properties: in the first kept `w:rPr`, or in one of
+# their own.
+with_mark : List(XmlTree.Node), List(XmlTree.Node), List(XmlTree.Node) -> (List(XmlTree.Node), List(XmlTree.Node))
+with_mark = |typed, preserved, changes| {
+	if changes.is_empty() {
+		return (typed, preserved)
+	}
+	match List.find_first_index(
+		preserved,
+		|node| match node {
+			Element(found) => is_w(found.name, "rPr")
+			Text(_) => Bool.False
+		},
+	) {
+		Ok(index) =>
+			match preserved.get(index) {
+				Ok(Element(properties)) => (typed, List.set(preserved, index, Element({ ..properties, children: List.concat(changes, properties.children) })) ?? preserved)
+				_ => (typed, preserved)
+			}
+
+		Err(_) => (List.append(typed, element("rPr", [], changes)), preserved)
+	}
+}
+
+# A tracked change with a fresh identifier, its author, its date as it was
+# written, the attributes it kept and any others the element needs.
+change_node : Str, Document.Change, List(XmlTree.Attribute), State -> Written
+change_node = |local, change, extra, state| {
+	numbered = fresh_id(state)
+	attributes = List.join([[attribute("id", numbered.id), attribute("author", change.author)], date_attribute(change.date), extra, change.preserved])
+	{ node: element(local, attributes, []), state: numbered.state }
+}
+
+# A tracked change of properties: the change with a fresh identifier around
+# the properties as they were, written by `write`, in an `inner` element.
+property_change : Str, Str, List(Document.PropertyChange(p)), (p -> List(XmlTree.Node)), State -> Out
+property_change = |local, inner, change, write, state|
+	match change.first() {
+		Ok(changed) => {
+			written = change_node(local, { author: changed.author, date: changed.date, preserved: changed.preserved }, [], state)
+			{ nodes: [with_children(written.node, [element(inner, [], write(changed.previous))])], state: written.state }
+		}
+
+		Err(_) => { nodes: [], state }
+	}
+
 # The lowest identifier no kept content and nothing written before uses.
 fresh_id : State -> { id : Str, state : State }
 fresh_id = |state| {
@@ -707,9 +786,10 @@ date_attribute = |date|
 
 run_node : Document.Run, State -> Written
 run_node = |run, state| {
-	properties = ordered(run_order, run_properties(run.properties), run.properties.preserved)
+	changed = property_change("rPrChange", "rPr", run.properties.change, |previous| ordered(run_order, run_properties(previous), previous.preserved), state)
+	properties = ordered(run_order, followed_by(run_properties(run.properties), changed.nodes), run.properties.preserved)
 	start = if (properties.is_empty()) List.with_capacity(run.content.len()) else List.append(List.with_capacity(run.content.len() + 1), element("rPr", [], properties))
-	out = run.content.fold({ nodes: start, state }, run_content)
+	out = run.content.fold({ nodes: start, state: changed.state }, run_content)
 	{ node: element("r", [], out.nodes), state: out.state }
 }
 
@@ -1006,7 +1086,8 @@ with_attribute = |attributes, name, value|
 
 table_node : Document.Table, State -> Written
 table_node = |table, state| {
-	properties = element("tblPr", [], ordered(table_order, table_properties(table.properties), table.properties.preserved))
+	changed = property_change("tblPrChange", "tblPr", table.properties.change, |previous| ordered(table_order, table_properties(previous), previous.preserved), state)
+	properties = element("tblPr", [], ordered(table_order, followed_by(table_properties(table.properties), changed.nodes), table.properties.preserved))
 	grid = element(
 		"tblGrid",
 		[],
@@ -1018,7 +1099,7 @@ table_node = |table, state| {
 				},
 		),
 	)
-	out = table.content.fold({ nodes: List.concat([properties, grid], List.with_capacity(table.content.len())), state }, table_content)
+	out = table.content.fold({ nodes: List.concat([properties, grid], List.with_capacity(table.content.len())), state: changed.state }, table_content)
 	{ node: element("tbl", [], out.nodes), state: out.state }
 }
 
@@ -1061,10 +1142,13 @@ row_node = |row, state| {
 			}
 		}
 	}
-	properties = ordered(row_order, row_properties(row.properties), row.properties.preserved)
+	inserted = tracked_node("ins", row.properties.inserted, state)
+	deleted = tracked_node("del", row.properties.deleted, inserted.state)
+	changed = property_change("trPrChange", "trPr", row.properties.change, |previous| ordered(row_order, row_properties(previous), previous.preserved), deleted.state)
+	properties = ordered(row_order, followed_by(followed_by(followed_by(row_properties(row.properties), inserted.nodes), deleted.nodes), changed.nodes), row.properties.preserved)
 	start = if (properties.is_empty()) $exceptions else List.append($exceptions, element("trPr", [], properties))
 	rest = List.drop_first(row.content, $leading)
-	out = rest.fold({ nodes: List.concat(start, List.with_capacity(rest.len())), state }, row_content)
+	out = rest.fold({ nodes: List.concat(start, List.with_capacity(rest.len())), state: changed.state }, row_content)
 	{ node: element("tr", [], out.nodes), state: out.state }
 }
 
@@ -1072,8 +1156,25 @@ row_content : Out, Document.RowContent -> Out
 row_content = |out, item|
 	match item {
 		Cell(cell) => {
-			properties = ordered(cell_order, cell_properties(cell.properties), cell.properties.preserved)
-			inner = blocks(cell.content, Cell, out.state)
+			revised = match cell.properties.revision {
+				Inserted(change) => tracked_node("cellIns", Tracked(change), out.state)
+				Deleted(change) => tracked_node("cellDel", Tracked(change), out.state)
+				Merged(merged) => {
+					vertical = |local, merge|
+						match merge {
+							Continue => [attribute(local, "cont")]
+							Restart => [attribute(local, "rest")]
+							Unset => []
+						}
+					written = change_node("cellMerge", { author: merged.author, date: merged.date, preserved: merged.preserved }, List.concat(vertical("vMerge", merged.merge), vertical("vMergeOrig", merged.previous)), out.state)
+					{ nodes: [written.node], state: written.state }
+				}
+
+				Unset => { nodes: [], state: out.state }
+			}
+			changed = property_change("tcPrChange", "tcPr", cell.properties.change, |previous| ordered(cell_order, cell_properties(previous), previous.preserved), revised.state)
+			properties = ordered(cell_order, followed_by(followed_by(cell_properties(cell.properties), revised.nodes), changed.nodes), cell.properties.preserved)
+			inner = blocks(cell.content, Cell, changed.state)
 			nodes = if (properties.is_empty()) inner.nodes else List.prepend(inner.nodes, element("tcPr", [], properties))
 			{ nodes: List.append(out.nodes, element("tc", [], nodes)), state: inner.state }
 		}
@@ -1092,9 +1193,28 @@ section_node : Document.Section, State -> Written
 section_node = |section, state| {
 	headers = references("headerReference", header_relationship, section.headers, state)
 	footers = references("footerReference", footer_relationship, section.footers, headers.state)
-	typed = List.join([headers.nodes, footers.nodes, section_properties(section)])
-	{ node: element("sectPr", [], ordered(section_order, typed, section.preserved)), state: footers.state }
+	changed = property_change("sectPrChange", "sectPr", section.change, |previous| ordered(section_order, section_properties(previous), previous.preserved), footers.state)
+	typed = followed_by(List.join([headers.nodes, footers.nodes, section_properties(section)]), changed.nodes)
+	{ node: element("sectPr", [], ordered(section_order, typed, section.preserved)), state: changed.state }
 }
+
+# Typed properties followed by tracked changes, which most properties have
+# none of, without copying the properties when there are none.
+followed_by : List(XmlTree.Node), List(XmlTree.Node) -> List(XmlTree.Node)
+followed_by = |typed, changes| if (changes.is_empty()) typed else List.concat(typed, changes)
+
+# A tracked insertion or deletion of a row or cell, with a fresh identifier,
+# where there is one.
+tracked_node : Str, Document.Tracked, State -> Out
+tracked_node = |local, tracked, state|
+	match tracked {
+		Tracked(change) => {
+			written = change_node(local, change, [], state)
+			{ nodes: [written.node], state: written.state }
+		}
+
+		Unset => { nodes: [], state }
+	}
 
 # References to headers or footers, each through a relationship of `kind`
 # to its part.
@@ -1210,7 +1330,7 @@ section_order = ["headerReference", "footnotePr", "endnotePr", "type", "pgSz", "
 edge_order : List(Str)
 edge_order = ["top", "start", "left", "bottom", "end", "right", "insideH", "insideV", "tl2br", "tr2bl", "between", "bar"]
 
-paragraph_properties : Document.ParagraphProperties -> List(XmlTree.Node)
+paragraph_properties : Document.ParagraphPropertiesOf(c) -> List(XmlTree.Node)
 paragraph_properties = |properties| {
 	numbering = List.concat(
 		match properties.numbering.level {
@@ -1323,7 +1443,7 @@ alignment_name = |alignment|
 		NumTab => "numTab"
 	}
 
-run_properties : Document.RunProperties -> List(XmlTree.Node)
+run_properties : Document.RunPropertiesOf(c) -> List(XmlTree.Node)
 run_properties = |properties| {
 	fonts = properties.fonts
 	font_attributes = List.join([
@@ -1474,7 +1594,7 @@ underline_name = |line|
 		NoUnderline => "none"
 	}
 
-table_properties : Document.TableProperties -> List(XmlTree.Node)
+table_properties : Document.TablePropertiesOf(c) -> List(XmlTree.Node)
 table_properties = |properties|
 	List.join([
 		match properties.style {
@@ -1486,7 +1606,7 @@ table_properties = |properties|
 		shading(properties.shading),
 	])
 
-row_properties : Document.RowProperties -> List(XmlTree.Node)
+row_properties : Document.RowPropertiesOf(c) -> List(XmlTree.Node)
 row_properties = |properties|
 	List.join([
 		columns("gridBefore", properties.grid_before),
@@ -1494,7 +1614,7 @@ row_properties = |properties|
 		on_off("tblHeader", properties.header),
 	])
 
-cell_properties : Document.CellProperties -> List(XmlTree.Node)
+cell_properties : Document.CellPropertiesOf(c) -> List(XmlTree.Node)
 cell_properties = |properties|
 	List.join([
 		width("tcW", properties.width),
@@ -1587,7 +1707,7 @@ color = |local, chosen|
 		Unset => []
 	}
 
-section_properties : Document.Section -> List(XmlTree.Node)
+section_properties : Document.SectionOf(c) -> List(XmlTree.Node)
 section_properties = |section|
 	List.join([
 		match section.start {
@@ -1789,9 +1909,9 @@ expect {
 ## A section after a paragraph is written in its properties, the body's
 ## last is the body's own, and one in a table cell stands where it is.
 expect {
-	section = { start: NextPage, page_size: Unset, margins: Unset, columns: Equal({ count: 2, space: 720, separator: Line }), page_numbers: Unset, title_page: Unset, headers: [], footers: [], preserved: [] }
-	cell = Cell({ properties: { width: Twips(2000), span: Unset, merge: Continue, borders: [], shading: Unset, alignment: Unset, preserved: [] }, content: [paragraph([]), Section(section)] })
-	table = Table({ properties: { style: Unset, width: Unset, borders: [], shading: Unset, preserved: [] }, grid: [Column(2000)], content: [Row({ properties: { header: On, grid_before: Unset, grid_after: Unset, preserved: [] }, content: [cell] })] })
+	section = { start: NextPage, page_size: Unset, margins: Unset, columns: Equal({ count: 2, space: 720, separator: Line }), page_numbers: Unset, title_page: Unset, headers: [], footers: [], preserved: [], change: [] }
+	cell = Cell({ properties: { width: Twips(2000), span: Unset, merge: Continue, borders: [], shading: Unset, alignment: Unset, preserved: [], revision: Unset, change: [] }, content: [paragraph([]), Section(section)] })
+	table = Table({ properties: { style: Unset, width: Unset, borders: [], shading: Unset, preserved: [], change: [] }, grid: [Column(2000)], content: [Row({ properties: { header: On, grid_before: Unset, grid_after: Unset, preserved: [], inserted: Unset, deleted: Unset, change: [] }, content: [cell] })] })
 	ended = "<w:sectPr><w:type w:val=\"nextPage\"/><w:cols w:num=\"2\" w:sep=\"1\"/></w:sectPr>"
 	expected_table = "<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w=\"2000\"/></w:tblGrid><w:tr><w:trPr><w:tblHeader/></w:trPr><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/><w:vMerge/></w:tcPr><w:p/>${ended}</w:tc></w:tr></w:tbl>"
 	written([paragraph([]), Section(section), table, paragraph([]), Section(section)], no_context)
@@ -1851,6 +1971,39 @@ expect {
 	written(content, no_context) == "<w:body><w:p><w:bookmarkStart w:id=\"0\" w:name=\"b\"/>${moved}${deleted}${inserted}<w:bookmarkEnd w:id=\"0\"/></w:p></w:body></w:document>"
 }
 
+## A paragraph mark's changes are written first in its kept character
+## properties, or in their own; a change of properties holds the properties
+## before it, without their own mark; rows' and cells' changes are written in
+## their properties' order; and every change takes the lowest identifier
+## left in the order it is written.
+expect {
+	by = |author| { author, date: Unset, preserved: [] }
+	stamp = Date({ written: "2026-05-07T09:00:00Z", utc_seconds: 1778144400 })
+	kept_mark = XmlTree.parse("<w:rPr xmlns:w='${wordprocessingml}'><w:b/></w:rPr>".to_utf8(), {}) ?? Text("")
+	before_paragraph = { ..Document.paragraph_properties_with(Unset), alignment: Aligned(Left), mark: [{ kind: Insertion, author: "X", date: Unset, preserved: [] }] }
+	marked = { ..Document.no_paragraph_properties, preserved: [kept_mark], mark: [{ kind: Deletion, author: "B", date: Unset, preserved: [] }, { kind: Insertion, author: "A", date: stamp, preserved: [] }], change: [{ author: "C", date: Unset, preserved: [], previous: before_paragraph }] }
+	formatted = Run({ properties: { ..Document.no_run_properties, italic: On, change: [{ author: "D", date: Unset, preserved: [], previous: { ..Document.run_properties_with(Unset), bold: On } }] }, content: [Text("x")] })
+	moved_here = { ..Document.no_paragraph_properties, mark: [{ kind: MoveDestination, author: "E", date: Unset, preserved: [] }] }
+	plain_cell = |change| { width: Unset, span: Unset, merge: Unset, borders: [], shading: Unset, alignment: Unset, preserved: [], revision: Unset, change }
+	cell = |properties| Cell({ properties, content: [paragraph([])] })
+	plain_row = |change| { header: Unset, grid_before: Unset, grid_after: Unset, preserved: [], inserted: Unset, deleted: Unset, change }
+	row_properties_written = { ..plain_row([{ author: "H", date: Unset, preserved: [], previous: { ..plain_row(Unset), header: On } }]), inserted: Tracked(by("F")), deleted: Tracked(by("G")) }
+	cells = [cell({ ..plain_cell([{ author: "J", date: Unset, preserved: [], previous: { ..plain_cell(Unset), width: Auto } }]), revision: Merged({ author: "I", date: Unset, preserved: [], merge: Continue, previous: Unset }) }), cell({ ..plain_cell([]), revision: Inserted(by("K")) })]
+	plain_table = |change| { style: Unset, width: Unset, borders: [], shading: Unset, preserved: [], change }
+	table = Table({ properties: plain_table([{ author: "L", date: Unset, preserved: [], previous: { ..plain_table(Unset), style: Style("Grid") } }]), grid: [], content: [Row({ properties: row_properties_written, content: cells })] })
+	plain_section = |change| { start: Unset, page_size: Unset, margins: Unset, columns: Unset, page_numbers: Unset, title_page: Unset, headers: [], footers: [], preserved: [], change }
+	ending = plain_section([{ author: "M", date: Unset, preserved: [], previous: { ..plain_section(Unset), start: Continuous } }])
+	content = [Paragraph({ properties: marked, content: [formatted] }), Paragraph({ properties: moved_here, content: [] }), table, Section(ending)]
+	first = "<w:p><w:pPr><w:rPr><w:ins w:id=\"0\" w:author=\"A\" w:date=\"2026-05-07T09:00:00Z\"/><w:del w:id=\"1\" w:author=\"B\"/><w:b/></w:rPr><w:pPrChange w:id=\"2\" w:author=\"C\"><w:pPr><w:jc w:val=\"left\"/></w:pPr></w:pPrChange></w:pPr><w:r><w:rPr><w:i/><w:rPrChange w:id=\"3\" w:author=\"D\"><w:rPr><w:b/></w:rPr></w:rPrChange></w:rPr><w:t>x</w:t></w:r></w:p>"
+	second = "<w:p><w:pPr><w:rPr><w:moveTo w:id=\"4\" w:author=\"E\"/></w:rPr></w:pPr></w:p>"
+	table_properties_written = "<w:tblPr><w:tblPrChange w:id=\"5\" w:author=\"L\"><w:tblPr><w:tblStyle w:val=\"Grid\"/></w:tblPr></w:tblPrChange></w:tblPr><w:tblGrid/>"
+	row_written = "<w:trPr><w:ins w:id=\"6\" w:author=\"F\"/><w:del w:id=\"7\" w:author=\"G\"/><w:trPrChange w:id=\"8\" w:author=\"H\"><w:trPr><w:tblHeader/></w:trPr></w:trPrChange></w:trPr>"
+	merged = "<w:tc><w:tcPr><w:cellMerge w:id=\"9\" w:author=\"I\" w:vMerge=\"cont\"/><w:tcPrChange w:id=\"10\" w:author=\"J\"><w:tcPr><w:tcW w:w=\"0\" w:type=\"auto\"/></w:tcPr></w:tcPrChange></w:tcPr><w:p/></w:tc>"
+	inserted = "<w:tc><w:tcPr><w:cellIns w:id=\"11\" w:author=\"K\"/></w:tcPr><w:p/></w:tc>"
+	section_written = "<w:sectPr><w:sectPrChange w:id=\"12\" w:author=\"M\"><w:sectPr><w:type w:val=\"continuous\"/></w:sectPr></w:sectPrChange></w:sectPr>"
+	written(content, no_context) == "<w:body>${first}${second}<w:tbl>${table_properties_written}<w:tr>${row_written}${merged}${inserted}</w:tr></w:tbl>${section_written}</w:body></w:document>"
+}
+
 ## A part whose root is not a WordprocessingML document is not a main
 ## document and is written as it is.
 expect {
@@ -1886,8 +2039,8 @@ expect {
 	kept = XmlTree.parse("<w:ins xmlns:w='${wordprocessingml}' w:id='0'/>".to_utf8(), {}) ?? Text("")
 	identified = XmlTree.parse("<w:p xmlns:w='${wordprocessingml}' xmlns:w14='${word_2010}' w14:paraId='00000001'/>".to_utf8(), {}) ?? Text("")
 	comment = |content| { author: "Ada Reviewer", initials: Initials("AR"), date: Unset, content, preserved: [], parent: Unset, resolved: Bool.False, durable_id: Unset, utc_date: Unset }
-	cell = Cell({ properties: { width: Unset, span: Unset, merge: Unset, borders: [], shading: Unset, alignment: Unset, preserved: [] }, content: [paragraph([run([Text("in")])])] })
-	table = Table({ properties: { style: Unset, width: Unset, borders: [], shading: Unset, preserved: [] }, grid: [], content: [Row({ properties: { header: Unset, grid_before: Unset, grid_after: Unset, preserved: [] }, content: [cell] })] })
+	cell = Cell({ properties: { width: Unset, span: Unset, merge: Unset, borders: [], shading: Unset, alignment: Unset, preserved: [], revision: Unset, change: [] }, content: [paragraph([run([Text("in")])])] })
+	table = Table({ properties: { style: Unset, width: Unset, borders: [], shading: Unset, preserved: [], change: [] }, grid: [], content: [Row({ properties: { header: Unset, grid_before: Unset, grid_after: Unset, preserved: [], inserted: Unset, deleted: Unset, change: [] }, content: [cell] })] })
 	listed = [comment([paragraph([BookmarkStart("b"), BookmarkEnd("b"), run([Text("one")])]), paragraph([run([Text("two")])])]), comment([table]), comment([])]
 	body = [paragraph([Preserved(kept), CommentStart(0), BookmarkStart("a"), BookmarkEnd("a"), CommentEnd(0), run([CommentReference(0)])])]
 	ids = WmlWrite.comment_ids(body, listed)

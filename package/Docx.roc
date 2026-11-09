@@ -5,7 +5,8 @@
 ## a [Document]; `Docx.body` and `Docx.text` read what its body says,
 ## `Docx.final_text`, `Docx.original_text` and `Docx.revisions` its tracked
 ## changes, `Docx.footnotes` and `Docx.endnotes` its notes, `Docx.comments`
-## its comments, `Docx.people` their authors and `Docx.fields` its fields;
+## its comments, `Docx.people` their authors, `Docx.fields` its fields and
+## `Docx.tracks_revisions` whether it tracks changes;
 ## `Docx.to_bytes` writes a document as a package, its body written from the
 ## model, and `Docx.equivalent` says whether two documents write the same.
 ## What reading drops comes back as diagnostics beside the document, never
@@ -232,27 +233,37 @@ Docx :: [].{
 	## tables and content controls. A paragraph whose mark is deleted or moved
 	## away, as [Document.joins_next] says, runs on into the next paragraph
 	## without a line feed, unless a table, row or cell begins or ends between
-	## them. Every change the package reads stands as accepting it would
-	## leave it, so this is [Docx.final_text].
+	## them. A deleted row or cell is still there, without the text deleted
+	## from it, as [Revisions.text] gives the current text.
 	text : Document -> Str
-	text = |document| Revisions.text(Docx.body(document), Final)
+	text = |document| Revisions.text(Docx.body(document), Current)
 
 	## The text of a document's body with every tracked change accepted, as
-	## [Revisions.text] gives the final text of [Docx.body].
+	## [Revisions.text] gives the final text of [Docx.body]: deleted text,
+	## rows and cells out, and a paragraph whose mark is deleted run on into
+	## the next.
 	final_text : Document -> Str
 	final_text = |document| Revisions.text(Docx.body(document), Final)
 
 	## The text of a document's body with every tracked change rejected, as
 	## [Revisions.text] gives the original text of [Docx.body]: deleted and
-	## moved-away text in, inserted and moved-in text out.
+	## moved-away text in, inserted and moved-in text, inserted rows and
+	## cells out, and a paragraph whose mark is inserted run on into the
+	## next.
 	original_text : Document -> Str
 	original_text = |document| Revisions.text(Docx.body(document), Original)
 
 	## The tracked changes of a document's body in reading order, as
-	## [Revisions.list] finds them in [Docx.body]: each with its kind,
-	## author, date, content, text and move.
+	## [Revisions.list] finds them in [Docx.body]: each with its kind, what
+	## it changed, its author, date, content, text and move.
 	revisions : Document -> List(Revisions.Listed)
 	revisions = |document| Revisions.list(Docx.body(document))
+
+	## Whether a document records changes as tracked changes when it is
+	## edited, as [WmlRead.tracks_revisions] reads it from the settings part
+	## of its main document. A document without the part does not.
+	tracks_revisions : Document -> Bool
+	tracks_revisions = |document| WmlRead.tracks_revisions(main_related_tree(document, settings_relationship))
 }
 
 # What reading and writing the main document part need from the rest of the
@@ -459,6 +470,9 @@ comments_extensible_relationship = "http://schemas.microsoft.com/office/2018/08/
 people_relationship : Str
 people_relationship = "http://schemas.microsoft.com/office/2011/relationships/people"
 
+settings_relationship : Str
+settings_relationship = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings"
+
 # The tree of the part the main document's relationship of `kind` targets,
 # or an empty one.
 main_related_tree : Document, Str -> XmlTree.Node
@@ -524,7 +538,7 @@ expect {
 ## through a content control but not into or out of a table, row or cell;
 ## an inserted mark changes nothing.
 expect {
-	mark = |revision, text| "<w:p><w:pPr><w:rPr><w:${revision}/></w:rPr></w:pPr><w:r><w:t>${text}</w:t></w:r></w:p>"
+	mark = |revision, text| "<w:p><w:pPr><w:rPr><w:${revision} w:author='A'/></w:rPr></w:pPr><w:r><w:t>${text}</w:t></w:r></w:p>"
 	plain = |text| "<w:p><w:r><w:t>${text}</w:t></w:r></w:p>"
 	control = "<w:sdt><w:sdtContent>${plain("b")}</w:sdtContent></w:sdt>"
 	table = "<w:tbl><w:tr><w:tc>${mark("del", "d")}</w:tc><w:tc>${plain("e")}</w:tc></w:tr></w:tbl>"
@@ -572,6 +586,53 @@ expect {
 			(5, MoveDestination, "B", Move("m"), "Away", Bool.False),
 			(6, MoveDestination, "B", Unpaired, "loose", Bool.False),
 		]
+}
+
+## A deleted row or cell is current text but not final text, and an
+## inserted one is not original text; changes of paragraph marks, rows,
+## cells and properties are listed in reading order with what they changed,
+## and a change in the next paragraph follows a change of a mark.
+expect {
+	formatted = "<w:p><w:pPr><w:rPr><w:ins w:author='E'/></w:rPr><w:pPrChange w:author='F'><w:pPr/></w:pPrChange></w:pPr><w:r><w:rPr><w:b/><w:rPrChange w:author='G'><w:rPr/></w:rPrChange></w:rPr><w:t>p</w:t></w:r></w:p>"
+	following = "<w:p><w:ins w:author='E'><w:r><w:t>q</w:t></w:r></w:ins></w:p>"
+	row = |properties, cells| "<w:tr><w:trPr>${properties}</w:trPr>${cells}</w:tr>"
+	cell = |properties, text| "<w:tc><w:tcPr>${properties}</w:tcPr><w:p><w:r><w:t>${text}</w:t></w:r></w:p></w:tc>"
+	rows = [row("<w:ins w:author='A'/>", cell("", "new")), row("<w:del w:author='B'/>", cell("", "old")), row("", Str.concat(cell("<w:cellIns w:author='C'/>", "in"), cell("<w:cellDel w:author='D'/>", "out")))]
+	parsed = Docx.parse(package_of("${formatted}${following}<w:tbl>${Str.join_with(rows, "")}</w:tbl>")?)?
+	listed = Docx.revisions(parsed.document).map(|change| (change.id, change.kind, change.of, change.author, change.text, change.follows))
+	Docx.text(parsed.document) == "p\nq\nnew\nold\nin\nout\n"
+		and Docx.final_text(parsed.document) == "p\nq\nnew\nin\n"
+		and Docx.original_text(parsed.document) == "p\nold\nout\n"
+		and listed
+			== [
+				(0, Formatting, Paragraph, "F", "p", Bool.False),
+				(1, Formatting, Run, "G", "p", Bool.False),
+				(2, Insertion, ParagraphMark, "E", "\n", Bool.True),
+				(3, Insertion, Content, "E", "q", Bool.True),
+				(4, Insertion, Row, "A", "", Bool.False),
+				(5, Deletion, Row, "B", "", Bool.False),
+				(6, Insertion, Cell, "C", "", Bool.False),
+				(7, Deletion, Cell, "D", "", Bool.False),
+			]
+}
+
+## A document tracks changes when the settings part of its main document
+## says so, and one without the part does not.
+expect {
+	main = "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"
+	settings = "application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"
+	graph = {
+		relationships: [{ id: "rId1", kind: Opc.officedocument_relationship, target: "/word/document.xml", mode: Internal }],
+		parts: [
+			{ name: "/word/document.xml", content_type: main, relationships: [{ id: "rId1", kind: settings_relationship, target: "/word/settings.xml", mode: Internal }] },
+			{ name: "/word/settings.xml", content_type: settings, relationships: [] },
+		],
+	}
+	namespace = "xmlns:w='http://schemas.openxmlformats.org/wordprocessingml/2006/main'"
+	content = |name| if (name == "/word/settings.xml") "<w:settings ${namespace}><w:trackRevisions/></w:settings>" else "<w:document ${namespace}><w:body/></w:document>"
+	tracked = Docx.parse(Opc.to_bytes(graph, |name| Bytes(content(name).to_utf8()))?)?
+	untracked = Docx.parse(package_of("")?)?
+	Docx.tracks_revisions(tracked.document) and !Docx.tracks_revisions(untracked.document)
 }
 
 ## A document without a main document part has no blocks and no text.

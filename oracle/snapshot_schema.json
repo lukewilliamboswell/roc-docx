@@ -52,7 +52,7 @@
       "items": { "$ref": "#/$defs/comment" }
     },
     "revisions": {
-      "description": "Tracked changes in the order they first occur in the body. A move's source is a deletion and its destination an insertion. A change that directly follows another of the same kind, author and date, with nothing between them in the paragraph, is part of it.",
+      "description": "Tracked changes of text and of run and paragraph formatting, in the order they first occur in the body; changes of sections, tables, rows and cells are not listed. A move's source is a deletion and its destination an insertion, of text or of a paragraph mark, and a change of a run's or paragraph's properties a format change. A change that directly follows another of the same kind, author and date, with nothing between them, is part of it, including across a paragraph mark the change covers. An inserted paragraph mark is a line feed in its insertion's text; a deletion's text is the text of the paragraphs it deleted from joined by line feeds, a paragraph it deleted no text from not counted, so a deleted mark alone has empty text.",
       "type": "array",
       "items": { "$ref": "#/$defs/revision" }
     },
@@ -122,7 +122,7 @@
         "kind": { "enum": ["insertion", "deletion", "format"] },
         "author": { "type": "string" },
         "date": { "type": "string" },
-        "text": { "description": "The inserted, deleted or reformatted text, paragraphs joined by LF. A field in it contributes its result, not its code.", "type": "string" }
+        "text": { "description": "The inserted, deleted or reformatted text, paragraphs joined by LF as the list's rule says. A field in it contributes its result, not its code.", "type": "string" }
       }
     },
     "section": {

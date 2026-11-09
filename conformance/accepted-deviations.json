@@ -48,9 +48,9 @@
       "document": "tests/fixtures/word/revisions.docx",
       "key": "revisions",
       "message_pattern": "^10 against 13, first difference at \\[2\\]: ",
-      "cause": "pandoc's docx reader has no representation for property changes: it ignores w:rPrChange and w:pPrChange (and section, table, row and cell property changes), which LibreOffice lists as format changes. It reports a paragraph-mark deletion as an empty span, which the adapter applies to the current text but does not list, and its move texts lose their leading space (smushInlines). LibreOffice lists 13 changes, pandoc 10.",
+      "cause": "pandoc's docx reader has no representation for property changes: it ignores w:rPrChange and w:pPrChange, which LibreOffice and the package list as format changes (2 of the 3 missing). It reports a paragraph-mark deletion as an empty span, which the adapter applies to the current text but cannot list as a change (the third), and does not see the inserted paragraph mark, which LibreOffice and the package count as the line feed ending the insertion before it. Its move texts lose their leading space (smushInlines). LibreOffice and the package list 13 changes, pandoc 10.",
       "reference": "https://github.com/jgm/pandoc/blob/3.9.0.2/src/Text/Pandoc/Readers/Docx/Parse.hs (no handling of *PrChange; pChange for paragraph marks)",
-      "reviewed_on": "2026-11-09"
+      "reviewed_on": "2026-11-10"
     },
     {
       "oracle": "libreoffice",

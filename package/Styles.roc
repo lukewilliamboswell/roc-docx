@@ -171,7 +171,8 @@ Styles :: {
 	## `style` names the style that applied. A property nobody states stays
 	## `Unset`, the application's default; a tab stop a style set and the
 	## paragraph cleared stays in `tabs` as cleared; and `preserved` is empty,
-	## since content the model does not hold is not resolved.
+	## since content the model does not hold is not resolved, and so are
+	## `mark` and `change`, since tracked changes are not either.
 	##
 	## A numbering level's properties come from the paragraph's numbering
 	## reference, which itself may come from its style; a caller resolves
@@ -201,7 +202,7 @@ Styles :: {
 	## defaults or off, inverted by each of the table, paragraph and character
 	## styles that turns it on, and set outright by direct formatting. Every
 	## other property is taken from the last that states it, `Unset`
-	## where nobody does, and `preserved` is empty.
+	## where nobody does, and `preserved` and `change` are empty.
 	effective_run : Styles, { paragraph : Document.ParagraphProperties, run : Document.RunProperties }, Contributions -> Document.RunProperties
 	effective_run = |styles, { paragraph, run }, contributions| {
 		none = { paragraph: Document.no_paragraph_properties, run: Document.no_run_properties }
@@ -534,6 +535,8 @@ merge_paragraph = |base, over| {
 		level: prefer(base.numbering.level, over.numbering.level),
 	},
 	preserved: [],
+	mark: [],
+	change: [],
 }
 
 # Tab stops by position, a stop in `replacing` taking the place of one at
@@ -578,6 +581,7 @@ merge_run = |base, over| {
 		complex: prefer(base.language.complex, over.language.complex),
 	},
 	preserved: [],
+	change: [],
 }
 
 # The style table of a styles part with this content.
