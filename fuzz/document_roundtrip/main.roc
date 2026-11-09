@@ -126,14 +126,14 @@ exact_ceiling = |program|
 	if program == small_program {
 		Ok(965)
 	} else if program == large_program {
-		Ok(15_196)
+		Ok(15_189)
 	} else {
 		Err(NotDeclared)
 	}
 
 # The small and large declared bodies repeat one program, the large one
-# sixteen times as often. Writing them takes 965 and 15,196 allocations
-# and requests 221,944 and 3,533,608 bytes, ratios of 15.7 and 15.9 against
+# sixteen times as often. Writing them takes 965 and 15,189 allocations
+# and requests 222,632 and 3,536,976 bytes, ratios of 15.7 and 15.9 against
 # the sixteen the test allows: writing is linear with a small constant.
 small_program : List(U8)
 small_program = List.join(List.repeat(program_unit, 4))
@@ -244,7 +244,7 @@ step = |state, kind, variant, position|
 		8 => { ..state, properties: paragraph_properties(variant) }
 		9 => with_block(state, Table(table(variant, position)))
 		10 => with_block(end_paragraph(state), Section(section(variant)))
-		11 => with_inline(state, Container({ element: node("ins", [("id", (100 + position).to_str()), ("author", "Ada")], []), content: [plain([Text("added")])] }))
+		11 => with_inline(state, Revision({ kind: Insertion, author: "Ada", date: Unset, content: [plain([Text("added")])], preserved: [] }))
 		12 => with_inline(state, Preserved(node("commentRangeStart", [("id", (variant % 4).to_str())], [])))
 		_ => with_inline(state, plain([Text("x")]))
 	}

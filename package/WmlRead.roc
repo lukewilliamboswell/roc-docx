@@ -53,13 +53,18 @@ WmlRead :: [].{
 	## `w:commentRangeStart` and `w:commentRangeEnd` are a comment range's
 	## boundaries, in a paragraph or between blocks, rows or cells.
 	##
+	## In a paragraph, `w:ins`, `w:del`, `w:moveFrom` and `w:moveTo` are
+	## tracked changes, and `w:moveFromRangeStart`, `w:moveToRangeStart` and
+	## their ends a move's ranges. In a deletion or a move's source,
+	## `w:delText` is text and `w:delInstrText` a piece of a field's code.
+	##
 	## An element whose attributes are not ones the model can hold, such as a
 	## break of an unknown type, a symbol without a character code, a note
 	## reference with a custom mark or a bookmark spanning table columns, or
 	## that names what the package does not have, such as a missing note or
 	## comment, a relationship that is not there or a bookmark end without
-	## its start, is kept as it was read; a hyperlink or simple field like that is a
-	## container of its content.
+	## its start, is kept as it was read; a hyperlink, simple field or
+	## tracked change like that is a container of its content.
 	##
 	## A table's first `w:tblPr` holds its properties and its first
 	## `w:tblGrid` its grid, a row's first `w:trPr` and a cell's first
@@ -352,13 +357,18 @@ WmlRead :: [].{
 }
 
 # What reading a part looks up: its relationships and its bookmarks' names by
-# identifier, and each note's and comment's place by identifier.
+# identifier, each note's and comment's place by identifier, and the names of
+# its moves' source and destination ranges by identifier; and whether what is
+# read is deleted content, where deleted text is text.
 Reading : {
 	relationships : Dict(Str, Opc.Relationship),
 	bookmarks : Dict(Str, Str),
 	footnotes : Dict(Str, U64),
 	endnotes : Dict(Str, U64),
 	comments : Dict(Str, U64),
+	move_sources : Dict(Str, Str),
+	move_destinations : Dict(Str, Str),
+	deleted : Bool,
 }
 
 reading : XmlTree.Node, WmlRead.Context -> Reading
@@ -367,7 +377,17 @@ reading = |tree, context| {
 	for relationship in context.relationships {
 		$relationships = $relationships.insert(relationship.id, relationship)
 	}
-	{ relationships: $relationships, bookmarks: bookmark_names(tree), footnotes: places(context.footnotes), endnotes: places(context.endnotes), comments: places(context.comments) }
+	names = range_names(tree)
+	{
+		relationships: $relationships,
+		bookmarks: names.bookmarks,
+		footnotes: places(context.footnotes),
+		endnotes: places(context.endnotes),
+		comments: places(context.comments),
+		move_sources: names.move_sources,
+		move_destinations: names.move_destinations,
+		deleted: Bool.False,
+	}
 }
 
 places : List(Str) -> Dict(Str, U64)
@@ -381,21 +401,35 @@ places = |ids| {
 	$places
 }
 
-# The names of a tree's bookmarks by identifier, from every start that has
-# both, outside runs and property elements of any namespace, where bookmarks
-# never are. The tree is walked as deep as the readers walk it, within the
-# XML depth limit, without copying any list of children, and names are
-# compared by local name first, as comparing a namespace costs an
-# allocation.
-bookmark_names : XmlTree.Node -> Dict(Str, Str)
-bookmark_names = |root| names_in(Dict.with_capacity(0), root)
+# The names of a tree's bookmarks, and of its moves' source and destination
+# ranges, by identifier, from every start that has both, outside runs and
+# property elements of any namespace, where neither ever is. The tree is
+# walked as deep as the readers walk it, within the XML depth limit, without
+# copying any list of children, and names are compared by local name first,
+# as comparing a namespace costs an allocation.
+RangeNames : { bookmarks : Dict(Str, Str), move_sources : Dict(Str, Str), move_destinations : Dict(Str, Str) }
 
-names_in : Dict(Str, Str), XmlTree.Node -> Dict(Str, Str)
+range_names : XmlTree.Node -> RangeNames
+range_names = |root| names_in({ bookmarks: Dict.with_capacity(0), move_sources: Dict.with_capacity(0), move_destinations: Dict.with_capacity(0) }, root)
+
+names_in : RangeNames, XmlTree.Node -> RangeNames
 names_in = |names, node|
 	match node {
 		Element(element) if element.name.local == "bookmarkStart" and is_w(element.name, "bookmarkStart") =>
 			match (value_of(element, "id"), value_of(element, "name")) {
-				(Ok(id), Ok(name)) => names.insert(id, name)
+				(Ok(id), Ok(name)) => { ..names, bookmarks: names.bookmarks.insert(id, name) }
+				_ => names
+			}
+
+		Element(element) if element.name.local == "moveFromRangeStart" and is_w(element.name, "moveFromRangeStart") =>
+			match (value_of(element, "id"), value_of(element, "name")) {
+				(Ok(id), Ok(name)) => { ..names, move_sources: names.move_sources.insert(id, name) }
+				_ => names
+			}
+
+		Element(element) if element.name.local == "moveToRangeStart" and is_w(element.name, "moveToRangeStart") =>
+			match (value_of(element, "id"), value_of(element, "name")) {
+				(Ok(id), Ok(name)) => { ..names, move_destinations: names.move_destinations.insert(id, name) }
 				_ => names
 			}
 
@@ -861,7 +895,7 @@ block_containers = ["sdt", "sdtContent", "customXml"]
 # Elements whose content is paragraph content, read as containers in an
 # inline's place.
 inline_containers : List(Str)
-inline_containers = ["ins", "del", "moveFrom", "moveTo", "sdt", "sdtContent", "smartTag", "customXml", "dir", "bdo"]
+inline_containers = ["sdt", "sdtContent", "smartTag", "customXml", "dir", "bdo"]
 
 # Block reading carries what it has noticed so far and gives it back with
 # what it read.
@@ -1973,8 +2007,68 @@ inline = |node, within|
 		Element(element) if is_w(element.name, "bookmarkEnd") => bookmark_end(element, within) ?? Preserved(node)
 		Element(element) if element.name.local == "commentRangeStart" and is_w(element.name, "commentRangeStart") => comment_place(element, within).map_ok(|place| CommentStart(place)) ?? Preserved(node)
 		Element(element) if element.name.local == "commentRangeEnd" and is_w(element.name, "commentRangeEnd") => comment_place(element, within).map_ok(|place| CommentEnd(place)) ?? Preserved(node)
+		Element(element) if is_w_in(element.name, ["ins", "del", "moveFrom", "moveTo"]) => revision(element, within) ?? container(element, within)
+		Element(element) if is_w_in(element.name, ["moveFromRangeStart", "moveToRangeStart"]) => move_start(element) ?? Preserved(node)
+		Element(element) if is_w_in(element.name, ["moveFromRangeEnd", "moveToRangeEnd"]) => move_end(element, within) ?? Preserved(node)
 		Element(element) if is_w_in(element.name, inline_containers) => container(element, within)
 		_ => Preserved(node)
+	}
+
+# A tracked change: `w:ins` an insertion, `w:del` a deletion, `w:moveFrom`
+# and `w:moveTo` a move's source and destination, by `w:author` and at
+# `w:date`, its document identifier `w:id` replaced by its place. Content
+# deleted or moved away is deleted content. One without an author, which
+# the schema requires, is not modelled.
+revision : Element, Reading -> Try(Document.Inline, [NoAuthor])
+revision = |element, within| {
+	kind = match element.name.local {
+		"ins" => Insertion
+		"del" => Deletion
+		"moveFrom" => MoveSource
+		_ => MoveDestination
+	}
+	author = value_of(element, "author") ? |_| NoAuthor
+	stamp = date_of(element)
+	inner = if (kind == Deletion or kind == MoveSource) { ..within, deleted: Bool.True } else within
+	Ok(Revision({ kind, author, date: stamp, content: inlines(element.children, inner), preserved: element.attributes.drop_if(|attribute| is_w_in(attribute.name, ["id", "author"]) or (is_w(attribute.name, "date") and stamp != Unset)) }))
+}
+
+# The start of a move's range, `w:moveFromRangeStart` of its source or
+# `w:moveToRangeStart` of its destination, named by `w:name`, by `w:author`
+# at `w:date`. One without a name or author is not modelled.
+move_start : Element -> Try(Document.Inline, [Unknown])
+move_start = |element| {
+	name = value_of(element, "name") ? |_| Unknown
+	author = value_of(element, "author") ? |_| Unknown
+	stamp = date_of(element)
+	side = if (element.name.local == "moveFromRangeStart") Source else Destination
+	Ok(MoveStart({ side, name, author, date: stamp, preserved: element.attributes.drop_if(|attribute| is_w_in(attribute.name, ["id", "name", "author"]) or (is_w(attribute.name, "date") and stamp != Unset)) }))
+}
+
+# The end of a move's range names the range its `w:id` started; an end
+# without a start, or displaced by custom XML, is not modelled.
+move_end : Element, Reading -> Try(Document.Inline, [Unknown])
+move_end = |element, within|
+	if only(element, ["id"]) {
+		id = value_of(element, "id") ? |_| Unknown
+		(side, names) = if (element.name.local == "moveFromRangeEnd") (Source, within.move_sources) else (Destination, within.move_destinations)
+		Ok(MoveEnd({ side, name: names.get(id) ? |_| Unknown }))
+	} else {
+		Err(Unknown)
+	}
+
+# A tracked change's `w:date`, unless it has none or it is not a date and
+# time.
+date_of : Element -> [Unset, Date(Document.Timestamp)]
+date_of = |element|
+	match value_of(element, "date") {
+		Ok(written) =>
+			match timestamp(written) {
+				Ok(stamp) => Date(stamp)
+				Err(NotDate) => Unset
+			}
+
+		Err(NotFound) => Unset
 	}
 
 container : Element, Reading -> Document.Inline
@@ -2081,6 +2175,8 @@ run_content = |node, within|
 				"commentReference" => comment_place(element, within).map_ok(|place| CommentReference(place)) ?? Preserved(node)
 				"fldChar" => field_mark(element, node) ?? Preserved(node)
 				"instrText" => text(element).map_ok(|code| FieldCode(code)) ?? Preserved(node)
+				"delText" if within.deleted => text(element).map_ok(|value| Text(value)) ?? Preserved(node)
+				"delInstrText" if within.deleted => text(element).map_ok(|code| FieldCode(code)) ?? Preserved(node)
 				"drawing" => picture(element, node, within) ?? Preserved(node)
 				_ => Preserved(node)
 			}
@@ -2162,10 +2258,11 @@ embedded = |root| {
 emus : Try(Str, [NotFound]) -> Try(U64, [NotLength])
 emus = |value| natural(value ? |_| NotLength).map_err(|_| NotLength)
 
-# The text of `w:t` or `w:instrText`, which hold only character data. Unless
-# the element says `xml:space="preserve"`, its whitespace is the producer's
-# layout, as Word and LibreOffice read it: leading and trailing whitespace is
-# removed, and each tab, carriage return and line feed left is a space.
+# The text of `w:t`, `w:instrText` or their deleted forms, which hold only
+# character data. Unless the element says `xml:space="preserve"`, its
+# whitespace is the producer's layout, as Word and LibreOffice read it:
+# leading and trailing whitespace is removed, and each tab, carriage return
+# and line feed left is a space.
 text : Element -> Try(Str, [NotText])
 text = |element| {
 	if !element.attributes.all(|attribute| attribute.name.local == "space" and attribute.name.namespace == Uri(xml_namespace)) {
@@ -2480,22 +2577,48 @@ expect {
 	}
 }
 
-## Revisions and content controls keep their element and have their content
-## read; comment ranges stay in their place.
+## Content controls keep their element and have their content read; comment
+## ranges stay in their place.
 expect {
-	content = "<w:pPr><w:pStyle w:val='Body'/></w:pPr><w:commentRangeStart w:id='1'/><w:ins w:id='2' w:author='A'><w:r><w:t>new</w:t></w:r></w:ins><w:del w:id='3' w:author='A'><w:r><w:delText>old</w:delText></w:r></w:del><w:sdt><w:sdtPr/><w:sdtContent><w:r><w:t>field</w:t></w:r></w:sdtContent></w:sdt><w:commentRangeEnd w:id='1'/>"
+	content = "<w:pPr><w:pStyle w:val='Body'/></w:pPr><w:commentRangeStart w:id='1'/><w:sdt><w:sdtPr/><w:sdtContent><w:r><w:t>field</w:t></w:r></w:sdtContent></w:sdt><w:commentRangeEnd w:id='1'/>"
 	match read("<w:p>${content}</w:p>") {
-		[Paragraph({ properties, content: [Preserved(_), Container(ins), Container(del), Container(sdt), Preserved(_)] })] =>
+		[Paragraph({ properties, content: [Preserved(_), Container(sdt), Preserved(_)] })] =>
 			properties == { ..Document.no_paragraph_properties, style: Style("Body") }
-				and ins.content.len() == 1
-				and del.content.len() == 1
 				and match sdt.content {
 					[Preserved(_), Container(inner)] => inner.content.len() == 1
 					_ => Bool.False
 				}
-				and match ins.element {
-					Element(element) => element.children.is_empty() and element.attributes.len() == 2
+				and match sdt.element {
+					Element(element) => element.children.is_empty()
 					Text(_) => Bool.False
+				}
+
+		_ => Bool.False
+	}
+}
+
+## Tracked changes are read with their kind, author and date, the document's
+## identifier dropped and an unreadable date kept; deleted text and deleted
+## field code are text and field code in deleted content only; a change
+## without an author is a container; a move's ranges are named, an end by
+## the name its start gave, and an end without a start is kept.
+expect {
+	moved = "<w:moveFromRangeStart w:id='5' w:author='B' w:date='2026-05-07T11:30:00Z' w:name='move1'/><w:moveFrom w:id='6' w:author='B'><w:r><w:t>m</w:t></w:r></w:moveFrom><w:moveFromRangeEnd w:id='5'/><w:moveToRangeEnd w:id='9'/>"
+	changed = "<w:ins w:id='2' w:author='A' w:date='soon'><w:r><w:t>new</w:t></w:r></w:ins><w:del w:id='3' w:author='A' w:date='2026-05-07T09:00:00+02:00'><w:r><w:delText>old</w:delText><w:delInstrText> PAGE </w:delInstrText></w:r></w:del><w:r><w:delText>stray</w:delText></w:r><w:ins w:id='4'><w:r><w:t>anon</w:t></w:r></w:ins>"
+	match read("<w:p>${moved}${changed}</w:p>") {
+		[Paragraph({ properties: _, content: [MoveStart(start), Revision(source), MoveEnd(end), Preserved(_), Revision(inserted), Revision(deleted), Run(stray), Container(_)] })] =>
+			start == { side: Source, name: "move1", author: "B", date: Date({ written: "2026-05-07T11:30:00Z", utc_seconds: 1778153400 }), preserved: [] }
+				and end == { side: Source, name: "move1" }
+				and source.kind == MoveSource
+				and source.date == Unset
+				and source.preserved.is_empty()
+				and inserted.kind == Insertion
+				and inserted.date == Unset
+				and inserted.preserved.len() == 1
+				and deleted == { kind: Deletion, author: "A", date: Date({ written: "2026-05-07T09:00:00+02:00", utc_seconds: 1778137200 }), content: [Run({ properties: Document.no_run_properties, content: [Text("old"), FieldCode("PAGE")] })], preserved: [] }
+				and match stray.content {
+					[Preserved(_)] => Bool.True
+					_ => Bool.False
 				}
 
 		_ => Bool.False

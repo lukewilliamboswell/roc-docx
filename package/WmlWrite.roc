@@ -12,9 +12,10 @@
 ##
 ## What the model names by meaning is given its identifier here, as a
 ## deterministic function of the model and the part's relationships: a
-## bookmark its `w:id`, a note reference the identifier of its note, and a
-## hyperlink, picture, header or footer the relationship that leads to its
-## target, found among the part's relationships or added to them.
+## bookmark, a tracked change and a move's range its `w:id`, a note reference
+## the identifier of its note, and a hyperlink, picture, header or footer the
+## relationship that leads to its target, found among the part's
+## relationships or added to them.
 import Document
 import Opc
 import XmlTree
@@ -48,10 +49,16 @@ WmlWrite :: [].{
 	## before it, a section is written where it stands.
 	##
 	## Bookmark identifiers come from one space shared with the identifiers
-	## of the comments and those the kept content uses, such as revisions: each
-	## bookmark takes the lowest number no kept element and no earlier
-	## bookmark uses, in the order the bookmarks begin, and its end takes its
+	## of the comments and those the kept content uses, such as a paragraph
+	## mark's revision: each bookmark takes the lowest number no kept element
+	## and no earlier bookmark uses, in the order the bookmarks begin, and its
+	## end takes its start's. Tracked changes and moves' ranges then take the
+	## lowest numbers left, in the order they are written, a range's end its
 	## start's. A comment's range and reference take its comment's identifier.
+	##
+	## A tracked change is written with its identifier, author, date as it
+	## was written and the attributes it kept; in a deletion, text is
+	## `w:delText` and a piece of field code `w:delInstrText`.
 	## A relationship is reused when the part has one to the same
 	## target in the same mode, of the kind the reference needs where the
 	## reader asks for one; otherwise it is added as `rId` with the lowest
@@ -95,7 +102,9 @@ WmlWrite :: [].{
 # What writing carries from one piece of content to the next: the part's
 # relationships so far, the notes' identifiers, each modelled bookmark
 # name's identifier and each kept bookmark start's, the names whose start is written, the identifiers kept
-# content uses and the lowest identifier a further bookmark may take.
+# content uses and the lowest identifier a further bookmark may take; the
+# identifiers of the moves' source and destination ranges begun, by name;
+# and whether what is written is deleted content.
 State : {
 	relationships : List(Opc.Relationship),
 	footnotes : List(Str),
@@ -106,6 +115,9 @@ State : {
 	started : Set(Str),
 	used : Set(Str),
 	next : U64,
+	move_sources : Dict(Str, Str),
+	move_destinations : Dict(Str, Str),
+	deleted : Bool,
 }
 
 # Written content and the state after it.
@@ -138,7 +150,7 @@ initial = |content, context| {
 			$next = id + 1
 		}
 	}
-	Ok({ relationships: context.relationships, footnotes: context.footnotes, endnotes: context.endnotes, comments: context.comments, bookmarks: $bookmarks, kept_bookmarks: scan.named, started: Set.with_capacity(scan.starts.len()), used: scan.used, next: $next })
+	Ok({ relationships: context.relationships, footnotes: context.footnotes, endnotes: context.endnotes, comments: context.comments, bookmarks: $bookmarks, kept_bookmarks: scan.named, started: Set.with_capacity(scan.starts.len()), used: scan.used, next: $next, move_sources: Dict.with_capacity(0), move_destinations: Dict.with_capacity(0), deleted: Bool.False })
 }
 
 # The lowest identifier from `from` up that no kept content uses.
@@ -205,6 +217,9 @@ scan_inline = |context, scan, item|
 		CommentStart(place) => scan_comment(context, scan, place)
 		CommentEnd(place) => scan_comment(context, scan, place)
 		Container({ element: node, content }) => content.fold(scan_node(scan, node), |found, inner| scan_inline(context, found, inner))
+		Revision({ kind: _, author: _, date: _, content, preserved: _ }) => content.fold(scan, |found, inner| scan_inline(context, found, inner))
+		MoveStart(_) => scan
+		MoveEnd(_) => scan
 		Preserved(node) => scan_node(scan, node)
 	}
 
@@ -412,7 +427,58 @@ inline = |out, item|
 			{ nodes: List.append(out.nodes, with_children(kept, inner.nodes)), state: inner.state }
 		}
 
+		Revision({ kind, author, date, content, preserved }) => {
+			local = match kind {
+				Insertion => "ins"
+				Deletion => "del"
+				MoveSource => "moveFrom"
+				MoveDestination => "moveTo"
+			}
+			numbered = fresh_id(out.state)
+			outer = numbered.state.deleted
+			inner = content.fold({ nodes: List.with_capacity(content.len()), state: { ..numbered.state, deleted: outer or kind == Deletion } }, inline)
+			attributes = List.concat([attribute("id", numbered.id), attribute("author", author)], List.concat(date_attribute(date), preserved))
+			{ nodes: List.append(out.nodes, element(local, attributes, inner.nodes)), state: { ..inner.state, deleted: outer } }
+		}
+
+		MoveStart({ side, name, author, date, preserved }) => {
+			numbered = fresh_id(out.state)
+			(local, state) = match side {
+				Source => ("moveFromRangeStart", { ..numbered.state, move_sources: numbered.state.move_sources.insert(name, numbered.id) })
+				Destination => ("moveToRangeStart", { ..numbered.state, move_destinations: numbered.state.move_destinations.insert(name, numbered.id) })
+			}
+			attributes = List.concat([attribute("id", numbered.id), attribute("name", name), attribute("author", author)], List.concat(date_attribute(date), preserved))
+			{ nodes: List.append(out.nodes, element(local, attributes, [])), state }
+		}
+
+		MoveEnd({ side, name }) => {
+			(local, begun) = match side {
+				Source => ("moveFromRangeEnd", out.state.move_sources.get(name))
+				Destination => ("moveToRangeEnd", out.state.move_destinations.get(name))
+			}
+			ended = match begun {
+				Ok(id) => { id, state: out.state }
+				Err(_) => fresh_id(out.state)
+			}
+			{ nodes: List.append(out.nodes, element(local, [attribute("id", ended.id)], [])), state: ended.state }
+		}
+
 		Preserved(node) => { ..out, nodes: List.append(out.nodes, node) }
+	}
+
+# The lowest identifier no kept content and nothing written before uses.
+fresh_id : State -> { id : Str, state : State }
+fresh_id = |state| {
+	id = free_id(state.used, state.next)
+	{ id: id.to_str(), state: { ..state, next: id + 1 } }
+}
+
+# A tracked change's date as it was written, when it has one.
+date_attribute : [Unset, Date(Document.Timestamp)] -> List(XmlTree.Attribute)
+date_attribute = |date|
+	match date {
+		Date(stamp) => [attribute("date", stamp.written)]
+		Unset => []
 	}
 
 run_node : Document.Run, State -> Written
@@ -440,6 +506,8 @@ run_content = |out, content|
 		}
 
 		CommentReference(place) => { ..out, nodes: List.append(out.nodes, comment_node("commentReference", place, out.state)) }
+		Text(value) if out.state.deleted => { ..out, nodes: List.append(out.nodes, text_element("delText", value)) }
+		FieldCode(code) if out.state.deleted => { ..out, nodes: List.append(out.nodes, text_element("delInstrText", code)) }
 		_ => { ..out, nodes: List.append(out.nodes, plain_content(content)) }
 	}
 
@@ -485,8 +553,8 @@ plain_content = |content|
 		Picture({ media: _, size: _, drawing }) => drawing
 	}
 
-# Text in `w:t` or `w:instrText`, said to keep its whitespace exactly when
-# reading would otherwise take some of it as layout.
+# Text in `w:t`, `w:instrText` or their deleted forms, said to keep its
+# whitespace exactly when reading would otherwise take some of it as layout.
 text_element : Str, Str -> XmlTree.Node
 text_element = |local, value| {
 	bytes = value.to_utf8()
@@ -1394,6 +1462,30 @@ expect {
 	text == expected
 		and relationships == Ok([("rId1", "https://example.org/a"), ("rId2", "https://example.org/b")])
 		and written([paragraph([run([NoteReference({ kind: Endnote, note: 0 })])])], context) == "missing note"
+}
+
+## Tracked changes and moves' ranges take the lowest identifiers left after
+## the bookmarks', in the order they are written, a range's end its start's;
+## a change keeps its date as written and its other attributes, and deleted
+## text and field code are written as deleted inside a deletion only.
+expect {
+	stamp = Date({ written: "2026-05-07T09:00:00Z", utc_seconds: 1778144400 })
+	change = |kind, content| Revision({ kind, author: "Ada", date: stamp, content, preserved: [] })
+	content = [
+		paragraph([
+			BookmarkStart("b"),
+			MoveStart({ side: Source, name: "m", author: "Ada", date: Unset, preserved: [] }),
+			change(MoveSource, [run([Text("away")])]),
+			MoveEnd({ side: Source, name: "m" }),
+			change(Deletion, [run([FieldCode(" PAGE "), Text("old")]), change(Insertion, [run([Text("x")])])]),
+			Revision({ kind: Insertion, author: "Lin", date: Unset, content: [run([Text("new")])], preserved: [] }),
+			BookmarkEnd("b"),
+		]),
+	]
+	moved = "<w:moveFromRangeStart w:id=\"1\" w:name=\"m\" w:author=\"Ada\"/><w:moveFrom w:id=\"2\" w:author=\"Ada\" w:date=\"2026-05-07T09:00:00Z\"><w:r><w:t>away</w:t></w:r></w:moveFrom><w:moveFromRangeEnd w:id=\"1\"/>"
+	deleted = "<w:del w:id=\"3\" w:author=\"Ada\" w:date=\"2026-05-07T09:00:00Z\"><w:r><w:delInstrText xml:space=\"preserve\"> PAGE </w:delInstrText><w:delText>old</w:delText></w:r><w:ins w:id=\"4\" w:author=\"Ada\" w:date=\"2026-05-07T09:00:00Z\"><w:r><w:delText>x</w:delText></w:r></w:ins></w:del>"
+	inserted = "<w:ins w:id=\"5\" w:author=\"Lin\"><w:r><w:t>new</w:t></w:r></w:ins>"
+	written(content, no_context) == "<w:body><w:p><w:bookmarkStart w:id=\"0\" w:name=\"b\"/>${moved}${deleted}${inserted}<w:bookmarkEnd w:id=\"0\"/></w:p></w:body></w:document>"
 }
 
 ## A part whose root is not a WordprocessingML document is not a main

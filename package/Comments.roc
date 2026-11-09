@@ -252,11 +252,14 @@ walk_inline = |state, inline, current|
 
 		Hyperlink({ target: _, preserved: _, content }) => content.fold(state, |inner, child| walk_inline(inner, child, current))
 		SimpleField({ code: _, preserved: _, content }) => content.fold(state, |inner, child| walk_inline(inner, child, current))
-		Container({ element, content }) => content.fold(state, |inner, child| walk_inline(inner, child, current and !is_removal(element)))
+		Container({ element: _, content }) => content.fold(state, |inner, child| walk_inline(inner, child, current))
+		Revision({ kind, author: _, date: _, content, preserved: _ }) => content.fold(state, |inner, child| walk_inline(inner, child, current and kind != Deletion and kind != MoveSource))
 		CommentStart(id) => begin(state, id)
 		CommentEnd(id) => end(state, id)
 		BookmarkStart(_) => state
 		BookmarkEnd(_) => state
+		MoveStart(_) => state
+		MoveEnd(_) => state
 		Preserved(_) => state
 	}
 
@@ -307,14 +310,6 @@ line_end = |state| if (state.joining) { ..state, text: List.append(state.text, 1
 
 text_between : List(U8), U64, U64 -> Str
 text_between = |text, from, to| Str.from_utf8(text.sublist({ start: from, len: to - from })) ?? ""
-
-# Whether an element marks content deleted or moved away under tracking.
-is_removal : XmlTree.Node -> Bool
-is_removal = |node|
-	match node {
-		Element(element) => element.name.namespace == Uri(wordprocessingml) and ["del", "moveFrom"].contains(element.name.local)
-		Text(_) => Bool.False
-	}
 
 wordprocessingml : Str
 wordprocessingml = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -432,7 +427,7 @@ anchors_of = |content, ids| {
 expect {
 	run = |text| "<w:r><w:t xml:space='preserve'>${text}</w:t></w:r>"
 	reference = |id| "<w:r><w:commentReference w:id='${id}'/></w:r>"
-	first = "<w:p>${run("Lead ")}${reference("1")}<w:commentRangeStart w:id='0'/>${run("one")}<w:del><w:r><w:delText>gone</w:delText></w:r></w:del><w:ins>${run(" new")}</w:ins></w:p>"
+	first = "<w:p>${run("Lead ")}${reference("1")}<w:commentRangeStart w:id='0'/>${run("one")}<w:del w:author='A'><w:r><w:delText>gone</w:delText></w:r></w:del><w:ins w:author='A'>${run(" new")}</w:ins></w:p>"
 	second = "<w:p>${run("two")}<w:commentRangeEnd w:id='0'/>${reference("0")}<w:commentRangeStart w:id='2'/><w:commentRangeEnd w:id='2'/>${reference("2")}</w:p>"
 	anchors_of("${first}${second}", ["0", "1", "2", "3"])
 		== [

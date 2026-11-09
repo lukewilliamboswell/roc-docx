@@ -6,14 +6,15 @@
 ## declares in `keys` only what the package is authoritative for: the
 ## body's blocks with their kind, level, list kind and text, their runs'
 ## direct formatting and hyperlinks, the notes' kinds and text, the comments'
-## authors, dates, text, anchored text, threads and resolution, the
-## sections' page geometry and
+## authors, dates, text, anchored text, threads and resolution, the tracked
+## changes' kinds, authors, dates and text, the sections' page geometry and
 ## header and footer text, and the core properties. Every other field holds
 ## its empty value.
 import Docx
 import Document
 import Numbering
 import Opc
+import Revisions
 import Styles
 import XmlTree
 
@@ -59,6 +60,15 @@ Snapshot :: [].{
 	## thread starts at, reached by following parents up, its own index when
 	## that comment is not among them; and whether it is resolved.
 	##
+	## The revisions are the body's tracked changes in reading order, as
+	## [Revisions.list] finds them: an insertion or a move's destination is
+	## an insertion and a deletion or a move's source a deletion, each with
+	## its author, its date as the instant in UTC or empty, and its text. A
+	## change that directly follows one of the same kind, author and date is
+	## part of it. A paragraph mark's change and a change of a paragraph's or
+	## run's properties are not listed, so a body holding one declares no
+	## revision keys.
+	##
 	## The sections are those [Document.sections] finds in the body, with
 	## their page geometry in twips and the text of their default header
 	## and footer, and the properties are the document's core properties,
@@ -87,11 +97,11 @@ Snapshot :: [].{
 				"  \"schema\": \"roc-docx-snapshot/1\",",
 				"  \"producer\": {\"name\": \"roc-docx\", \"version\": ${quoted(version)}},",
 				"  \"document\": ${quoted(path)},",
-				"  \"keys\": [${Str.join_with(keys.map(quoted), ", ")}],",
+				"  \"keys\": [${Str.join_with(keys_of(body).map(quoted), ", ")}],",
 				"  \"blocks\": [${list_json(blocks)}],",
 				"  \"notes\": [${list_json(notes)}],",
 				"  \"comments\": [${list_json(comments_json(document, tables))}],",
-				"  \"revisions\": [],",
+				"  \"revisions\": [${list_json(revisions_json(body))}],",
 				"  \"sections\": [${list_json(sections_json(document, body, tables))}],",
 				"  \"properties\": ${properties_json(Docx.core_properties(document))}",
 				"}",
@@ -104,6 +114,11 @@ Snapshot :: [].{
 
 wordprocessingml : Str
 wordprocessingml = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+
+# The keys the snapshot of a body declares: the revision keys only when the
+# body holds no tracked change the package does not list.
+keys_of : List(Document.Block) -> List(Str)
+keys_of = |body| if (body.any(holds_unlisted)) keys.drop_if(|key| key.starts_with("revisions.")) else keys
 
 keys : List(Str)
 keys = [
@@ -127,6 +142,10 @@ keys = [
 	"comments.anchor",
 	"comments.thread",
 	"comments.resolved",
+	"revisions.kind",
+	"revisions.author",
+	"revisions.date",
+	"revisions.text",
 	"sections.page_width",
 	"sections.page_height",
 	"sections.orientation",
@@ -145,6 +164,67 @@ keys = [
 	"properties.created",
 	"properties.modified",
 ]
+
+# The body's tracked changes as JSON objects, in reading order, as
+# [Revisions.list] finds them: an insertion or a move's destination is an
+# insertion and a deletion or a move's source a deletion, with its author,
+# its date as the instant in UTC or empty, and its text. A change that
+# follows one of the same kind, author and date directly is part of it.
+revisions_json : List(Document.Block) -> List(Str)
+revisions_json = |body| {
+	var $out = List.with_capacity(16)
+	for listed in Revisions.list(body) {
+		kind = match listed.kind {
+			Insertion => "insertion"
+			MoveDestination => "insertion"
+			Deletion => "deletion"
+			MoveSource => "deletion"
+		}
+		date = match listed.date {
+			Date(stamp) => utc_text(stamp.utc_seconds)
+			Unset => ""
+		}
+		$out = match $out.last() {
+			Ok(previous) if listed.follows and previous.kind == kind and previous.author == listed.author and previous.date == date => List.append(List.drop_last($out, 1), { ..previous, text: Str.concat(previous.text, listed.text) })
+			_ => List.append($out, { kind, author: listed.author, date, text: listed.text })
+		}
+	}
+	$out.map(|entry| "{\"kind\": \"${entry.kind}\", \"author\": ${quoted(entry.author)}, \"date\": ${quoted(entry.date)}, \"text\": ${quoted(entry.text)}}")
+}
+
+# Whether a block holds a tracked change the snapshot does not list yet: a
+# paragraph mark's change, or a change of a paragraph's or run's properties.
+holds_unlisted : Document.Block -> Bool
+holds_unlisted = |block|
+	match block {
+		Paragraph(paragraph) =>
+			paragraph.properties.preserved.any(
+				|property|
+					match property {
+						Element(element) if is_named(property, ["rPr"]) => element.children.any(|child| is_named(child, revisions))
+						_ => is_named(property, ["pPrChange"])
+					},
+			)
+				or paragraph.content.any(inline_unlisted)
+
+		Table(table) => Document.table_rows(table).any(|row| Document.row_cells(row).any(|cell| cell.content.any(holds_unlisted)))
+		Container({ element: _, content }) => content.any(holds_unlisted)
+		Section(_) => Bool.False
+		CommentStart(_) => Bool.False
+		CommentEnd(_) => Bool.False
+		Preserved(_) => Bool.False
+	}
+
+inline_unlisted : Document.Inline -> Bool
+inline_unlisted = |inline|
+	match inline {
+		Run(run) => run.properties.preserved.any(|property| is_named(property, ["rPrChange"]))
+		Hyperlink({ target: _, preserved: _, content }) => content.any(inline_unlisted)
+		SimpleField({ code: _, preserved: _, content }) => content.any(inline_unlisted)
+		Revision({ kind: _, author: _, date: _, content, preserved: _ }) => content.any(inline_unlisted)
+		Container({ element: _, content }) => content.any(inline_unlisted)
+		_ => Bool.False
+	}
 
 # The comments the body anchors as JSON objects, in the order their anchors
 # begin.
@@ -448,12 +528,10 @@ snapshot_runs = |state, inline, link|
 			content.fold(state, |out, inner| snapshot_runs(out, inner, field_link))
 		}
 
-		Container({ element, content }) =>
-			if is_named(element, ["del", "moveFrom"]) {
-				state
-			} else {
-				content.fold(state, |out, inner| snapshot_runs(out, inner, link))
-			}
+		Container({ element: _, content }) => content.fold(state, |out, inner| snapshot_runs(out, inner, link))
+		Revision({ kind: Deletion, author: _, date: _, content: _, preserved: _ }) => state
+		Revision({ kind: MoveSource, author: _, date: _, content: _, preserved: _ }) => state
+		Revision({ kind: _, author: _, date: _, content, preserved: _ }) => content.fold(state, |out, inner| snapshot_runs(out, inner, link))
 
 		Run(run) => run.content.fold(state, |out, content| content_runs(out, run, content, link))
 		_ => with_text(state, { text: Document.inline_text(inline), formatting: formatting(Document.no_run_properties), link })
@@ -571,6 +649,7 @@ inline_note_references = |out, inline|
 		Hyperlink({ target: _, preserved: _, content }) => content.fold(out, inline_note_references)
 		SimpleField({ code: _, preserved: _, content }) => content.fold(out, inline_note_references)
 		Container({ element: _, content }) => content.fold(out, inline_note_references)
+		Revision({ kind: _, author: _, date: _, content, preserved: _ }) => content.fold(out, inline_note_references)
 		_ => out
 	}
 
@@ -604,9 +683,12 @@ inline_anchors = |inline|
 
 		Hyperlink({ target: _, preserved: _, content }) => content.any(inline_anchors)
 		SimpleField({ code: _, preserved: _, content }) => content.any(inline_anchors)
-		Container({ element, content }) => is_named(element, revisions) or content.any(inline_anchors)
+		Container({ element: _, content }) => content.any(inline_anchors)
+		Revision(_) => Bool.True
 		BookmarkStart(_) => Bool.False
 		BookmarkEnd(_) => Bool.False
+		MoveStart(_) => Bool.False
+		MoveEnd(_) => Bool.False
 		CommentStart(_) => Bool.True
 		CommentEnd(_) => Bool.True
 		Preserved(node) => is_named(node, ["commentRangeStart", "commentRangeEnd"])
@@ -714,7 +796,7 @@ run_line = |text, link| "{\"text\": \"${text}\", \"bold\": false, \"italic\": fa
 ## document without core properties has every property empty.
 expect {
 	empty = "<w:p/><w:p><w:r><w:t></w:t></w:r><w:bookmarkStart w:id='1' w:name='b'/></w:p>"
-	anchoring = "<w:p><w:del><w:r><w:delText>gone</w:delText></w:r></w:del></w:p><w:p><w:commentRangeStart w:id='1'/></w:p><w:p><w:r><w:footnoteReference w:id='1'/></w:r></w:p><w:p><w:pPr><w:rPr><w:ins w:id='2'/></w:rPr></w:pPr></w:p>"
+	anchoring = "<w:p><w:del w:author='A'><w:r><w:delText>gone</w:delText></w:r></w:del></w:p><w:p><w:commentRangeStart w:id='1'/></w:p><w:p><w:r><w:footnoteReference w:id='1'/></w:r></w:p><w:p><w:pPr><w:rPr><w:ins w:id='2'/></w:rPr></w:pPr></w:p>"
 	table = "<w:tbl><w:tr><w:tc><w:p><w:r><w:t>cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"
 	control = "<w:sdt><w:sdtContent><w:p><w:r><w:t>Say \"hi\"</w:t><w:br/></w:r></w:p></w:sdtContent></w:sdt>"
 	block = |kind, text| block_line(kind, text, "")
@@ -724,7 +806,7 @@ expect {
 			"  \"schema\": \"roc-docx-snapshot/1\",",
 			"  \"producer\": {\"name\": \"roc-docx\", \"version\": \"test\"},",
 			"  \"document\": \"a \\\"b\\\".docx\",",
-			"  \"keys\": [${Str.join_with(keys.map(quoted), ", ")}],",
+			"  \"keys\": [${Str.join_with(keys.drop_if(|key| key.starts_with("revisions.")).map(quoted), ", ")}],",
 			"  \"blocks\": [",
 			"${block("paragraph", "")},\n${block("paragraph", "")},\n${block("paragraph", "")},\n${block("paragraph", "")},",
 			"    {\"kind\": \"table\", \"level\": 0, \"list\": \"\", \"text\": \"\", \"runs\": [], \"rows\": [[\"cell\"]]},",
@@ -732,7 +814,7 @@ expect {
 			"  ],",
 			"  \"notes\": [],",
 			"  \"comments\": [],",
-			"  \"revisions\": [],",
+			"  \"revisions\": [\n    {\"kind\": \"deletion\", \"author\": \"A\", \"date\": \"\", \"text\": \"gone\"}\n  ],",
 			"  \"sections\": [",
 			"    {\"page_width\": 12240, \"page_height\": 15840, \"orientation\": \"portrait\", \"margin_top\": 1440, \"margin_bottom\": 1440, \"margin_left\": 1440, \"margin_right\": 1440, \"header\": \"\", \"footer\": \"\"}",
 			"  ],",
@@ -836,7 +918,7 @@ expect {
 ## one block with the next paragraph, through a content control, but a table
 ## ends it, and a joined paragraph with no text still anchors its revision.
 expect {
-	moved = "<w:p><w:r><w:t>a</w:t></w:r><w:moveFrom><w:r><w:t>b</w:t></w:r></w:moveFrom><w:moveTo><w:r><w:t>c</w:t></w:r></w:moveTo></w:p>"
+	moved = "<w:p><w:r><w:t>a</w:t></w:r><w:moveFrom w:author='A'><w:r><w:t>b</w:t></w:r></w:moveFrom><w:moveTo w:author='A'><w:r><w:t>c</w:t></w:r></w:moveTo></w:p>"
 	deleted_mark = |text| "<w:p><w:pPr><w:rPr><w:del w:id='1'/></w:rPr></w:pPr><w:r><w:t>${text}</w:t></w:r></w:p>"
 	control = "<w:sdt><w:sdtContent><w:p><w:r><w:t>e</w:t></w:r></w:p></w:sdtContent></w:sdt>"
 	table = "<w:tbl><w:tr><w:tc><w:p/></w:tc></w:tr></w:tbl>"
@@ -844,6 +926,27 @@ expect {
 	paragraph = |text| block_json({ kind: "paragraph", level: 0, list: "", text, runs: if (text == "") [] else [{ text, formatting: formatting(Document.no_run_properties), link: "" }], rows: [] })
 	expected = [paragraph("ac"), paragraph("de"), paragraph("f"), block_json({ kind: "table", level: 0, list: "", text: "", runs: [], rows: [[""]] }), paragraph("")]
 	snapshot_of(body, no_notes).map_ok(|json| json.contains("\"blocks\": [\n    ${Str.join_with(expected, ",\n    ")}\n  ],")) == Ok(Bool.True)
+}
+
+## Tracked changes are listed as insertions and deletions with their author,
+## their date as the instant in UTC and their text, a change that follows one
+## of the same kind, author and date directly being part of it; the revision
+## keys are declared unless the body holds a change the snapshot does not
+## list, such as a change of a run's properties.
+expect {
+	change = |kind, author, date, content| "<w:${kind} w:author='${author}' ${date}>${content}</w:${kind}>"
+	at = "w:date='2026-05-07T09:00:00Z'"
+	body = "<w:p>${change("ins", "A", at, "<w:r><w:t xml:space='preserve'>one </w:t></w:r>")}${change("ins", "A", "w:date='2026-05-07T10:00:00+01:00'", "<w:r><w:t>two</w:t></w:r>")}${change("del", "A", at, "<w:r><w:delText>three</w:delText></w:r>")}${change("moveFrom", "B", "", "<w:r><w:t>four</w:t></w:r>")}</w:p>"
+	expected = [
+		"{\"kind\": \"insertion\", \"author\": \"A\", \"date\": \"2026-05-07T09:00:00Z\", \"text\": \"one two\"}",
+		"{\"kind\": \"deletion\", \"author\": \"A\", \"date\": \"2026-05-07T09:00:00Z\", \"text\": \"three\"}",
+		"{\"kind\": \"deletion\", \"author\": \"B\", \"date\": \"\", \"text\": \"four\"}",
+	]
+	listed = snapshot_of(body, no_notes)?
+	formatted = snapshot_of("<w:p><w:r><w:rPr><w:b/><w:rPrChange w:id='1' w:author='A'><w:rPr/></w:rPrChange></w:rPr><w:t>x</w:t></w:r></w:p>", no_notes)?
+	listed.contains("  \"revisions\": [\n    ${Str.join_with(expected, ",\n    ")}\n  ],")
+		and listed.contains("\"revisions.text\"")
+		and !formatted.contains("\"revisions.text\"")
 }
 
 ## JSON strings escape quotes, backslashes and control characters and keep

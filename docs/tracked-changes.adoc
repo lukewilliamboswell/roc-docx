@@ -1,0 +1,104 @@
+= Read a document's tracked changes
+
+This chapter reads the changes a document records under tracking: what was
+inserted, deleted or moved, by whom and when, and the document's text with
+every change accepted or every change rejected. It continues from
+<<read-a-documents-text>>, whose blocks and current text it builds on.
+
+== The text before and after review
+
+`Docx.final_text` gives the body's text with every tracked change accepted,
+and `Docx.original_text` with every change rejected:
+
+[source,roc]
+----
+{ document, diagnostics: _ } = Docx.parse(bytes)?
+before = Docx.original_text(document)
+after = Docx.final_text(document)
+----
+
+Both read the body the way `Docx.text` does, every paragraph's text followed
+by a line feed, and differ in what the changes leave:
+
+* In the final text, inserted text and text moved in are included, and
+  deleted text and text moved away are not. A paragraph whose mark was
+  deleted or moved away runs on into the next paragraph.
+* In the original text, deleted text and text moved away are included, and
+  inserted text and text moved in are not. A paragraph whose mark was
+  inserted or moved in runs on into the next paragraph.
+
+A paragraph never runs on into or out of a table cell. A deleted field
+contributes the result it last displayed, as any field does; its deleted
+instructions contribute nothing.
+
+`Docx.text` is the current text, as LibreOffice and pandoc show a document
+with its changes as they stand. For the changes the package reads it is the
+final text.
+
+== The changes
+
+`Docx.revisions` lists the body's tracked changes in reading order,
+including those in tables, content controls, hyperlinks and fields:
+
+[source,roc]
+----
+summaries = Docx.revisions(document).map(
+    |change|
+        match change.kind {
+            Insertion => "${change.author} inserted ${change.text}"
+            Deletion => "${change.author} deleted ${change.text}"
+            MoveSource => "${change.author} moved ${change.text} away"
+            MoveDestination => "${change.author} moved ${change.text} here"
+        },
+)
+----
+
+Each entry is a `Revisions.Listed` record:
+
+* `id`, the change's place among the body's changes in reading order, which
+  identifies it; the document's own numbers for its changes are not part of
+  the model;
+* `kind`: `Insertion`, `Deletion`, `MoveSource` for content moved away from
+  here, or `MoveDestination` for the same content arriving elsewhere;
+* `author`, the name of the person who made the change;
+* `date`, `Date(timestamp)` or `Unset`, a `Document.Timestamp` as a
+  comment's date is, so `utc_seconds` gives the instant whatever zone the
+  document wrote;
+* `content`, the inlines the change covers;
+* `move`, `Move(name)` for a move's source or destination that stands
+  inside a range of its side, naming the move, or `Unpaired`;
+* `text`, the content's text, with the changes inside it shown, so a
+  deletion's text is the text it deleted;
+* `follows`, whether the change comes directly after the one listed before
+  it, nothing between them, as one change split in two does.
+
+A change inside another, such as an insertion made inside text that was
+later moved, is listed after the change that holds it.
+
+== Changes in the model
+
+In a paragraph's content, a tracked change is a
+`Revision({ kind, author, date, content, preserved })` inline: the change
+and the inlines it covers. `preserved` keeps the change's other attributes,
+and a date that is not a date and time, as they were read. Inside a deletion
+or a move's source, deleted text is `Text` run content and deleted field
+instructions are `FieldCode`, so deleted content reads like any other.
+
+A move is recorded twice: where the content was and where it went. Each side
+stands inside a range, `MoveStart({ side, name, author, date, preserved })`
+to `MoveEnd({ side, name })`, with `side` either `Source` or `Destination`.
+The source's and the destination's ranges share the move's name, which pairs
+them.
+
+The schema requires every change to name its author. A change without one is
+kept as a `Container` of its content rather than read with an invented
+author, and its deleted text stays `Preserved`. A move's range without a
+name or author, or whose end names no range that started, is kept as
+`Preserved`.
+
+A change to a paragraph's mark stays in the paragraph's `preserved`
+properties, where the texts above find it, and is not listed. Changes to
+properties and to table rows and cells are not read yet. They stay where
+they were read, in the `preserved` properties of their paragraph, run,
+table, row, cell or section, and a document is written back with them
+unchanged.

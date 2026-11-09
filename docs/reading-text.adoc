@@ -74,10 +74,11 @@ inline or run content. A property element the model does not represent
 stays in `properties.preserved`. An element whose content is blocks or paragraph
 content is a `Container`: the element itself, without its children, and its
 content read as blocks or inlines. Content controls and custom XML are
-containers of blocks, and of rows and cells inside a table; inserted,
-deleted and moved text, content controls, smart tags and bidirectional
-embeddings are containers of inlines. That is how the text in a content
-control is still text.
+containers of blocks, and of rows and cells inside a table; content
+controls, smart tags and bidirectional embeddings are containers of
+inlines. That is how the text in a content control is still text. Tracked
+changes are inlines of their own, which <<read-a-documents-tracked-changes>>
+describes.
 
 A break of a type the schema does not define, a symbol without a character
 code and text holding markup are kept as `Preserved` run content rather than

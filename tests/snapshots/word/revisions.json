@@ -20,7 +20,18 @@
   ],
   "notes": [],
   "comments": [],
-  "revisions": [],
+  "revisions": [
+    {"kind": "deletion", "author": "Ada Reviewer", "date": "2026-05-07T09:00:00Z", "text": "within ten days"},
+    {"kind": "insertion", "author": "Ada Reviewer", "date": "2026-05-07T09:00:00Z", "text": "within five working days"},
+    {"kind": "deletion", "author": "Grace Author", "date": "2026-05-07T11:30:00Z", "text": " Late payments bear interest."},
+    {"kind": "insertion", "author": "Grace Author", "date": "2026-05-07T11:30:00Z", "text": " Late payments bear interest."},
+    {"kind": "insertion", "author": "Lin Editor", "date": "2026-05-08T16:45:00Z", "text": "This paragraph was inserted in full."},
+    {"kind": "deletion", "author": "Ada Reviewer", "date": "2026-05-07T09:00:00Z", "text": "4 May 2026"},
+    {"kind": "insertion", "author": "Grace Author", "date": "2026-05-07T11:30:00Z", "text": "Testing"},
+    {"kind": "insertion", "author": "Grace Author", "date": "2026-05-07T11:30:00Z", "text": "August"},
+    {"kind": "deletion", "author": "Ada Reviewer", "date": "2026-05-07T09:00:00Z", "text": "Pilot"},
+    {"kind": "deletion", "author": "Ada Reviewer", "date": "2026-05-07T09:00:00Z", "text": "July"}
+  ],
   "sections": [
     {"page_width": 11906, "page_height": 16838, "orientation": "portrait", "margin_top": 1440, "margin_bottom": 1440, "margin_left": 1440, "margin_right": 1440, "header": "", "footer": ""}
   ],

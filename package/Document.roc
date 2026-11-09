@@ -138,13 +138,21 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 	Numbering : { instance : [Unset, Instance(U32)], level : [Unset, Level(U8)] }
 
 	## A paragraph's content, in order: a run; a hyperlink; a simple field; a
-	## bookmark's start or end; the start or end of a comment's range; an
-	## element the model does not represent whose content is still read as
-	## paragraph content, kept without its children in `element` (an
-	## inserted, deleted or moved range, a content control and its content, a
-	## smart tag, custom XML, a bidirectional embedding, or a hyperlink whose
-	## target cannot be resolved); or any other element kept whole in its
-	## place.
+	## bookmark's start or end; the start or end of a comment's range; a
+	## tracked change and the content it covers; the start or end of a move's
+	## range; an element the model does not represent whose content is still
+	## read as paragraph content, kept without its children in `element` (a
+	## content control and its content, a smart tag, custom XML, a
+	## bidirectional embedding, a hyperlink whose target cannot be resolved,
+	## or a tracked change without the author the schema requires); or any
+	## other element kept whole in its place.
+	##
+	## A tracked change, a [Document.Revision], is identified by its place
+	## among the body's tracked changes in reading order, as
+	## [Revisions.list] gives it, not by the identifier the document wrote.
+	## A move's range marks where moved content left, its source, or where
+	## it arrived, its destination; the source's and destination's ranges
+	## share the move's name, which pairs them.
 	##
 	## A hyperlink holds its target, the attributes the model does not
 	## represent (a tooltip, a target frame, whether it was visited) and its
@@ -164,6 +172,9 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 		BookmarkEnd(Str),
 		CommentStart(U64),
 		CommentEnd(U64),
+		Revision(Revision),
+		MoveStart(MoveRange),
+		MoveEnd({ side : MoveSide, name : Str }),
 		Container({ element : XmlTree.Node, content : List(Inline) }),
 		Preserved(XmlTree.Node),
 	].{
@@ -171,6 +182,26 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 		## Compare two inlines structurally.
 		is_eq : _
 	}
+
+	## A tracked change to paragraph content: what kind of change it is; who
+	## made it and when, as [Document.Timestamp] holds a date; and the
+	## content it covers. An insertion's content was added and a deletion's
+	## removed; a move's source is content moved away from here and its
+	## destination the same content arriving elsewhere. Every attribute the
+	## model does not hold, and a date that is not a date and time, is kept
+	## in `preserved` as it was read.
+	Revision : { kind : RevisionKind, author : Str, date : [Unset, Date(Timestamp)], content : List(Inline), preserved : List(XmlTree.Attribute) }
+
+	## The kinds of tracked change to paragraph content.
+	RevisionKind : [Insertion, Deletion, MoveSource, MoveDestination]
+
+	## The start of a move's range: which side of the move it is, the move's
+	## name, who moved the content and when, and every attribute the model
+	## does not hold.
+	MoveRange : { side : MoveSide, name : Str, author : Str, date : [Unset, Date(Timestamp)], preserved : List(XmlTree.Attribute) }
+
+	## Where a move's range is: where the content was, or where it went.
+	MoveSide : [Source, Destination]
 
 	## A run: text with one set of character properties.
 	Run : { properties : RunProperties, content : List(RunContent) }
@@ -274,8 +305,10 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 	## itself; a reference to a comment, where the comment is shown, named by
 	## its place as a comment's range names it; a complex field's mark or a
 	## piece of its field code; an inline picture; or any other element, such
-	## as a floating drawing, a deleted field code or the mark a comment's
-	## content begins with, kept whole in its place.
+	## as a floating drawing or the mark a comment's content begins with, kept
+	## whole in its place. Deleted text is text and a deleted piece of field
+	## code is field code: in a deletion or a move's source they are what its
+	## content holds.
 	##
 	## A note reference names its note by its place among the document's
 	## footnotes or endnotes, as [Docx.footnotes] and [Docx.endnotes] list
@@ -871,13 +904,18 @@ inline_text_bytes : List(U8), Document.Inline -> List(U8)
 inline_text_bytes = |text, inline|
 	match inline {
 		Run(run) => run.content.fold(text, run_content_text)
-		Container({ element, content }) => if (is_removal(element)) text else content.fold(text, inline_text_bytes)
+		Container({ element: _, content }) => content.fold(text, inline_text_bytes)
 		Hyperlink({ target: _, preserved: _, content }) => content.fold(text, inline_text_bytes)
 		SimpleField({ code: _, preserved: _, content }) => content.fold(text, inline_text_bytes)
+		Revision({ kind: Deletion, author: _, date: _, content: _, preserved: _ }) => text
+		Revision({ kind: MoveSource, author: _, date: _, content: _, preserved: _ }) => text
+		Revision({ kind: _, author: _, date: _, content, preserved: _ }) => content.fold(text, inline_text_bytes)
 		BookmarkStart(_) => text
 		BookmarkEnd(_) => text
 		CommentStart(_) => text
 		CommentEnd(_) => text
+		MoveStart(_) => text
+		MoveEnd(_) => text
 		Preserved(_) => text
 	}
 
@@ -999,10 +1037,13 @@ inline_fields = |state, inline|
 		}
 
 		Container({ element: _, content }) => content.fold(state, inline_fields)
+		Revision({ kind: _, author: _, date: _, content, preserved: _ }) => content.fold(state, inline_fields)
 		BookmarkStart(_) => state
 		BookmarkEnd(_) => state
 		CommentStart(_) => state
 		CommentEnd(_) => state
+		MoveStart(_) => state
+		MoveEnd(_) => state
 		Preserved(_) => state
 	}
 

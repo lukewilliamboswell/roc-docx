@@ -22,6 +22,8 @@ opens a document, lists what is inside it and writes it to a new package;
 <<read-a-documents-text>> reads its body's text, blocks, formatting and styles,
 its sections, headers and footers, and its properties;
 <<read-a-documents-comments>> reads its comments and the text they are about;
+<<read-a-documents-tracked-changes>> reads its tracked changes and its text
+with every change accepted or rejected;
 <<write-a-document>> writes the body from that model, in one canonical form.
 Understanding the design:: <<architecture>> is the enduring design: the
 pipeline, the document model, fidelity rules, the oracles and the tests.
@@ -38,6 +40,8 @@ include::getting-started.adoc[leveloffset=+1]
 include::reading-text.adoc[leveloffset=+1]
 
 include::comments.adoc[leveloffset=+1]
+
+include::tracked-changes.adoc[leveloffset=+1]
 
 include::writing.adoc[leveloffset=+1]
 

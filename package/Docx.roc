@@ -3,8 +3,9 @@
 ##
 ## `Docx.parse` opens the package within the default `Limits` and reads it as
 ## a [Document]; `Docx.body` and `Docx.text` read what its body says,
-## `Docx.footnotes` and `Docx.endnotes` its notes, `Docx.comments` its
-## comments, `Docx.people` their authors and `Docx.fields` its fields;
+## `Docx.final_text`, `Docx.original_text` and `Docx.revisions` its tracked
+## changes, `Docx.footnotes` and `Docx.endnotes` its notes, `Docx.comments`
+## its comments, `Docx.people` their authors and `Docx.fields` its fields;
 ## `Docx.to_bytes` writes a document as a package, its body written from the
 ## model, and `Docx.equivalent` says whether two documents write the same.
 ## What reading drops comes back as diagnostics beside the document, never
@@ -14,6 +15,7 @@ import Document
 import Mce
 import Numbering
 import Opc
+import Revisions
 import Styles
 import WmlRead
 import WmlWrite
@@ -224,15 +226,27 @@ Docx :: [].{
 	## tables and content controls. A paragraph whose mark is deleted or moved
 	## away, as [Document.joins_next] says, runs on into the next paragraph
 	## without a line feed, unless a table, row or cell begins or ends between
-	## them.
+	## them. Every change the package reads stands as accepting it would
+	## leave it, so this is [Docx.final_text].
 	text : Document -> Str
-	text = |document| {
-		var $state = { text: List.with_capacity(1024), joining: Bool.False }
-		for block in Docx.body(document) {
-			$state = block_text($state, block)
-		}
-		Str.from_utf8(line_end($state).text) ?? ""
-	}
+	text = |document| Revisions.text(Docx.body(document), Final)
+
+	## The text of a document's body with every tracked change accepted, as
+	## [Revisions.text] gives the final text of [Docx.body].
+	final_text : Document -> Str
+	final_text = |document| Revisions.text(Docx.body(document), Final)
+
+	## The text of a document's body with every tracked change rejected, as
+	## [Revisions.text] gives the original text of [Docx.body]: deleted and
+	## moved-away text in, inserted and moved-in text out.
+	original_text : Document -> Str
+	original_text = |document| Revisions.text(Docx.body(document), Original)
+
+	## The tracked changes of a document's body in reading order, as
+	## [Revisions.list] finds them in [Docx.body]: each with its kind,
+	## author, date, content, text and move.
+	revisions : Document -> List(Revisions.Listed)
+	revisions = |document| Revisions.list(Docx.body(document))
 }
 
 # What reading and writing the main document part need from the rest of the
@@ -349,39 +363,6 @@ numbering_relationship = "http://schemas.openxmlformats.org/officeDocument/2006/
 styles_relationship : Str
 styles_relationship = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles"
 
-TextState : { text : List(U8), joining : Bool }
-
-block_text : TextState, Document.Block -> TextState
-block_text = |state, block|
-	match block {
-		Paragraph(paragraph) => {
-			text = List.concat(state.text, Document.paragraph_text(paragraph).to_utf8())
-			if Document.joins_next(paragraph) {
-				{ text, joining: Bool.True }
-			} else {
-				{ text: List.append(text, 10), joining: Bool.False }
-			}
-		}
-
-		Table(table) =>
-			line_end(
-				Document.table_rows(table).fold(
-					line_end(state),
-					|row_state, row| line_end(Document.row_cells(row).fold(line_end(row_state), |cell_state, cell| line_end(cell.content.fold(line_end(cell_state), block_text)))),
-				),
-			)
-
-		Container({ element: _, content }) => content.fold(state, block_text)
-		Section(_) => state
-		CommentStart(_) => state
-		CommentEnd(_) => state
-		Preserved(_) => state
-	}
-
-# The line feed a joining paragraph owes where nothing follows it to join.
-line_end : TextState -> TextState
-line_end = |state| if (state.joining) { text: List.append(state.text, 10), joining: Bool.False } else state
-
 # A package whose main document has this body content.
 package_of : Str -> Try(List(U8), Opc.WriteError)
 package_of = |content| {
@@ -398,7 +379,7 @@ package_of = |content| {
 ## by a line feed: inserted text, tables and content controls included,
 ## deleted text not.
 expect {
-	revised = "<w:p><w:r><w:t xml:space='preserve'>Rent is </w:t></w:r><w:del><w:r><w:delText>two</w:delText></w:r></w:del><w:ins><w:r><w:t>three</w:t></w:r></w:ins><w:r><w:tab/><w:t>years.</w:t></w:r></w:p>"
+	revised = "<w:p><w:r><w:t xml:space='preserve'>Rent is </w:t></w:r><w:del w:author='A'><w:r><w:delText>two</w:delText></w:r></w:del><w:ins w:author='A'><w:r><w:t>three</w:t></w:r></w:ins><w:r><w:tab/><w:t>years.</w:t></w:r></w:p>"
 	table = "<w:tbl><w:tr><w:tc><w:p><w:r><w:t>a</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>b</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"
 	control = "<w:sdt><w:sdtPr/><w:sdtContent><w:p><w:r><w:t>c</w:t></w:r></w:p></w:sdtContent></w:sdt>"
 	parsed = Docx.parse(package_of("${revised}<w:p/>${table}${control}<w:sectPr/>")?)?
@@ -408,8 +389,8 @@ expect {
 ## Moved-in text is current text and moved-away text is not, with the
 ## insertions and deletions inside a move applied.
 expect {
-	moved_away = "<w:moveFrom><w:r><w:t>away</w:t></w:r><w:ins><w:r><w:t>too</w:t></w:r></w:ins></w:moveFrom>"
-	moved_in = "<w:moveTo><w:r><w:t>in</w:t></w:r><w:del><w:r><w:delText>gone</w:delText></w:r></w:del><w:ins><w:r><w:t>+</w:t></w:r></w:ins></w:moveTo>"
+	moved_away = "<w:moveFrom w:author='A'><w:r><w:t>away</w:t></w:r><w:ins w:author='A'><w:r><w:t>too</w:t></w:r></w:ins></w:moveFrom>"
+	moved_in = "<w:moveTo w:author='A'><w:r><w:t>in</w:t></w:r><w:del w:author='A'><w:r><w:delText>gone</w:delText></w:r></w:del><w:ins w:author='A'><w:r><w:t>+</w:t></w:r></w:ins></w:moveTo>"
 	parsed = Docx.parse(package_of("<w:p><w:r><w:t>a</w:t></w:r>${moved_away}</w:p><w:p>${moved_in}</w:p>")?)?
 	Docx.text(parsed.document) == "a\nin+\n"
 }
@@ -425,6 +406,47 @@ expect {
 	body = "${mark("del", "a")}${control}${mark("moveFrom", "c")}${table}${mark("ins", "f")}${mark("del", "g")}"
 	parsed = Docx.parse(package_of(body)?)?
 	Docx.text(parsed.document) == "ab\nc\nd\ne\nf\ng\n"
+}
+
+## The final text accepts every change and the original text rejects every
+## change: deleted and moved-away text, a deleted field's result included, is
+## original text, and inserted and moved-in text final text; a paragraph
+## whose mark is inserted runs on into the next in the original text, one
+## whose mark is deleted in the final text.
+expect {
+	change = |kind, content| "<w:${kind} w:author='A'>${content}</w:${kind}>"
+	run = |text| "<w:r><w:t xml:space='preserve'>${text}</w:t></w:r>"
+	field = "<w:r><w:fldChar w:fldCharType='begin'/></w:r><w:r><w:delInstrText> DATE </w:delInstrText></w:r><w:r><w:fldChar w:fldCharType='separate'/></w:r><w:r><w:delText>May</w:delText></w:r><w:r><w:fldChar w:fldCharType='end'/></w:r>"
+	due = "<w:p>${run("Due ")}${change("del", field)}${change("ins", run("June"))}${run(".")}</w:p>"
+	inserted = "<w:p><w:pPr><w:rPr><w:ins w:author='A'/></w:rPr></w:pPr>${change("ins", run("New"))}</w:p>"
+	deleted = "<w:p><w:pPr><w:rPr><w:del w:author='A'/></w:rPr></w:pPr>${run("Old")}</w:p>"
+	moved = "<w:p>${change("moveFrom", run("Here"))}${run(" and ")}${change("moveTo", run("there"))}</w:p>"
+	parsed = Docx.parse(package_of("${due}${inserted}${deleted}${moved}")?)?
+	Docx.final_text(parsed.document) == "Due June.\nNew\nOld and there\n"
+		and Docx.original_text(parsed.document) == "Due May.\nOld\nHere and \n"
+		and Docx.text(parsed.document) == Docx.final_text(parsed.document)
+}
+
+## Tracked changes are listed in reading order with their place, kind,
+## author, move and text, a change inside another after it; a move's source
+## and destination are paired by their ranges' names; a change follows the
+## one before only when nothing comes between them.
+expect {
+	away = "<w:moveFromRangeStart w:id='1' w:name='m' w:author='B'/><w:moveFrom w:author='B'><w:r><w:t>Away</w:t></w:r><w:ins w:author='C'><w:r><w:t>!</w:t></w:r></w:ins></w:moveFrom><w:moveFromRangeEnd w:id='1'/>"
+	inserted = "<w:ins w:author='A'><w:r><w:t>a</w:t></w:r></w:ins><w:ins w:author='A'><w:r><w:t>b</w:t></w:r></w:ins><w:r><w:t>-</w:t></w:r><w:ins w:author='A'><w:r><w:t>c</w:t></w:r></w:ins>"
+	arrived = "<w:moveToRangeStart w:id='3' w:name='m' w:author='B'/><w:moveTo w:author='B'><w:r><w:t>Away</w:t></w:r></w:moveTo><w:moveToRangeEnd w:id='3'/><w:moveTo w:author='B'><w:r><w:t>loose</w:t></w:r></w:moveTo>"
+	parsed = Docx.parse(package_of("<w:p>${away}${inserted}</w:p><w:tbl><w:tr><w:tc><w:p>${arrived}</w:p></w:tc></w:tr></w:tbl>")?)?
+	listed = Docx.revisions(parsed.document).map(|change| (change.id, change.kind, change.author, change.move, change.text, change.follows))
+	listed
+		== [
+			(0, MoveSource, "B", Move("m"), "Away!", Bool.False),
+			(1, Insertion, "C", Unpaired, "!", Bool.False),
+			(2, Insertion, "A", Unpaired, "a", Bool.False),
+			(3, Insertion, "A", Unpaired, "b", Bool.True),
+			(4, Insertion, "A", Unpaired, "c", Bool.False),
+			(5, MoveDestination, "B", Move("m"), "Away", Bool.False),
+			(6, MoveDestination, "B", Unpaired, "loose", Bool.False),
+		]
 }
 
 ## A document without a main document part has no blocks and no text.
