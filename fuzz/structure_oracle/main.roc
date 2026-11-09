@@ -54,10 +54,13 @@ import "../../tests/fixtures/word/tables.docx" as word_tables : List(U8)
 ## insertions, tables and sections, which the writer gives identifiers and
 ## relationships.
 ##
-## Allocation ratchets, which only ever move down: the check allocates at
-## most linearly in the bytes it reads, and each declared example allocates
-## no more than it did when its ceiling was set. Raising a ceiling needs a
-## cause recorded in the pull request.
+## Allocation ratchets, which only ever move down: the check allocates and
+## holds at most linearly many bytes in the bytes it reads, and each declared
+## example allocates no more than it did when its ceiling was set. The large
+## generated example costs at most what the small one costs in the same run
+## plus a share for each further byte read, in allocations, bytes requested
+## and bytes held live. Raising a ceiling needs a cause recorded in the pull
+## request.
 test! : Input => Fuzz.Outcome
 test! = |input| {
 	source = match input {
@@ -68,16 +71,32 @@ test! = |input| {
 				Err(_) => return Fuzz.reject
 			}
 	}
-	parsed = Docx.parse(source) ?? crash "a generated package or a fixture did not parse"
-	written = Docx.to_bytes(parsed.document) ?? crash "a parsed document did not write"
-	{ value: checked, stats } = Fuzz.measure!("structure-check", || check(written))
-	match checked {
-		Ok({}) => {}
-		Err(problem) => crash "written bytes break a structural rule: ${problem}"
-	}
-	allocations = stats.allocs + stats.reallocs
-	if allocations > 1_024 + 4 * written.len() + inflated(written) {
+	cost = check!(source)
+	allocations = cost.stats.allocs + cost.stats.reallocs
+	if allocations > 1_024 + 4 * cost.size {
 		crash "the check allocated more than linearly in the bytes it read"
+	}
+	# The large generated example holds 12.3 bytes live for each byte read,
+	# the most of any declared example; the fixtures hold 330 to 440 KB.
+	if held(cost.stats) > 262_144 + 16 * cost.size {
+		crash "the check held more than linearly many bytes live"
+	}
+	match input {
+		Generated(program) if program == large_program => {
+			small = check!(generated_package(small_program))
+			further = cost.size - small.size
+			if allocations > small.stats.allocs + small.stats.reallocs + further * allocations_per_kib // 1_024 {
+				crash "the large example allocated more than the small one and its further bytes"
+			}
+			if cost.stats.requested_bytes > small.stats.requested_bytes + further * requested_per_byte {
+				crash "the large example requested more than the small one and its further bytes"
+			}
+			if held(cost.stats) > held(small.stats) + further * held_per_byte {
+				crash "the large example held more than the small one and its further bytes"
+			}
+		}
+
+		_ => {}
 	}
 	match exact_ceiling(input) {
 		Ok(ceiling) =>
@@ -89,6 +108,22 @@ test! = |input| {
 	}
 	Fuzz.keep
 }
+
+# Write what a document reads to, and check the written bytes, measured.
+check! : List(U8) => { stats : Fuzz.Stats, size : U64 }
+check! = |source| {
+	parsed = Docx.parse(source) ?? crash "a generated package or a fixture did not parse"
+	written = Docx.to_bytes(parsed.document) ?? crash "a parsed document did not write"
+	{ value: checked, stats } = Fuzz.measure!("structure-check", || check(written))
+	match checked {
+		Ok({}) => { stats, size: written.len() + inflated(written) }
+		Err(problem) => crash "written bytes break a structural rule: ${problem}"
+	}
+}
+
+# The most a measured operation held live beyond what was live at its entry.
+held : Fuzz.Stats -> U64
+held = |stats| stats.peak_live_bytes - stats.entry_live_bytes
 
 Input : [Generated(List(U8)), Fixture(U64)]
 
@@ -114,6 +149,19 @@ exact_ceiling = |input|
 		Fixture(index) => fixtures.get(index).map_ok(|fixture| fixture.allocations).map_err(|_| NotDeclared)
 		_ => Err(NotDeclared)
 	}
+
+# The large generated example reads 55,893 bytes more than the small one's
+# 12,339, of archive and inflated parts, and its check takes 142.3 more
+# allocations a KiB of them, requests 37.6 more bytes a byte and holds 13.7
+# more bytes live a byte.
+allocations_per_kib : U64
+allocations_per_kib = 143
+
+requested_per_byte : U64
+requested_per_byte = 38
+
+held_per_byte : U64
+held_per_byte = 14
 
 # The small and large generated examples repeat one program, the large one
 # sixteen times as often; checking them takes 1,333 and 9,102 allocations,

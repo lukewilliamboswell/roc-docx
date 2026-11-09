@@ -46,10 +46,10 @@ import "../../tests/fixtures/word/tables.docx" as word_tables : List(U8)
 ## linearly in the part's bytes and resolving a paragraph and a run at most a
 ## constant, and each declared example allocates no more than it did when its
 ## ceiling was set. The long chain, sixteen times the short one's styles,
-## reads with at most seventeen times the short one's allocations and
-## requested bytes in the same run, and resolves its last style for no more
-## than the short chain's last. Raising a ceiling needs a cause recorded in
-## the pull request.
+## reads with at most seventeen times the short one's allocations,
+## requested bytes and bytes held live in the same run, and resolves its
+## last style for no more than the short chain's last. Raising a ceiling
+## needs a cause recorded in the pull request.
 test! : Input => Fuzz.Outcome
 test! = |input|
 	match input {
@@ -68,7 +68,7 @@ test! = |input|
 					if cost.read > chain.allocations {
 						crash "a declared chain allocated more than its ceiling"
 					}
-					if cost.read > 17 * short.read or cost.requested_bytes > 17 * short.requested_bytes {
+					if cost.read > 17 * short.read or cost.requested_bytes > 17 * short.requested_bytes or cost.held_bytes > 17 * short.held_bytes {
 						crash "the long chain read for more than seventeen times the short one"
 					}
 					if cost.resolve > short.resolve {
@@ -456,7 +456,7 @@ empty_style = {
 
 # A chain of styles, each based on the one before, read and its last style
 # resolved: the allocations of each and the bytes reading requested.
-chain_cost! : U64 => { read : U64, requested_bytes : U64, resolve : U64 }
+chain_cost! : U64 => { read : U64, requested_bytes : U64, held_bytes : U64, resolve : U64 }
 chain_cost! = |length| {
 	styles = List.repeat(0, length).map_with_index(
 		|_, index| {
@@ -471,7 +471,7 @@ chain_cost! = |length| {
 	paragraph = { ..Document.no_paragraph_properties, style: Style(id_of(length - 1)) }
 	{ value: _, stats } = Fuzz.measure!("styles-effective", || Styles.effective_run(read.styles, { paragraph, run: Document.no_run_properties }, {}))
 	check_resolve(stats)
-	{ read: read_stats.allocs + read_stats.reallocs, requested_bytes: read_stats.requested_bytes, resolve: stats.allocs + stats.reallocs }
+	{ read: read_stats.allocs + read_stats.reallocs, requested_bytes: read_stats.requested_bytes, held_bytes: read_stats.peak_live_bytes - read_stats.entry_live_bytes, resolve: stats.allocs + stats.reallocs }
 }
 
 # Reading allocates about a quarter of an allocation and holds 9 to 15
@@ -501,7 +501,8 @@ check_resolve = |stats| {
 # every length from 16 to 4,096 styles: 52 allocations (839 and 13,331, a
 # ratio of 15.9) and, as buffer capacities round differently, 179,945 and
 # 2,923,705 requested bytes, a ratio of 16.25, which is why the pair allows
-# a seventeenth. Resolving takes 2 allocations at any length, because each
+# a seventeenth; they hold 37,816 and 535,504 bytes live, a ratio of 14.2.
+# Resolving takes 2 allocations at any length, because each
 # style's chain is merged once when the table is read.
 chains : List({ length : U64, allocations : U64 })
 chains = [

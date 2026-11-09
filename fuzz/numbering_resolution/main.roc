@@ -41,9 +41,9 @@ import "../../tests/fixtures/gdocs/resume.docx" as gdocs_resume : List(U8)
 ## constant, and each declared example allocates no more than it did when its
 ## ceiling was set. The large table, sixteen times the small one's
 ## definitions and instances, reads with at most seventeen times the small
-## one's allocations and requested bytes in the same run, and resolves its
-## last instance for no more than the small table's last. Raising a ceiling
-## needs a cause recorded in the pull request.
+## one's allocations, requested bytes and bytes held live in the same run,
+## and resolves its last instance for no more than the small table's last.
+## Raising a ceiling needs a cause recorded in the pull request.
 test! : Input => Fuzz.Outcome
 test! = |input|
 	match input {
@@ -62,7 +62,7 @@ test! = |input|
 					if cost.read > table.allocations {
 						crash "a declared table allocated more than its ceiling"
 					}
-					if cost.read > 17 * small.read or cost.requested_bytes > 17 * small.requested_bytes {
+					if cost.read > 17 * small.read or cost.requested_bytes > 17 * small.requested_bytes or cost.held_bytes > 17 * small.held_bytes {
 						crash "the large table read for more than seventeen times the small one"
 					}
 					if cost.resolve > small.resolve {
@@ -379,7 +379,7 @@ reference = |description, number, level| {
 # each using the definition of its number with a start override, read and
 # its last instance resolved: the allocations of each and the bytes reading
 # requested.
-table_cost! : U64 => { read : U64, requested_bytes : U64, resolve : U64 }
+table_cost! : U64 => { read : U64, requested_bytes : U64, held_bytes : U64, resolve : U64 }
 table_cost! = |size| {
 	padded = |index| {
 		digits = index.to_str()
@@ -394,7 +394,7 @@ table_cost! = |size| {
 	check_read(read_stats, xml.to_utf8().len())
 	{ value: _, stats } = Fuzz.measure!("numbering-level", || Numbering.level(read.numbering, Styles.empty, { instance: Instance(size.to_u32_wrap()), level: Level(0) }))
 	check_resolve(stats)
-	{ read: read_stats.allocs + read_stats.reallocs, requested_bytes: read_stats.requested_bytes, resolve: stats.allocs + stats.reallocs }
+	{ read: read_stats.allocs + read_stats.reallocs, requested_bytes: read_stats.requested_bytes, held_bytes: read_stats.peak_live_bytes - read_stats.entry_live_bytes, resolve: stats.allocs + stats.reallocs }
 }
 
 # Reading allocates about a quarter of an allocation and holds 12 to 15
@@ -424,8 +424,8 @@ check_resolve = |stats| {
 # Exact ceilings: the allocations of reading a declared table's numbering
 # part, measured on nightly-2026-11-07: about 98 a definition with its
 # instance (1,586 and 25,118, a ratio of 15.8) and 509,132 and 8,081,292
-# requested bytes, a ratio of 15.9. Resolving allocates nothing at either
-# size.
+# requested bytes, a ratio of 15.9, holding 123,560 and 1,979,240 bytes
+# live, a ratio of 16.0. Resolving allocates nothing at either size.
 tables : List({ size : U64, allocations : U64 })
 tables = [
 	{ size: 16, allocations: 1_586 },

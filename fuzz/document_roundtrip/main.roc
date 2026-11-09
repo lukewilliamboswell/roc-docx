@@ -29,8 +29,8 @@ import docx.XmlTree
 ## linearly in the written tree's nodes and attributes and keeps at most
 ## linearly many bytes live, and each declared example allocates no more than it did when its
 ## ceiling was set. The large declared body, sixteen times the small one,
-## allocates and requests at most sixteen times what the small one does in
-## the same run. Raising a ceiling needs a cause recorded in the pull
+## allocates, requests and holds live at most sixteen times what the small
+## one does in the same run. Raising a ceiling needs a cause recorded in the pull
 ## request.
 test! : List(U8) => Fuzz.Outcome
 test! = |program| {
@@ -45,7 +45,7 @@ test! = |program| {
 	}
 	if program == large_program {
 		small = round_trip!(small_program)
-		if cost.allocations > 16 * small.allocations or cost.requested_bytes > 16 * small.requested_bytes {
+		if cost.allocations > 16 * small.allocations or cost.requested_bytes > 16 * small.requested_bytes or cost.held_bytes > 16 * small.held_bytes {
 			crash "the large body cost more than sixteen times the small one"
 		}
 	}
@@ -56,9 +56,9 @@ generator : Fuzz.Generator(List(U8))
 generator = Fuzz.bytes
 
 # Write a program's body, measuring the writing, and check the round trip.
-# Returns the allocations and reallocations writing made and the bytes it
-# requested.
-round_trip! : List(U8) => { allocations : U64, requested_bytes : U64 }
+# Returns the allocations and reallocations writing made, the bytes it
+# requested and the most it held live beyond entry.
+round_trip! : List(U8) => { allocations : U64, requested_bytes : U64, held_bytes : U64 }
 round_trip! = |program| {
 	content = body(program)
 	{ value: result, stats } = Fuzz.measure!("wml-write-document", || WmlWrite.document(shell, content, context))
@@ -85,7 +85,7 @@ round_trip! = |program| {
 	if Docx.to_bytes(again.document) != Ok(first) {
 		crash "writing a rewritten document gave different bytes"
 	}
-	{ allocations: stats.allocs + stats.reallocs, requested_bytes: stats.requested_bytes }
+	{ allocations: stats.allocs + stats.reallocs, requested_bytes: stats.requested_bytes, held_bytes: stats.peak_live_bytes - stats.entry_live_bytes }
 }
 
 # Writing allocates at most linearly in the written tree's nodes and
@@ -133,8 +133,9 @@ exact_ceiling = |program|
 
 # The small and large declared bodies repeat one program, the large one
 # sixteen times as often. Writing them takes 965 and 15,189 allocations
-# and requests 222,632 and 3,536,976 bytes, ratios of 15.7 and 15.9 against
-# the sixteen the test allows: writing is linear with a small constant.
+# and requests 222,632 and 3,536,976 bytes and holds 114,708 and 1,815,348
+# live, ratios of 15.7, 15.9 and 15.8 against the sixteen the test allows:
+# writing is linear with a small constant.
 small_program : List(U8)
 small_program = List.join(List.repeat(program_unit, 4))
 

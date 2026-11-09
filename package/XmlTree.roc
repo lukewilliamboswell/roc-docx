@@ -124,25 +124,59 @@ XmlTree :: [].{
 	## Namespaces are resolved as each start tag is read and the tree is
 	## built in the same pass; whitespace between elements is kept as text.
 	parse : List(U8), Limits -> Try(Node, ReadError)
-	parse = |bytes, limits| Ok(XmlTree.parse_split(bytes, limits, |_, _| Bool.False, {}, |state, _| state)?.tree)
+	parse = |bytes, limits| Ok(XmlTree.parse_split(bytes, limits, |_, _| Bool.False, {}, |state, _, attributes| { state, kept: Keep(attributes) }, |state, _| state)?.tree)
 
 	## Read a part's bytes as [XmlTree.parse] does, except the content of one
 	## element: the root's first child that `splits(root, child)` accepts, by
 	## their names, is in the tree without children, and each of its children
 	## is given to `step` in order instead, as a whole subtree as soon as its
 	## end is read, built as the tree is. A part whose bulk is the children of one element, such as a main
-	## document's body, is so read without a tree of all of them.
-	parse_split : List(U8), Limits, (Name, Name -> Bool), s, (s, Node -> s) -> Try({ tree : Node, state : s }, ReadError)
-	parse_split = |bytes, limits, splits, state, step| {
+	## document's body, is so read without a tree of all of them. Each
+	## element of those subtrees, their roots included, is given to `keep`
+	## by its name and attributes as its start is read: `Keep(attributes)`
+	## builds it with those attributes, and `Drop` leaves it and its content
+	## out, so what a reader drops is never built.
+	parse_split : List(U8), Limits, (Name, Name -> Bool), s, (s, Name, List(Attribute) -> { state : s, kept : [Keep(List(Attribute)), Drop] }), (s, Node -> s) -> Try({ tree : Node, state : s }, ReadError)
+	parse_split = |bytes, limits, splits, state, keep, step| {
 		text = Str.from_utf8(bytes) ? |_| XmlNotUtf8
 		var $reader = XmlNs.reader(text, reader_props(limits)) ? read_error
 		var $frames = List.with_capacity(16)
 		var $nodes = List.with_capacity(16)
 		var $state = state
 		var $split = Before
+		var $skipping = 0.U64
 		var $reading = Bool.True
 		while $reading {
 			match $reader.next() {
+				Event(Start(_), rest) if $skipping > 0 => {
+					$skipping = $skipping + 1
+					$reader = rest
+				}
+
+				Event(Text(_), rest) if $skipping > 0 => {
+					$reader = rest
+				}
+
+				Event(End(_), rest) if $skipping > 0 => {
+					$skipping = $skipping - 1
+					$reader = rest
+				}
+
+				Event(Start(start), rest) if $split == Inside and $frames.len() >= 2 => {
+					decided = keep($state, start.name, start.attributes)
+					$state = decided.state
+					match decided.kept {
+						Keep(attributes) => {
+							$frames = List.append($frames, { start: { ..start, attributes }, first_child: $nodes.len() })
+						}
+
+						Drop => {
+							$skipping = 1
+						}
+					}
+					$reader = rest
+				}
+
 				Event(Start(start), rest) => {
 					if $split == Before and $frames.len() == 1 {
 						match $frames.first() {
@@ -853,7 +887,7 @@ expect {
 ## later element of the same name stays whole in the tree.
 expect {
 	text = "<a:r xmlns:a='urn:a' xmlns:b='urn:b'><a:s/><a:body k='v'><a:p><b:x b:y='1'>t</b:x></a:p>\n<a:q/></a:body><a:body><a:p/></a:body></a:r>"
-	split = XmlTree.parse_split(text.to_utf8(), {}, |root, child| root.local == "r" and child.local == "body", [], |found, node| List.append(found, node))
+	split = XmlTree.parse_split(text.to_utf8(), {}, |root, child| root.local == "r" and child.local == "body", [], |found, _, attributes| { state: found, kept: Keep(attributes) }, |found, node| List.append(found, node))
 	whole = XmlTree.parse(text.to_utf8(), {})
 	expected = XmlTree.parse("<a:r xmlns:a='urn:a' xmlns:b='urn:b'><a:s/><a:body k='v'/><a:body><a:p/></a:body></a:r>".to_utf8(), {})
 	children = match whole {
@@ -866,6 +900,25 @@ expect {
 		_ => []
 	}
 	split.map_ok(|read| read.state) == Ok(children) and split.map_ok(|read| read.tree) == expected and children.len() == 3
+}
+
+## Splitting builds each element of the split children as `keep` decides
+## at its start, with the attributes it gives or not at all, with its
+## content; `keep` sees every element not inside a dropped one.
+expect {
+	text = "<r><body><p k='v'><x><y/>gone</x><z/></p><x/><q/></body><x/></r>"
+	keep = |state, name, attributes| {
+		seen = { ..state, names: List.append(state.names, name.local) }
+		if (name.local == "x") { state: seen, kept: Drop } else { state: seen, kept: Keep(attributes.drop_if(|attribute| attribute.name.local == "k")) }
+	}
+	split = XmlTree.parse_split(text.to_utf8(), {}, |root, child| root.local == "r" and child.local == "body", { names: [], blocks: [] }, keep, |state, node| { ..state, blocks: List.append(state.blocks, node) })
+	expected = match XmlTree.parse("<body><p><z/></p><q/></body>".to_utf8(), {}) {
+		Ok(Element(body)) => body.children
+		_ => []
+	}
+	split.map_ok(|read| read.state) == Ok({ names: ["p", "x", "z", "x", "q"], blocks: expected })
+		and split.map_ok(|read| read.tree) == XmlTree.parse("<r><body/><x/></r>".to_utf8(), {})
+		and expected.len() == 2
 }
 
 ## Scanning gives each element's start, with its resolved name and

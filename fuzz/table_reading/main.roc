@@ -18,8 +18,8 @@ import docx.XmlTree
 ## linearly in the tree's nodes and attributes and keeps at most linearly
 ## many bytes live, and each declared example allocates no more than it did
 ## when its ceiling was set. The large declared table, sixteen times the
-## small one, allocates and requests at most sixteen times what the small
-## one does in the same run. Raising a ceiling needs a cause recorded in the
+## small one, allocates, requests and holds live at most sixteen times what
+## the small one does in the same run. Raising a ceiling needs a cause recorded in the
 ## pull request.
 test! : List(U8) => Fuzz.Outcome
 test! = |program| {
@@ -35,7 +35,7 @@ test! = |program| {
 	}
 	if program == large_program {
 		small = agree!(write(small_program))
-		if cost.allocations > 16 * small.allocations or cost.requested_bytes > 16 * small.requested_bytes {
+		if cost.allocations > 16 * small.allocations or cost.requested_bytes > 16 * small.requested_bytes or cost.held_bytes > 16 * small.held_bytes {
 			crash "the large table cost more than sixteen times the small one"
 		}
 	}
@@ -54,9 +54,9 @@ WrittenRow : { before : U64, after : U64, cells : List(WrittenCell) }
 WrittenCell : { text : Str, span : U64, merge : [Unset, Restart, Continue], nested : Bool }
 
 # Read a written table, measuring the reading, and check it against what was
-# written. Returns the allocations and reallocations reading made and the
-# bytes it requested.
-agree! : Written => { allocations : U64, requested_bytes : U64 }
+# written. Returns the allocations and reallocations reading made, the bytes
+# it requested and the most it held live beyond entry.
+agree! : Written => { allocations : U64, requested_bytes : U64, held_bytes : U64 }
 agree! = |written| {
 	tree = XmlTree.parse(written.xml.to_utf8(), {}) ?? crash "a written table is not XML"
 	{ value: read, stats } = Fuzz.measure!("wml-read-body", || WmlRead.read_body(tree, { relationships: [], footnotes: [], endnotes: [], comments: [] }))
@@ -86,7 +86,7 @@ agree! = |written| {
 	if read.diagnostics.len() != written.fractions {
 		crash "the widths written with a fraction and the diagnostics differ"
 	}
-	{ allocations: stats.allocs + stats.reallocs, requested_bytes: stats.requested_bytes }
+	{ allocations: stats.allocs + stats.reallocs, requested_bytes: stats.requested_bytes, held_bytes: stats.peak_live_bytes - stats.entry_live_bytes }
 }
 
 same_cell : Document.Cell, WrittenCell -> Bool
@@ -147,7 +147,8 @@ exact_ceiling = |program|
 
 # The small and large declared tables repeat one program, the large one
 # sixteen times as often. Reading them takes 705 and 10,969 allocations and
-# requests 95,520 and 1,494,484 bytes, ratios of 15.6 and 15.6 against the
+# requests 95,520 and 1,494,484 bytes and holds 60,590 and 947,810 live,
+# ratios of 15.6, 15.6 and 15.6 against the
 # sixteen the test allows. Reading the part as written, without markup
 # compatibility processing first (G2.7a), lowered them from 880 and 13,551.
 small_program : List(U8)

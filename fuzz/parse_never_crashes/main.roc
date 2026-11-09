@@ -12,6 +12,7 @@ import zip.Zip
 import "../../tests/fixtures/gdocs/resume.docx" as gdocs_resume : List(U8)
 import "../../tests/fixtures/pandoc/basics.docx" as pandoc_basics : List(U8)
 import "../../tests/fixtures/libreoffice/basics.docx" as libreoffice_basics : List(U8)
+import "../../tests/fixtures/word/report.docx" as word_report : List(U8)
 
 ## Any bytes parse to `Ok` or a structured `Err`, never a crash, and parsing
 ## the same bytes twice gives the same result, which is the body and
@@ -29,8 +30,15 @@ import "../../tests/fixtures/libreoffice/basics.docx" as libreoffice_basics : Li
 ##
 ## Allocation ratchets, which only ever move down: parsing and writing each
 ## allocate at most linearly in the archive and the bytes it inflates, and
-## each declared example allocates no more than it did when its ceiling was
-## set. Raising a ceiling needs a cause recorded in the pull request.
+## each declared example parses and writes with no more allocations than it
+## did when its ceilings were set. Each large declared example, the largest
+## fixture and the generated document sixteen times the small one, costs
+## at most what its small one, a one-paragraph document and the small
+## generated one, costs in the same run plus a share for each further byte,
+## in allocations, bytes requested and bytes held live, parsing and writing
+## alike: the small one is mostly a package's and a DEFLATE compressor's
+## constant cost, so the share bounds the growth above it. Raising a ceiling
+## needs a cause recorded in the pull request.
 test! : Input => Fuzz.Outcome
 test! = |input| {
 	bytes = match input {
@@ -70,14 +78,21 @@ test! = |input| {
 			if Docx.to_bytes(again.document) != Ok(written) {
 				crash "writing a written document gave different bytes"
 			}
-			allocations = parse_stats.allocs + parse_stats.reallocs + write_stats.allocs + write_stats.reallocs
 			match exact_ceiling(input) {
-				Ok(ceiling) =>
-					if allocations > ceiling {
-						crash "a declared example allocated more than its ceiling"
+				Ok(ceiling) => {
+					if allocations(parse_stats) > ceiling.parse {
+						crash "parsing a declared example allocated more than its ceiling"
 					}
+					if allocations(write_stats) > ceiling.write {
+						crash "writing a declared example allocated more than its ceiling"
+					}
+				}
 
 				Err(NotDeclared) => {}
+			}
+			match small_of(input) {
+				Ok(pair) => check_pair(cost!(pair.small), { parse: parse_stats, write: write_stats, size }, pair.shares)
+				Err(NotLarge) => {}
 			}
 			Fuzz.keep
 		}
@@ -159,48 +174,98 @@ inflated = |bytes|
 		Err(_) => 0
 	}
 
-# Exact ceilings: the allocations and reallocations of parsing and writing
-# each declared document, as measured on nightly-2026-11-07 with roc-zip
-# 0.3.0-rc1 and roc-parser 6.0.0-rc.1 when the ceiling was set.
-# Reading the package's own parts through the namespaced reader (G1.3a)
-# added a constant 47 to 87 to each when both slices met. Declaring
-# undeclared extensions when writing (G1.5a) added 5 to 15 to each, the scan
-# of every part for extension namespaces, and 356 to the LibreOffice
-# document, whose main part offers shapes in a namespace it does not declare
-# ignorable as an alternative and so is processed to find it needs nothing
-# declared. The undeclared example costs the small one's and processing its
-# main part. Repairing attributes on reading (G0.3c) added 12 to the
-# LibreOffice document, which examines its page margins for a missing gutter
-# and the names of its elements with a value holding a point; the repaired
-# example costs the small one's, its paragraphs' properties and the repairs.
-# Writing the main document from the model (G2.7a) reads its body and writes
-# it again as a tree, linear in the part: 44 more for the small example, 275
-# for the large, 140 for the repaired one, whose paragraphs have properties,
-# and 1,161 to 10,945 for the fixtures, most for the Google Docs export,
-# whose 40 paragraphs each state many run and paragraph properties and
-# whose comments' identifiers are read to write their ranges. Reading the
-# body block by block (G2.7b) passes over the main document twice, once
-# for its bookmarks' names and once for its blocks, and reads the body
-# when parsing rather than when writing; writing notes, headers and footers
-# from their models reads and writes them again: 101 more for the small
-# example, 1,108 for the large, 116 for the repaired one, and 80 to 2,293
-# for the fixtures, most for the Google Docs export, whose body is almost
-# all one table.
-exact_ceiling : Input -> Try(U64, [NotDeclared])
+# The allocations and reallocations of a measured operation.
+allocations : Fuzz.Stats -> U64
+allocations = |stats| stats.allocs + stats.reallocs
+
+# Parse and write the small example of a pair, measured as the test measures
+# its input.
+cost! : List(U8) => { parse : Fuzz.Stats, write : Fuzz.Stats, size : U64 }
+cost! = |bytes| {
+	{ value: parsed, stats: parse } = Fuzz.measure!("docx-parse", || Docx.parse(bytes))
+	read = parsed ?? crash "the small example of a pair did not parse"
+	{ value: _, stats: write } = Fuzz.measure!("docx-to-bytes", || Docx.to_bytes(read.document))
+	{ parse, write, size: bytes.len() + inflated(bytes) }
+}
+
+# A large example costs at most its small one's cost, measured in the same
+# run, and the pair's shares for each further byte of archive and inflated
+# parts, parsing and writing each.
+check_pair : { parse : Fuzz.Stats, write : Fuzz.Stats, size : U64 }, { parse : Fuzz.Stats, write : Fuzz.Stats, size : U64 }, { parse : Share, write : Share } -> {}
+check_pair = |small, large, shares| {
+	further = large.size - small.size
+	if !within_share(small.parse, large.parse, further, shares.parse) {
+		crash "parsing the large example cost more than the small one and its further bytes"
+	}
+	if !within_share(small.write, large.write, further, shares.write) {
+		crash "writing the large example cost more than the small one and its further bytes"
+	}
+	{}
+}
+
+# What a pair allows its large example for each further byte: allocations a
+# KiB, and bytes requested and held live a byte.
+Share : { allocations_per_kib : U64, requested_per_byte : U64, held_per_byte : U64 }
+
+within_share : Fuzz.Stats, Fuzz.Stats, U64, Share -> Bool
+within_share = |small, large, further, share|
+	allocations(large) <= allocations(small) + further * share.allocations_per_kib // 1_024
+		and large.requested_bytes <= small.requested_bytes + further * share.requested_per_byte
+		and held(large) <= held(small) + further * share.held_per_byte
+
+# The most a measured operation held live beyond what was live at its entry.
+held : Fuzz.Stats -> U64
+held = |stats| stats.peak_live_bytes - stats.entry_live_bytes
+
+# The small example of a large one and the pair's shares, each the measured
+# share rounded up. The largest fixture, `word/report.docx`, reads 103,428
+# bytes more than the one-paragraph document; parsing and writing it take
+# 99.7 and 99.4 more allocations a KiB of them, request 36.7 and 80.1 more
+# bytes a byte and hold 7.3 and 2.4 more bytes live a byte. The large
+# generated document reads 23,841 bytes more than the small one, denser in
+# elements: 203.8 and 139.9 more allocations a KiB, 23.1 and 34.7 more bytes
+# requested and 9.1 and 4.1 more held a byte. Both small ones cost mostly a
+# package's and a DEFLATE compressor's constant, which the shares leave out.
+small_of : Input -> Try({ small : List(U8), shares : { parse : Share, write : Share } }, [NotLarge])
+small_of = |input|
+	match input {
+		Generated(program) if program == large_program => {
+			parse = { allocations_per_kib: 204, requested_per_byte: 24, held_per_byte: 10 }
+			write = { allocations_per_kib: 140, requested_per_byte: 35, held_per_byte: 5 }
+			Ok({ small: generated_package(small_program), shares: { parse, write } })
+		}
+
+		Fixture(index) if fixtures.get(index).map_ok(|fixture| fixture.name) == Ok("word-report") => {
+			parse = { allocations_per_kib: 100, requested_per_byte: 37, held_per_byte: 8 }
+			write = { allocations_per_kib: 100, requested_per_byte: 81, held_per_byte: 3 }
+			Ok({ small: generated_package(one_paragraph_program), shares: { parse, write } })
+		}
+
+		_ => Err(NotLarge)
+	}
+
+# Exact ceilings: the allocations and reallocations of parsing and of
+# writing each declared document, as measured on nightly-2026-11-07 with
+# roc-zip 0.3.0-rc1 and roc-parser 6.0.0-rc.1 when the ceiling was set.
+exact_ceiling : Input -> Try({ parse : U64, write : U64 }, [NotDeclared])
 exact_ceiling = |input|
 	match input {
-		Generated(program) if program == small_program => Ok(1_334)
-		Generated(program) if program == large_program => Ok(10_656)
-		Generated(program) if program == undeclared_program => Ok(1_443)
-		Generated(program) if program == repaired_program => Ok(1_610)
-		Fixture(index) => fixtures.get(index).map_ok(|fixture| fixture.allocations).map_err(|_| NotDeclared)
+		Generated(program) if program == one_paragraph_program => Ok({ parse: 292, write: 451 })
+		Generated(program) if program == small_program => Ok({ parse: 579, write: 651 })
+		Generated(program) if program == large_program => Ok({ parse: 5_324, write: 3_908 })
+		Generated(program) if program == undeclared_program => Ok({ parse: 578, write: 761 })
+		Generated(program) if program == repaired_program => Ok({ parse: 753, write: 736 })
+		Fixture(index) => fixtures.get(index).map_ok(|fixture| { parse: fixture.parse, write: fixture.write }).map_err(|_| NotDeclared)
 		_ => Err(NotDeclared)
 	}
 
+# One paragraph with one run of text, in the generated package's other
+# parts.
+one_paragraph_program : List(U8)
+one_paragraph_program = [0, 7, 3]
+
 # The small and large generated examples repeat one program, the large one
-# sixteen times as often; their ceilings, 1,334 and 10,656, keep the growth
-# linear, the small one mostly the constant cost of a package and of one
-# DEFLATE compressor.
+# sixteen times as often.
 small_program : List(U8)
 small_program = List.join(List.repeat(program_unit, 4))
 
@@ -224,11 +289,14 @@ repaired_program = List.concat([23], small_program.drop_first(1))
 program_unit : List(U8)
 program_unit = [7, 4, 3, 5, 1, 2, 6, 2, 0]
 
-fixtures : List({ name : Str, bytes : List(U8), allocations : U64 })
+# The largest fixture, the one with the largest body, which is almost all
+# one table, and one from each of pandoc and LibreOffice.
+fixtures : List({ name : Str, bytes : List(U8), parse : U64, write : U64 })
 fixtures = [
-	{ name: "gdocs-resume", bytes: gdocs_resume, allocations: 39_174 },
-	{ name: "pandoc-basics", bytes: pandoc_basics, allocations: 17_906 },
-	{ name: "libreoffice-basics", bytes: libreoffice_basics, allocations: 15_896 },
+	{ name: "word-report", bytes: word_report, parse: 10_357, write: 10_489 },
+	{ name: "gdocs-resume", bytes: gdocs_resume, parse: 20_803, write: 17_221 },
+	{ name: "pandoc-basics", bytes: pandoc_basics, parse: 9_165, write: 8_302 },
+	{ name: "libreoffice-basics", bytes: libreoffice_basics, parse: 8_025, write: 7_540 },
 ]
 
 wordprocessingml : Str
@@ -313,6 +381,7 @@ target = Fuzz.target_with!({
 	examples: [
 		Fuzz.example({ name: "empty", revision: "1", make: || Bytes([]) }),
 		Fuzz.example({ name: "zip-signature-only", revision: "1", make: || Bytes([0x50, 0x4B, 0x03, 0x04]) }),
+		Fuzz.example({ name: "one-paragraph", revision: "1", make: || Generated(one_paragraph_program) }),
 		Fuzz.example({ name: "small-document", revision: "1", make: || Generated(small_program) }),
 		Fuzz.example({ name: "large-document", revision: "1", make: || Generated(large_program) }),
 		Fuzz.example({ name: "undeclared-extension", revision: "1", make: || Generated(undeclared_program) }),

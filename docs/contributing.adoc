@@ -150,9 +150,14 @@ bytes: linear ceilings for every generated input and exact ceilings for its
 declared examples. An operation that iterates a document also declares a small
 and a large example, and when the large one runs it measures the small one
 again and fails if it costs more than the linear ratio the target states for
-the pair. That check holds even when both exact ceilings are
-raised, so growth beyond linear cannot be ratcheted in. To set or revise a
-ceiling:
+the pair, in allocations, bytes requested and bytes held live. Where a
+constant dominates the small example, such as the DEFLATE compressor that
+every written document needs, the ratio is stated over that constant: the
+large example may cost the small one's plus a stated share for each further
+byte, so `Docx.parse` and `Docx.to_bytes` on the largest fixture are bounded
+by a one-paragraph document and the fixture's further bytes. That check
+holds even when both exact ceilings are raised, so growth beyond linear
+cannot be ratcheted in. To set or revise a ceiling:
 
 [source,sh]
 ----

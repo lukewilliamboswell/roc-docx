@@ -826,8 +826,8 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 	## content reading drops, so a reader can learn what the whole part names
 	## before it reads a block, such as its bookmarks; `start` makes the
 	## second pass's state of what it learned. The second gives `block` each
-	## child of the body in order, without its dropped content, as its
-	## subtree is read; `finish` gives the body.
+	## child of the body in order, as its subtree is read, without its
+	## dropped content, which is never built; `finish` gives the body.
 	BodyReader(p, s) : { scanned : p, scan : p, XmlTree.Event -> p, start : p -> s, block : s, XmlTree.Node -> s, finish : s -> Body }
 
 	## Read an opened package as [Document.from_package] does, except the
@@ -1252,32 +1252,16 @@ dropping = |root, go_back, kept| {
 			}
 
 			Visit(Element(element)) => {
-				kind = if ($frames.is_empty() and kept) Kept else dropped_kind(element, go_back)
-				match kind {
-					Kept => {
-						kept_attributes = element.attributes.drop_if(is_save_id)
-						$counts = { ..$counts, save_ids: $counts.save_ids + element.attributes.len() - kept_attributes.len() }
-						repaired_attributes = Lenient.repair(element.name, kept_attributes)
-						if !repaired_attributes.repairs.is_empty() {
-							$repairs = List.concat($repairs, repaired_attributes.repairs)
-						}
-						$frames = List.append($frames, { name: element.name, bindings: element.bindings, attributes: repaired_attributes.attributes, first_child: $nodes.len() })
+				decided = keeping({ counts: $counts, repairs: $repairs }, element.name, element.attributes, go_back, $frames.is_empty() and kept)
+				$counts = decided.state.counts
+				$repairs = decided.state.repairs
+				match decided.kept {
+					Keep(attributes) => {
+						$frames = List.append($frames, { name: element.name, bindings: element.bindings, attributes, first_child: $nodes.len() })
 						$pending = push_children(List.append($pending, Leave), element.children)
 					}
 
-					RenderedPageBreak => {
-						$counts = { ..$counts, page_breaks: $counts.page_breaks + 1 }
-					}
-
-					ProofingMark => {
-						$counts = { ..$counts, proofing: $counts.proofing + 1 }
-					}
-
-					GoBackStart => {
-						$counts = { ..$counts, bookmarks: $counts.bookmarks + 1 }
-					}
-
-					GoBackEnd => {}
+					Drop => {}
 				}
 			}
 
@@ -1295,6 +1279,28 @@ dropping = |root, go_back, kept| {
 		}
 	}
 	{ nodes: $nodes, counts: $counts, repairs: $repairs }
+}
+
+# Whether reading keeps an element, by its name and attributes, and the
+# attributes it keeps it with, counting what it drops and noting what it
+# repairs; `root` is kept whatever it is.
+keeping : { counts : Counts, repairs : List(Lenient.Repair) }, XmlTree.Name, List(XmlTree.Attribute), List(Str), Bool -> { state : { counts : Counts, repairs : List(Lenient.Repair) }, kept : [Keep(List(XmlTree.Attribute)), Drop] }
+keeping = |state, name, attributes, go_back, root| {
+	counts = state.counts
+	kind = if (root) Kept else dropped_kind(name, attributes, go_back)
+	match kind {
+		Kept => {
+			kept_attributes = attributes.drop_if(is_save_id)
+			repaired_attributes = Lenient.repair(name, kept_attributes)
+			repairs = if (repaired_attributes.repairs.is_empty()) state.repairs else List.concat(state.repairs, repaired_attributes.repairs)
+			{ state: { counts: { ..counts, save_ids: counts.save_ids + attributes.len() - kept_attributes.len() }, repairs }, kept: Keep(repaired_attributes.attributes) }
+		}
+
+		RenderedPageBreak => { state: { ..state, counts: { ..counts, page_breaks: counts.page_breaks + 1 } }, kept: Drop }
+		ProofingMark => { state: { ..state, counts: { ..counts, proofing: counts.proofing + 1 } }, kept: Drop }
+		GoBackStart => { state: { ..state, counts: { ..counts, bookmarks: counts.bookmarks + 1 } }, kept: Drop }
+		GoBackEnd => { state, kept: Drop }
+	}
 }
 
 # A part read as a tree without its dropped content, with what reading it
@@ -1330,10 +1336,11 @@ read_body = |bytes, limits, reader| {
 		limits,
 		is_body,
 		{ inner: (reader.start)(scanned.inner), counts: no_counts, repairs: List.with_capacity(0) },
-		|state, node| {
-			kept = dropping(node, go_back, Bool.False)
-			{ inner: kept.nodes.fold(state.inner, reader.block), counts: add_counts(state.counts, kept.counts), repairs: List.concat(state.repairs, kept.repairs) }
+		|state, name, attributes| {
+			decided = keeping({ counts: state.counts, repairs: state.repairs }, name, attributes, go_back, Bool.False)
+			{ state: { inner: state.inner, counts: decided.state.counts, repairs: decided.state.repairs }, kept: decided.kept }
 		},
+		|state, node| { ..state, inner: (reader.block)(state.inner, node) },
 	)?
 	shell = dropping(split.tree, go_back, Bool.True)
 	after = after_body(split.tree).fold(List.with_capacity(0), |found, child| List.concat(found, dropping(child, go_back, Bool.False).repairs))
@@ -1414,17 +1421,17 @@ repaired = |part, repair|
 	}
 
 # Whether an element below the root is dropped, and by which rule.
-dropped_kind : Element, List(Str) -> [Kept, RenderedPageBreak, ProofingMark, GoBackStart, GoBackEnd]
-dropped_kind = |element, go_back|
-	if element.name.namespace != Uri(wordprocessingml) {
+dropped_kind : XmlTree.Name, List(XmlTree.Attribute), List(Str) -> [Kept, RenderedPageBreak, ProofingMark, GoBackStart, GoBackEnd]
+dropped_kind = |name, attributes, go_back|
+	if name.namespace != Uri(wordprocessingml) {
 		Kept
-	} else if element.name.local == "lastRenderedPageBreak" {
+	} else if name.local == "lastRenderedPageBreak" {
 		RenderedPageBreak
-	} else if element.name.local == "proofErr" {
+	} else if name.local == "proofErr" {
 		ProofingMark
-	} else if element.name.local == "bookmarkStart" and value_of(element, "name") == Ok("_GoBack") {
+	} else if name.local == "bookmarkStart" and value_in(attributes, "name") == Ok("_GoBack") {
 		GoBackStart
-	} else if element.name.local == "bookmarkEnd" and go_back.contains(value_of(element, "id") ?? "") {
+	} else if name.local == "bookmarkEnd" and go_back.contains(value_in(attributes, "id") ?? "") {
 		GoBackEnd
 	} else {
 		Kept
