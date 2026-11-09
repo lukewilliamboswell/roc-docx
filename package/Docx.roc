@@ -48,8 +48,11 @@ Docx :: [].{
 	]
 
 	## Read a document from the bytes of a `.docx`, with what reading dropped.
+	## The body is read one block at a time by [WmlRead.body_reader] and kept
+	## as the model, as [Document.from_package_with_body] reads it, so no
+	## tree of the whole body is held beside it.
 	parse : List(U8) -> Try({ document : Document, diagnostics : List(Document.Diagnostic) }, ParseError)
-	parse = |bytes| Ok(Document.from_package(Opc.open(bytes, {})?, {})?)
+	parse = |bytes| Ok(Document.from_package_with_body(Opc.open(bytes, {})?, {}, |document, main| WmlRead.body_reader(main_context(document, main.name, main.relationships)))?)
 
 	## Why a document cannot be written: the errors of [Document.to_bytes],
 	## and a note or comment that a reference or range names and the document
@@ -72,17 +75,21 @@ Docx :: [].{
 
 	## Write a document as the bytes of a `.docx`. The main document part is
 	## written from the model, as [Docx.body] reads it, by
-	## [WmlWrite.document], with the relationships it needs; every other part
-	## as [Document.to_bytes] writes it. The same document always gives the
-	## same bytes.
+	## [WmlWrite.document], its footnotes and endnotes parts from
+	## [Docx.footnotes] and [Docx.endnotes] by [WmlWrite.notes], and each
+	## header and footer part it relates to from [Docx.header_footer] by
+	## [WmlWrite.header_footer], each with the relationships it needs; every
+	## other part as [Document.to_bytes] writes it. The same document always
+	## gives the same bytes.
 	to_bytes : Document -> Try(List(U8), WriteError)
 	to_bytes = |document| Ok(Document.to_bytes(as_written(document)?)?)
 
 	## Whether two documents are the same document: the same parts with the
-	## same relationships, every part but the main document equivalent as
-	## [Document.equivalent] says, and the main document the same when each is
-	## written from its model, so that two spellings the model reads alike,
-	## and identifiers the writer allocates, make no difference. A document
+	## same relationships, every part [Docx.to_bytes] writes from the model
+	## (the main document, its notes, headers and footers) the same when each
+	## is written from its model, so that two spellings the model reads
+	## alike, and identifiers the writer allocates, make no difference, and
+	## every other part equivalent as [Document.equivalent] says. A document
 	## and the document its bytes read back as are equivalent.
 	equivalent : Document, Document -> Bool
 	equivalent = |one, other|
@@ -101,9 +108,13 @@ Docx :: [].{
 	## the schema does not allow, as [WmlRead.read_body] gives it.
 	read_body : Document -> { blocks : List(Document.Block), diagnostics : List(WmlRead.Diagnostic) }
 	read_body = |document|
-		match Document.related(document, "/", Opc.officedocument_relationship) {
-			Ok(main) => WmlRead.read_body(main.tree, main_context(document, main))
-			Err(NotFound) => { blocks: [], diagnostics: [] }
+		match Document.body(document) {
+			Ok(read) => read
+			Err(Whole) =>
+				match Document.related(document, "/", Opc.officedocument_relationship) {
+					Ok(main) => WmlRead.read_body(main.tree, main_context(document, main.name, main.relationships))
+					Err(NotFound) => { blocks: [], diagnostics: [] }
+				}
 		}
 
 	## A document's footnotes in the order of their part, as [WmlRead.notes]
@@ -181,7 +192,7 @@ Docx :: [].{
 	header_footer : Document, Str -> List(Document.Block)
 	header_footer = |document, part|
 		match Document.xml_part(document, part) {
-			Ok(found) => WmlRead.header_footer(found.tree, { relationships: found.relationships, footnotes: [], endnotes: [], comments: comment_ids(document) })
+			Ok(found) => WmlRead.header_footer(found.tree, part_context(found, comment_ids(document)))
 			Err(NotFound) => []
 		}
 
@@ -251,29 +262,70 @@ Docx :: [].{
 
 # What reading and writing the main document part need from the rest of the
 # package: its relationships and its notes' and comments' identifiers.
-main_context : Document, Document.XmlPart -> WmlRead.Context
-main_context = |document, main| {
+main_context : Document, Str, List(Opc.Relationship) -> WmlRead.Context
+main_context = |document, name, relationships| {
 	ids = |kind|
-		match Document.related(document, main.name, kind) {
+		match Document.related(document, name, kind) {
 			Ok(part) => WmlRead.note_ids(part.tree)
 			Err(NotFound) => []
 		}
-	{ relationships: main.relationships, footnotes: ids(footnotes_relationship), endnotes: ids(endnotes_relationship), comments: comment_ids(document) }
+	comments = match Document.related(document, name, comments_relationship) {
+		Ok(part) => WmlRead.comment_ids(part.tree)
+		Err(NotFound) => []
+	}
+	{ relationships, footnotes: ids(footnotes_relationship), endnotes: ids(endnotes_relationship), comments }
 }
 
-# The document as it is written: its main document part written from the
-# model, with the relationships writing it needs.
-as_written : Document -> Try(Document, WmlWrite.WriteError)
-as_written = |document|
-	match Document.related(document, "/", Opc.officedocument_relationship) {
-		Ok(main) => {
-			context = main_context(document, main)
-			written = WmlWrite.document(main.tree, WmlRead.body(main.tree, context), context)?
-			Ok(Document.with_part(document, main.name, written.tree, written.relationships))
-		}
+# What reading and writing a notes, header or footer part need: its
+# relationships and the comments' identifiers. Notes are not referred to from
+# them.
+part_context : Document.XmlPart, List(Str) -> WmlRead.Context
+part_context = |part, comments| { relationships: part.relationships, footnotes: [], endnotes: [], comments }
 
-		Err(NotFound) => Ok(document)
+# The document as it is written: its main document part, its notes parts and
+# the header and footer parts it relates to written from the model, with the
+# relationships writing them needs.
+as_written : Document -> Try(Document, WmlWrite.WriteError)
+as_written = |document| {
+	main = match Document.related(document, "/", Opc.officedocument_relationship) {
+		Ok(found) => found
+		Err(NotFound) => return Ok(document)
 	}
+	comments = comment_ids(document)
+	written = WmlWrite.document(main.tree, Docx.body(document), main_context(document, main.name, main.relationships))?
+	var $document = Document.with_part(document, main.name, written.tree, written.relationships)
+	for kind in [footnotes_relationship, endnotes_relationship] {
+		match Document.related(document, main.name, kind) {
+			Ok(part) => {
+				context = part_context(part, comments)
+				notes_written = WmlWrite.notes(part.tree, WmlRead.notes(part.tree, context), context)?
+				$document = Document.with_part($document, part.name, notes_written.tree, notes_written.relationships)
+			}
+
+			Err(NotFound) => {}
+		}
+	}
+	for relationship in main.relationships {
+		if relationship.mode == Internal and (relationship.kind == header_relationship or relationship.kind == footer_relationship) {
+			match Document.xml_part(document, relationship.target) {
+				Ok(part) => {
+					context = part_context(part, comments)
+					part_written = WmlWrite.header_footer(part.tree, WmlRead.header_footer(part.tree, context), context)?
+					$document = Document.with_part($document, part.name, part_written.tree, part_written.relationships)
+				}
+
+				Err(NotFound) => {}
+			}
+		}
+	}
+	Ok($document)
+}
+
+header_relationship : Str
+header_relationship = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header"
+
+footer_relationship : Str
+footer_relationship = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer"
 
 footnotes_relationship : Str
 footnotes_relationship = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes"
@@ -307,7 +359,7 @@ notes = |document, kind| {
 		Err(NotFound) => Err(NotFound)
 	}
 	match found {
-		Ok(part) => WmlRead.notes(part.tree, { relationships: part.relationships, footnotes: [], endnotes: [], comments: comment_ids(document) })
+		Ok(part) => WmlRead.notes(part.tree, part_context(part, comment_ids(document)))
 		Err(NotFound) => []
 	}
 }
@@ -469,16 +521,21 @@ expect {
 		parts: [{ name: "/word/document.xml", content_type: main, relationships: [] }],
 	}
 	xml = "<w:document xmlns:w='http://schemas.openxmlformats.org/wordprocessingml/2006/main' xmlns:w14='${w14}'><w:body><w:p w14:paraId='1A2B3C4D'><w:r><w:t>a</w:t><w14:mark/></w:r></w:p></w:body></w:document>"
-	parsed = Docx.parse(Opc.to_bytes(graph, |_| Bytes(xml.to_utf8()))?)?
+	source = Opc.to_bytes(graph, |_| Bytes(xml.to_utf8()))?
+	parsed = Docx.parse(source)?
 	written = Docx.to_bytes(parsed.document)?
 	again = Docx.parse(written)?
 	part = Opc.part_bytes(Opc.open(written, {})?, "/word/document.xml")?
 	declared = "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" xmlns:mc=\"http://schemas.openxmlformats.org/markup-compatibility/2006\" xmlns:w14=\"${w14}\" mc:Ignorable=\"w14\"><w:body><w:p><w:r><w:t>a</w:t><w14:mark/></w:r></w:p></w:body>"
-	undeclared = |document| Document.main_document(document).map_ok(|tree| Mce.process(tree).diagnostics.len())
+	undeclared = |bytes| {
+		pkg = Opc.open(bytes, {}).map_err(|_| Unreadable)?
+		tree = XmlTree.parse(Opc.part_bytes(pkg, "/word/document.xml").map_err(|_| Unreadable)?, {}).map_err(|_| Unreadable)?
+		Ok(Mce.process(tree).diagnostics.len())
+	}
 	Docx.equivalent(parsed.document, again.document)
 		and Str.from_utf8(part).map_ok(|text| text.contains(declared)) == Ok(Bool.True)
-		and undeclared(parsed.document) == Ok(1)
-		and undeclared(again.document) == Ok(0)
+		and undeclared(source) == Ok(1)
+		and undeclared(written) == Ok(0)
 }
 
 # A package whose main document holds an inline picture of a media part, a
@@ -601,7 +658,7 @@ sectioned = |{}| {
 					if name == "/word/document.xml" {
 						"<w:document ${declarations}><w:body>${body}</w:body></w:document>"
 					} else if name == "/word/header1.xml" {
-						"<w:hdr ${declarations}><w:p><w:r><w:t>Draft</w:t></w:r></w:p></w:hdr>"
+						"<w:hdr ${declarations}><w:p><w:r><w:rPr><w:b w:val='true'/></w:rPr><w:t>Draft</w:t></w:r></w:p></w:hdr>"
 					} else if name == "/word/footer1.xml" {
 						"<w:ftr ${declarations}><w:p><w:r><w:t xml:space='preserve'>Page </w:t></w:r>${page}</w:p></w:ftr>"
 					} else if name == "/docProps/core.xml" {
@@ -701,4 +758,49 @@ expect {
 		and read(parsed.document) == [{ id: 1, anchor: Range("first"), initials: Initials(""), text: ["Earlier"] }, { id: 0, anchor: Range("second"), initials: Initials("MR"), text: ["Later"] }]
 		and read(again.document) == read(parsed.document)
 		and Docx.text(parsed.document) == "first and second\n"
+}
+
+## Reading the body block by block gives the blocks and diagnostics reading
+## its tree gives: a bookmark ends before the block it starts in, a `_GoBack`
+## bookmark ends before it starts and stands between blocks, a start inside
+## a dropped proofing mark names nothing, and the repairs of the body and of
+## the section after it keep their order.
+expect {
+	go_back = "<w:p><w:bookmarkEnd w:id='5'/><w:bookmarkEnd w:id='1'/><w:r w:rsidR='00A1'><w:t>a</w:t></w:r></w:p><w:bookmarkStart w:id='5' w:name='_GoBack'/>"
+	marked = "<w:p><w:proofErr w:type='spellStart'><w:bookmarkStart w:id='1' w:name='hidden'/></w:proofErr><w:bookmarkStart w:id='1' w:name='seen'/><w:bookmarkEnd w:id='9'/></w:p>"
+	table = "<w:tbl><w:tblPr><w:tblW w:w='100.5' w:type='dxa'/></w:tblPr><w:tblGrid/></w:tbl>"
+	section = "<w:sectPr><w:pgMar w:top='1' w:right='2' w:bottom='3' w:left='4.5' w:header='5' w:footer='6'/></w:sectPr>"
+	bytes = package_of("${go_back}\n${marked}${table}<w:bookmarkStart w:id='9' w:name='late'/>${section}")?
+	parsed = Docx.parse(bytes)?
+	whole = Document.from_package(Opc.open(bytes, {})?, {})?
+	read = Docx.read_body(parsed.document)
+	ends = match read.blocks {
+		[Paragraph(first), Paragraph(second), ..] => (first.content.first(), second.content.last())
+		_ => (Err(ListWasEmpty), Err(ListWasEmpty))
+	}
+	parsed.diagnostics == whole.diagnostics
+		and read == Docx.read_body(whole.document)
+		and ends == (Ok(BookmarkEnd("seen")), Ok(BookmarkEnd("late")))
+		and parsed.diagnostics.len() == 6
+		and Document.body(whole.document).is_err()
+		and Document.body(parsed.document) == Ok(read)
+}
+
+## Notes, headers and footers are written from the model: they read back
+## the same, a toggle written with a value is written as the element alone,
+## and a note's link keeps its part's relationship.
+expect {
+	parsed = Docx.parse(illustrated([0x89, 0x50, 0x4E, 0x47])?)?
+	again = Docx.parse(Docx.to_bytes(parsed.document)?)?
+	sectioned_document = Docx.parse(sectioned({})?)?.document
+	written = Docx.to_bytes(sectioned_document)?
+	reread = Docx.parse(written)?.document
+	header = Str.from_utf8(Opc.part_bytes(Opc.open(written, {})?, "/word/header1.xml")?) ?? ""
+	footnotes = Opc.part_bytes(Opc.open(Docx.to_bytes(parsed.document)?, {})?, "/word/footnotes.xml").map_ok(|text| Str.from_utf8(text) ?? "")
+	Docx.footnotes(again.document) == Docx.footnotes(parsed.document)
+		and Docx.header_footer(reread, "/word/header1.xml") == Docx.header_footer(sectioned_document, "/word/header1.xml")
+		and Docx.header_footer(reread, "/word/footer1.xml") == Docx.header_footer(sectioned_document, "/word/footer1.xml")
+		and header.contains("<w:p><w:r><w:rPr><w:b/></w:rPr><w:t>Draft</w:t></w:r></w:p></w:hdr>")
+		and footnotes.map_ok(|text| text.contains("<w:footnote w:type=\"separator\" w:id=\"0\">") and text.contains("<w:hyperlink r:id=\"rId7\">")) == Ok(Bool.True)
+		and Docx.equivalent(parsed.document, again.document)
 }

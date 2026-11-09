@@ -1,4 +1,4 @@
-written: 10560 bytes, FNV-1a 64 3d263de3c144fd62
+written: 10547 bytes, FNV-1a 64 a314cfd7c4e9b979
 part: /_rels/.rels 735 bytes application/vnd.openxmlformats-package.relationships+xml
 part: /word/document.xml 1346 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml
 part: /word/_rels/document.xml.rels 1212 bytes application/vnd.openxmlformats-package.relationships+xml
@@ -11,6 +11,6 @@ part: /word/settings.xml 966 bytes application/vnd.openxmlformats-officedocument
 part: /word/webSettings.xml 204 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.webSettings+xml
 part: /word/fontTable.xml 2245 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.fontTable+xml
 part: /word/theme/theme1.xml 11369 bytes application/vnd.openxmlformats-officedocument.theme+xml
-part: /word/footnotes.xml 1352 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml
+part: /word/footnotes.xml 1244 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml
 part: /word/comments.xml 140 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml
 part: /word/_rels/footnotes.xml.rels 141 bytes application/vnd.openxmlformats-package.relationships+xml

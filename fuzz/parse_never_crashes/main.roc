@@ -7,13 +7,15 @@ app [target] {
 import fuzz.Fuzz
 import docx.Docx
 import docx.Document
+import docx.Opc
 import zip.Zip
 import "../../tests/fixtures/gdocs/resume.docx" as gdocs_resume : List(U8)
 import "../../tests/fixtures/pandoc/basics.docx" as pandoc_basics : List(U8)
 import "../../tests/fixtures/libreoffice/basics.docx" as libreoffice_basics : List(U8)
 
 ## Any bytes parse to `Ok` or a structured `Err`, never a crash, and parsing
-## the same bytes twice gives the same result. A document that parses passes
+## the same bytes twice gives the same result, which is the body and
+## diagnostics that reading the main document as a whole tree gives. A document that parses passes
 ## through: it writes, writing it twice gives the same bytes, the written
 ## bytes parse to a document `Docx.equivalent` finds equivalent, with
 ## nothing left to drop, and writing that gives the same bytes again.
@@ -49,6 +51,7 @@ test! = |input| {
 	if Docx.parse(bytes).map_ok(|again| again.diagnostics) != parsed.map_ok(|first| first.diagnostics) {
 		crash "parsing the same bytes twice disagreed"
 	}
+	check_blockwise(bytes, parsed)
 	match parsed {
 		Ok({ document, diagnostics: _ }) => {
 			{ value: first, stats: write_stats } = Fuzz.measure!("docx-to-bytes", || Docx.to_bytes(document))
@@ -86,6 +89,28 @@ test! = |input| {
 			}
 	}
 }
+
+# Parsing reads the body block by block to the blocks and diagnostics that
+# reading every part as a tree, the main document's included, and then its
+# body gives, and fails exactly where that does.
+check_blockwise : List(U8), Try({ document : Document, diagnostics : List(Document.Diagnostic) }, Docx.ParseError) -> {}
+check_blockwise = |bytes, parsed|
+	match Opc.open(bytes, {}) {
+		Ok(pkg) =>
+			match (parsed, Document.from_package(pkg, {})) {
+				(Ok(read), Ok(whole)) =>
+					if read.diagnostics != whole.diagnostics or Docx.read_body(read.document) != Docx.read_body(whole.document) {
+						crash "reading the body block by block differed from reading its tree"
+					} else {
+						{}
+					}
+
+				(Err(_), Err(_)) => {}
+				_ => crash "reading the body block by block failed where reading its tree did not, or the reverse"
+			}
+
+		Err(_) => {}
+	}
 
 # Exploration gives arbitrary bytes or a generated package by the first
 # byte; the fixtures are declared examples.
@@ -153,20 +178,27 @@ inflated = |bytes|
 # for the large, 140 for the repaired one, whose paragraphs have properties,
 # and 1,161 to 10,945 for the fixtures, most for the Google Docs export,
 # whose 40 paragraphs each state many run and paragraph properties and
-# whose comments' identifiers are read to write their ranges.
+# whose comments' identifiers are read to write their ranges. Reading the
+# body block by block (G2.7b) passes over the main document twice, once
+# for its bookmarks' names and once for its blocks, and reads the body
+# when parsing rather than when writing; writing notes, headers and footers
+# from their models reads and writes them again: 101 more for the small
+# example, 1,108 for the large, 116 for the repaired one, and 80 to 2,293
+# for the fixtures, most for the Google Docs export, whose body is almost
+# all one table.
 exact_ceiling : Input -> Try(U64, [NotDeclared])
 exact_ceiling = |input|
 	match input {
-		Generated(program) if program == small_program => Ok(1_233)
-		Generated(program) if program == large_program => Ok(9_548)
-		Generated(program) if program == undeclared_program => Ok(1_342)
-		Generated(program) if program == repaired_program => Ok(1_494)
+		Generated(program) if program == small_program => Ok(1_334)
+		Generated(program) if program == large_program => Ok(10_656)
+		Generated(program) if program == undeclared_program => Ok(1_443)
+		Generated(program) if program == repaired_program => Ok(1_610)
 		Fixture(index) => fixtures.get(index).map_ok(|fixture| fixture.allocations).map_err(|_| NotDeclared)
 		_ => Err(NotDeclared)
 	}
 
 # The small and large generated examples repeat one program, the large one
-# sixteen times as often; their ceilings, 1,233 and 9,548, keep the growth
+# sixteen times as often; their ceilings, 1,334 and 10,656, keep the growth
 # linear, the small one mostly the constant cost of a package and of one
 # DEFLATE compressor.
 small_program : List(U8)
@@ -194,9 +226,9 @@ program_unit = [7, 4, 3, 5, 1, 2, 6, 2, 0]
 
 fixtures : List({ name : Str, bytes : List(U8), allocations : U64 })
 fixtures = [
-	{ name: "gdocs-resume", bytes: gdocs_resume, allocations: 36_881 },
-	{ name: "pandoc-basics", bytes: pandoc_basics, allocations: 17_589 },
-	{ name: "libreoffice-basics", bytes: libreoffice_basics, allocations: 15_816 },
+	{ name: "gdocs-resume", bytes: gdocs_resume, allocations: 39_174 },
+	{ name: "pandoc-basics", bytes: pandoc_basics, allocations: 17_906 },
+	{ name: "libreoffice-basics", bytes: libreoffice_basics, allocations: 15_896 },
 ]
 
 wordprocessingml : Str

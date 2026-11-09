@@ -1,4 +1,4 @@
-written: 15586 bytes, FNV-1a 64 78cc16e4241433cd
+written: 15380 bytes, FNV-1a 64 f5156487f166c003
 dropped: /word/document.xml 28 revision save identifiers
 dropped: /word/document.xml 1 rendered page breaks
 dropped: /word/footnotes.xml 6 revision save identifiers
@@ -14,14 +14,14 @@ part: /docProps/app.xml 624 bytes application/vnd.openxmlformats-officedocument.
 part: /docProps/core.xml 635 bytes application/vnd.openxmlformats-package.core-properties+xml
 part: /word/fontTable.xml 1752 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.fontTable+xml
 part: /word/settings.xml 2887 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml
-part: /word/footer2.xml 1667 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml
+part: /word/footer2.xml 1623 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml
 part: /word/styles.xml 32192 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml
 part: /word/numbering.xml 3940 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml
-part: /word/endnotes.xml 1595 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.endnotes+xml
-part: /word/header2.xml 1176 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml
-part: /word/footnotes.xml 1621 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml
-part: /word/footer1.xml 1667 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml
+part: /word/endnotes.xml 1463 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.endnotes+xml
+part: /word/header2.xml 1132 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml
+part: /word/footnotes.xml 1489 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml
+part: /word/footer1.xml 1623 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml
 part: /word/webSettings.xml 939 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.webSettings+xml
-part: /word/header1.xml 1176 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml
+part: /word/header1.xml 1132 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml
 part: /word/theme/theme1.xml 8716 bytes application/vnd.openxmlformats-officedocument.theme+xml
 part: /word/media/image1.png 82 bytes image/png

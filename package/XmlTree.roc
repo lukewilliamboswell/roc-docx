@@ -10,6 +10,7 @@
 ## written with its prefix from [XmlTree.prefixes], or, outside that table,
 ## with a prefix chosen by a fixed rule, declared once on the root, so the
 ## same tree always gives the same bytes.
+import parser.Xml
 import parser.XmlNs
 import Limits
 
@@ -123,32 +124,64 @@ XmlTree :: [].{
 	## Namespaces are resolved as each start tag is read and the tree is
 	## built in the same pass; whitespace between elements is kept as text.
 	parse : List(U8), Limits -> Try(Node, ReadError)
-	parse = |bytes, limits| {
+	parse = |bytes, limits| Ok(XmlTree.parse_split(bytes, limits, |_, _| Bool.False, {}, |state, _| state)?.tree)
+
+	## Read a part's bytes as [XmlTree.parse] does, except the content of one
+	## element: the root's first child that `splits(root, child)` accepts, by
+	## their names, is in the tree without children, and each of its children
+	## is given to `step` in order instead, as a whole subtree as soon as its
+	## end is read, built as the tree is. A part whose bulk is the children of one element, such as a main
+	## document's body, is so read without a tree of all of them.
+	parse_split : List(U8), Limits, (Name, Name -> Bool), s, (s, Node -> s) -> Try({ tree : Node, state : s }, ReadError)
+	parse_split = |bytes, limits, splits, state, step| {
 		text = Str.from_utf8(bytes) ? |_| XmlNotUtf8
-		var $reader = XmlNs.reader(text, { max_depth: limits.max_xml_depth, max_elements: limits.max_xml_elements, max_attributes: limits.max_xml_attributes }) ? read_error
+		var $reader = XmlNs.reader(text, reader_props(limits)) ? read_error
 		var $frames = List.with_capacity(16)
 		var $nodes = List.with_capacity(16)
+		var $state = state
+		var $split = Before
 		var $reading = Bool.True
 		while $reading {
 			match $reader.next() {
 				Event(Start(start), rest) => {
+					if $split == Before and $frames.len() == 1 {
+						match $frames.first() {
+							Ok(root) if splits(root.start.name, start.name) => {
+								$split = Inside
+							}
+
+							_ => {}
+						}
+					}
 					$frames = List.append($frames, { start, first_child: $nodes.len() })
 					$reader = rest
 				}
 
 				Event(Text(content), rest) => {
-					$nodes = List.append($nodes, Text(content))
+					if $split == Inside and $frames.len() == 2 {
+						$state = step($state, Text(content))
+					} else {
+						$nodes = List.append($nodes, Text(content))
+					}
 					$reader = rest
 				}
 
 				Event(End(_), rest) => {
+					if $split == Inside and $frames.len() == 2 {
+						$split = After
+					}
 					# The reader pairs every end tag with a start, so a frame is open.
 					match $frames.last() {
 						Ok({ start, first_child }) => {
 							$frames = List.drop_last($frames, 1)
 							node : Node
 							node = Element({ name: start.name, bindings: start.bindings, attributes: start.attributes, children: copy_from($nodes, first_child) })
-							$nodes = List.append(truncate($nodes, first_child), node)
+							if $split == Inside and $frames.len() == 2 {
+								$state = step($state, node)
+								$nodes = truncate($nodes, first_child)
+							} else {
+								$nodes = List.append(truncate($nodes, first_child), node)
+							}
 						}
 
 						Err(_) => {}
@@ -165,7 +198,50 @@ XmlTree :: [].{
 				}
 			}
 		}
-		Ok($nodes.last() ? |_| MalformedXml({ message: "no root element", line: 1, column: 1 }))
+		tree = $nodes.last() ? |_| MalformedXml({ message: "no root element", line: 1, column: 1 })
+		Ok({ tree, state: $state })
+	}
+
+	## One step through a part as [XmlTree.scan] reads it: an element's start,
+	## with its name and attributes, or the end of the element most recently
+	## started and not yet ended.
+	Event : [Start({ name : Name, attributes : List(Attribute) }), End]
+
+	## Read a part's bytes within the XML bounds of `limits`, as
+	## [XmlTree.parse] reads them, giving each element's start and end to
+	## `step` in document order and building no tree. Text is not given.
+	scan : List(U8), Limits, s, (s, Event -> s) -> Try(s, ReadError)
+	scan = |bytes, limits, state, step| {
+		text = Str.from_utf8(bytes) ? |_| XmlNotUtf8
+		var $reader = XmlNs.reader(text, reader_props(limits)) ? read_error
+		var $state = state
+		var $reading = Bool.True
+		while $reading {
+			match $reader.next() {
+				Event(Start(start), rest) => {
+					$state = step($state, Start({ name: start.name, attributes: start.attributes }))
+					$reader = rest
+				}
+
+				Event(End(_), rest) => {
+					$state = step($state, End)
+					$reader = rest
+				}
+
+				Event(Text(_), rest) => {
+					$reader = rest
+				}
+
+				Done => {
+					$reading = Bool.False
+				}
+
+				Failed(error) => {
+					return Err(read_error(error))
+				}
+			}
+		}
+		Ok($state)
 	}
 
 	## Write a tree as a part: an XML declaration with `standalone="yes"`,
@@ -254,6 +330,10 @@ XmlTree :: [].{
 		$nodes.last() ?? root
 	}
 }
+
+# The XML bounds of `limits`, as the pull reader takes them.
+reader_props : Limits -> Xml.ReaderProps
+reader_props = |limits| { max_depth: limits.max_xml_depth, max_elements: limits.max_xml_elements, max_attributes: limits.max_xml_attributes }
 
 # The dependency's read errors, in the package's words.
 read_error : XmlNs.ReadError -> XmlTree.ReadError
@@ -766,4 +846,33 @@ expect {
 	XmlTree.parse("<a><b/></a>".to_utf8(), { max_xml_depth: 1 }) == Err(XmlTooDeep({ max: 1, line: 1, column: 4 }))
 		and XmlTree.parse("<a><b/><c/></a>".to_utf8(), { max_xml_elements: 2 }) == Err(TooManyXmlElements({ max: 2, line: 1, column: 8 }))
 		and XmlTree.parse("<a x='1' y='2'/>".to_utf8(), { max_xml_attributes: 1 }) == Err(TooManyXmlAttributes({ max: 1, line: 1, column: 10 }))
+}
+
+## Splitting gives the chosen element's children one at a time, text
+## included, as the whole tree holds them, and leaves the element empty; a
+## later element of the same name stays whole in the tree.
+expect {
+	text = "<a:r xmlns:a='urn:a' xmlns:b='urn:b'><a:s/><a:body k='v'><a:p><b:x b:y='1'>t</b:x></a:p>\n<a:q/></a:body><a:body><a:p/></a:body></a:r>"
+	split = XmlTree.parse_split(text.to_utf8(), {}, |root, child| root.local == "r" and child.local == "body", [], |found, node| List.append(found, node))
+	whole = XmlTree.parse(text.to_utf8(), {})
+	expected = XmlTree.parse("<a:r xmlns:a='urn:a' xmlns:b='urn:b'><a:s/><a:body k='v'/><a:body><a:p/></a:body></a:r>".to_utf8(), {})
+	children = match whole {
+		Ok(Element(root)) =>
+			match root.children.get(1) {
+				Ok(Element(body)) => body.children
+				_ => []
+			}
+
+		_ => []
+	}
+	split.map_ok(|read| read.state) == Ok(children) and split.map_ok(|read| read.tree) == expected and children.len() == 3
+}
+
+## Scanning gives each element's start, with its resolved name and
+## attributes, and its end, in document order, and fails as parsing does.
+expect {
+	events = XmlTree.scan("<a xmlns='urn:a'><b c='d'>text</b><e/></a>".to_utf8(), {}, [], |found, event| List.append(found, event))
+	name = |local| { namespace: Uri("urn:a"), local, prefix: Unprefixed }
+	expected = [Start({ name: name("a"), attributes: [] }), Start({ name: name("b"), attributes: [{ name: { namespace: NoNamespace, local: "c", prefix: Unprefixed }, value: "d" }] }), End, Start({ name: name("e"), attributes: [] }), End, End]
+	events == Ok(expected) and XmlTree.scan("<w:a/>".to_utf8(), {}, 0.U64, |count, _| count + 1) == Err(NamespaceError({ problem: UndeclaredPrefix("w"), line: 1, column: 1 }))
 }

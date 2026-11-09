@@ -21,7 +21,7 @@ import Mce
 import Opc
 import XmlTree
 
-Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.Node) }.{
+Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.Node), body : [Whole, Blocks({ part : Str, body : Body })] }.{
 
 	## A block of the body, in reading order: a paragraph; a table; the end
 	## of a section, with the section's properties, after the paragraph whose
@@ -685,7 +685,9 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 		)
 
 	## The tree of the main document part, the target of the package's
-	## `officeDocument` relationship, as reading left it.
+	## `officeDocument` relationship, as reading left it: without the body's
+	## content when [Document.from_package_with_body] read the body as
+	## blocks.
 	main_document : Document -> Try(XmlTree.Node, [NoMainDocument])
 	main_document = |document| {
 		relationship = document.graph.relationships.find_first(|rel| rel.kind == Opc.officedocument_relationship and rel.mode == Internal) ? |_| NoMainDocument
@@ -695,7 +697,8 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 
 	## The document with the XML part named `name` holding `tree` and the
 	## relationships whose source it is, as a writer gives them; every other
-	## part stays as it is. A name that is not a part of the document changes
+	## part stays as it is, and a body read as blocks from that part is
+	## replaced by the tree. A name that is not a part of the document changes
 	## nothing.
 	with_part : Document, Str, XmlTree.Node, List(Opc.Relationship) -> Document
 	with_part = |document, name, tree, relationships| {
@@ -703,7 +706,11 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 			return document
 		}
 		parts = document.graph.parts.map(|part| if (part.name == name) { name: part.name, content_type: part.content_type, relationships: relationships } else part)
-		{ pkg: document.pkg, graph: { relationships: document.graph.relationships, parts }, trees: document.trees.insert(name, tree) }
+		body = match document.body {
+			Blocks(read) if read.part == name => Whole
+			other => other
+		}
+		{ pkg: document.pkg, graph: { relationships: document.graph.relationships, parts }, trees: document.trees.insert(name, tree), body }
 	}
 
 	## An XML part as reading left it: its name, its tree, and the
@@ -800,20 +807,82 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 		var $diagnostics = List.with_capacity(4)
 		for part in graph.parts {
 			if is_xml(part.content_type) {
-				bytes = Opc.part_bytes(pkg, part.name)?
-				tree = XmlTree.parse(bytes, limits) ? |problem| XmlPartUnreadable({ part: part.name, problem })
-				kept = drop(tree)
-				$trees = $trees.insert(part.name, kept.tree)
-				for dropped in kept.dropped {
-					$diagnostics = List.append($diagnostics, Dropped({ part: part.name, content: dropped.content, count: dropped.count }))
+				read = read_part(pkg, part.name, limits)?
+				$trees = $trees.insert(part.name, read.tree)
+				$diagnostics = List.concat($diagnostics, read.diagnostics)
+			}
+		}
+		Ok({ document: { pkg, graph, trees: $trees, body: Whole }, diagnostics: $diagnostics })
+	}
+
+	## A main document's body as the model: its blocks in reading order, and
+	## what reading them noticed that the schema does not allow, in document
+	## order, as [WmlRead.read_body] gives them.
+	Body : { blocks : List(Block), diagnostics : List([Rounded({ element : Str, attribute : Str, value : Str }), Defaulted({ element : Str, attribute : Str })]) }
+
+	## How [Document.from_package_with_body] has a main document's body read
+	## one block at a time. Two passes read the part. The first gives `scan`
+	## each element's start and end from the `scanned` state, without the
+	## content reading drops, so a reader can learn what the whole part names
+	## before it reads a block, such as its bookmarks; `start` makes the
+	## second pass's state of what it learned. The second gives `block` each
+	## child of the body in order, without its dropped content, as its
+	## subtree is read; `finish` gives the body.
+	BodyReader(p, s) : { scanned : p, scan : p, XmlTree.Event -> p, start : p -> s, block : s, XmlTree.Node -> s, finish : s -> Body }
+
+	## Read an opened package as [Document.from_package] does, except the
+	## main document's body, the content of the first `w:body` of a
+	## `w:document` root, which `reader` reads one block at a time and the
+	## document keeps as its model, so that no tree of the whole body is held:
+	## the part's tree is the rest of the part, the shell the body is written
+	## into. `reader` is asked for once every other part is read, with the
+	## document so far and the main document's name and relationships. The
+	## main document's diagnostics are those [Document.from_package] gives,
+	## in the same place. A package without a main document that is XML is
+	## read as [Document.from_package] reads it.
+	from_package_with_body : Opc.Package, Limits, (Document, { name : Str, relationships : List(Opc.Relationship) } -> BodyReader(p, s)) -> Try({ document : Document, diagnostics : List(Diagnostic) }, ReadError)
+	from_package_with_body = |pkg, limits, reader_for| {
+		graph = Opc.graph(pkg)?
+		main = match graph.relationships.find_first(|rel| rel.kind == Opc.officedocument_relationship and rel.mode == Internal) {
+			Ok(relationship) =>
+				match graph.parts.find_first(|part| part.name == relationship.target and is_xml(part.content_type)) {
+					Ok(part) => part
+					Err(_) => return Document.from_package(pkg, limits)
 				}
-				for repair in kept.repairs {
-					$diagnostics = List.append($diagnostics, repaired(part.name, repair))
+
+			Err(_) => return Document.from_package(pkg, limits)
+		}
+		var $trees = Dict.with_capacity(graph.parts.len())
+		var $before = List.with_capacity(4)
+		var $after = List.with_capacity(4)
+		var $passed = Bool.False
+		for part in graph.parts {
+			if part.name == main.name {
+				$passed = Bool.True
+			} else if is_xml(part.content_type) {
+				read = read_part(pkg, part.name, limits)?
+				$trees = $trees.insert(part.name, read.tree)
+				if $passed {
+					$after = List.concat($after, read.diagnostics)
+				} else {
+					$before = List.concat($before, read.diagnostics)
 				}
 			}
 		}
-		Ok({ document: { pkg, graph, trees: $trees }, diagnostics: $diagnostics })
+		reader = reader_for({ pkg, graph, trees: $trees, body: Whole }, { name: main.name, relationships: main.relationships })
+		read = read_body(Opc.part_bytes(pkg, main.name)?, limits, reader) ? |problem| XmlPartUnreadable({ part: main.name, problem })
+		diagnostics = List.join([$before, dropped_diagnostics(main.name, read.dropped), $after])
+		Ok({ document: { pkg, graph, trees: $trees.insert(main.name, read.shell), body: Blocks({ part: main.name, body: read.body }) }, diagnostics })
 	}
+
+	## The main document's body as [Document.from_package_with_body] read it,
+	## or `Whole` when the main document's tree holds it.
+	body : Document -> Try(Body, [Whole])
+	body = |document|
+		match document.body {
+			Blocks(read) => Ok(read.body)
+			Whole => Err(Whole)
+		}
 
 	## Write a document as a package, in the order and form of [Opc.writer]:
 	## each XML part rendered by [XmlTree.render] with its extension
@@ -840,12 +909,12 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 	## Two documents are equivalent when they have the same package
 	## relationships and the same parts by name, each with the same content
 	## type and relationships, every XML part's tree equivalent by
-	## [Document.equivalent_xml] and every other part's content byte for byte
-	## the same. This is the equivalence a document keeps when it is written
+	## [Document.equivalent_xml], every other part's content byte for byte
+	## the same, and the same body where it was read as blocks. This is the equivalence a document keeps when it is written
 	## and read again.
 	equivalent : Document, Document -> Bool
 	equivalent = |one, other| {
-		if one.graph.relationships != other.graph.relationships or one.graph.parts.len() != other.graph.parts.len() {
+		if one.graph.relationships != other.graph.relationships or one.graph.parts.len() != other.graph.parts.len() or one.body != other.body {
 			return Bool.False
 		}
 		var $counterparts = Dict.with_capacity(other.graph.parts.len())
@@ -1137,11 +1206,37 @@ Step : [Visit(XmlTree.Node), Leave]
 # document order. The root is always kept.
 drop : XmlTree.Node -> { tree : XmlTree.Node, dropped : List({ content : Document.Dropped, count : U64 }), repairs : List(Lenient.Repair) }
 drop = |root| {
-	go_back = go_back_ids(root)
-	var $save_ids = 0.U64
-	var $page_breaks = 0.U64
-	var $proofing = 0.U64
-	var $bookmarks = 0.U64
+	kept = dropping(root, go_back_ids(root), Bool.True)
+	{ tree: kept.nodes.last() ?? root, dropped: counted(kept.counts), repairs: kept.repairs }
+}
+
+# How much of each kind of dropped content a tree lost.
+Counts : { save_ids : U64, page_breaks : U64, proofing : U64, bookmarks : U64 }
+
+no_counts : Counts
+no_counts = { save_ids: 0, page_breaks: 0, proofing: 0, bookmarks: 0 }
+
+add_counts : Counts, Counts -> Counts
+add_counts = |one, other| { save_ids: one.save_ids + other.save_ids, page_breaks: one.page_breaks + other.page_breaks, proofing: one.proofing + other.proofing, bookmarks: one.bookmarks + other.bookmarks }
+
+# The kinds a tree lost content of, in the order of `Dropped`.
+counted : Counts -> List({ content : Document.Dropped, count : U64 })
+counted = |counts| {
+	all = [
+		{ content: RevisionSaveIds, count: counts.save_ids },
+		{ content: RenderedPageBreaks, count: counts.page_breaks },
+		{ content: ProofingMarks, count: counts.proofing },
+		{ content: GoBackBookmark, count: counts.bookmarks },
+	]
+	all.keep_if(|entry| entry.count > 0)
+}
+
+# A tree without its dropped content, `go_back` naming the `_GoBack`
+# bookmarks whose ends go with them: the tree, or nothing when its root is
+# dropped, which only a root that is not `kept` can be.
+dropping : XmlTree.Node, List(Str), Bool -> { nodes : List(XmlTree.Node), counts : Counts, repairs : List(Lenient.Repair) }
+dropping = |root, go_back, kept| {
+	var $counts = no_counts
 	var $repairs = List.with_capacity(0)
 	var $pending = [Visit(root)]
 	var $frames = List.with_capacity(16)
@@ -1157,11 +1252,11 @@ drop = |root| {
 			}
 
 			Visit(Element(element)) => {
-				kind = if ($frames.is_empty()) Kept else dropped_kind(element, go_back)
+				kind = if ($frames.is_empty() and kept) Kept else dropped_kind(element, go_back)
 				match kind {
 					Kept => {
 						kept_attributes = element.attributes.drop_if(is_save_id)
-						$save_ids = $save_ids + element.attributes.len() - kept_attributes.len()
+						$counts = { ..$counts, save_ids: $counts.save_ids + element.attributes.len() - kept_attributes.len() }
 						repaired_attributes = Lenient.repair(element.name, kept_attributes)
 						if !repaired_attributes.repairs.is_empty() {
 							$repairs = List.concat($repairs, repaired_attributes.repairs)
@@ -1171,15 +1266,15 @@ drop = |root| {
 					}
 
 					RenderedPageBreak => {
-						$page_breaks = $page_breaks + 1
+						$counts = { ..$counts, page_breaks: $counts.page_breaks + 1 }
 					}
 
 					ProofingMark => {
-						$proofing = $proofing + 1
+						$counts = { ..$counts, proofing: $counts.proofing + 1 }
 					}
 
 					GoBackStart => {
-						$bookmarks = $bookmarks + 1
+						$counts = { ..$counts, bookmarks: $counts.bookmarks + 1 }
 					}
 
 					GoBackEnd => {}
@@ -1199,14 +1294,116 @@ drop = |root| {
 				}
 		}
 	}
-	counts = [
-		{ content: RevisionSaveIds, count: $save_ids },
-		{ content: RenderedPageBreaks, count: $page_breaks },
-		{ content: ProofingMarks, count: $proofing },
-		{ content: GoBackBookmark, count: $bookmarks },
-	]
-	{ tree: $nodes.last() ?? root, dropped: counts.keep_if(|entry| entry.count > 0), repairs: $repairs }
+	{ nodes: $nodes, counts: $counts, repairs: $repairs }
 }
+
+# A part read as a tree without its dropped content, with what reading it
+# dropped and repaired as diagnostics.
+read_part : Opc.Package, Str, Limits -> Try({ tree : XmlTree.Node, diagnostics : List(Document.Diagnostic) }, Document.ReadError)
+read_part = |pkg, name, limits| {
+	bytes = Opc.part_bytes(pkg, name)?
+	tree = XmlTree.parse(bytes, limits) ? |problem| XmlPartUnreadable({ part: name, problem })
+	kept = drop(tree)
+	Ok({ tree: kept.tree, diagnostics: dropped_diagnostics(name, { dropped: kept.dropped, repairs: kept.repairs }) })
+}
+
+# What a part lost, by kind, then its repairs, as diagnostics of the part.
+dropped_diagnostics : Str, { dropped : List({ content : Document.Dropped, count : U64 }), repairs : List(Lenient.Repair) } -> List(Document.Diagnostic)
+dropped_diagnostics = |part, kept| List.concat(kept.dropped.map(|entry| Dropped({ part, content: entry.content, count: entry.count })), kept.repairs.map(|repair| repaired(part, repair)))
+
+# What the first pass over a main document carries: the reader's state, the
+# `_GoBack` bookmarks' identifiers, the depth of the element being read and
+# that of the dropped element whose content is being passed over, if any.
+Scanning(p) : { inner : p, go_back : List(Str), depth : U64, skip : U64 }
+
+# A main document read as `reader` reads its body: the part's tree without
+# the body's content, the body, and what the part lost, by kind, and its
+# repairs in document order, as [drop] gives them for the whole part.
+read_body : List(U8), Limits, Document.BodyReader(p, s) -> Try({ shell : XmlTree.Node, body : Document.Body, dropped : { dropped : List({ content : Document.Dropped, count : U64 }), repairs : List(Lenient.Repair) } }, XmlTree.ReadError)
+read_body = |bytes, limits, reader| {
+	first : Scanning(_)
+	first = { inner: reader.scanned, go_back: List.with_capacity(1), depth: 0, skip: 0 }
+	scanned = XmlTree.scan(bytes, limits, first, |state, event| scan_kept(state, event, reader.scan))?
+	go_back = scanned.go_back
+	split = XmlTree.parse_split(
+		bytes,
+		limits,
+		is_body,
+		{ inner: (reader.start)(scanned.inner), counts: no_counts, repairs: List.with_capacity(0) },
+		|state, node| {
+			kept = dropping(node, go_back, Bool.False)
+			{ inner: kept.nodes.fold(state.inner, reader.block), counts: add_counts(state.counts, kept.counts), repairs: List.concat(state.repairs, kept.repairs) }
+		},
+	)?
+	shell = dropping(split.tree, go_back, Bool.True)
+	after = after_body(split.tree).fold(List.with_capacity(0), |found, child| List.concat(found, dropping(child, go_back, Bool.False).repairs))
+	before = shell.repairs.take_first(shell.repairs.len() - after.len())
+	repairs = List.join([before, split.state.repairs, after])
+	Ok({ shell: shell.nodes.last() ?? split.tree, body: (reader.finish)(split.state.inner), dropped: { dropped: counted(add_counts(shell.counts, split.state.counts)), repairs } })
+}
+
+# The first pass over a main document: each element's start and end goes to
+# the reader's `scan` unless reading drops the element or it is inside one
+# that is dropped, and every `_GoBack` bookmark's identifier is noted, as
+# [go_back_ids] notes them. The end of a `_GoBack` bookmark is dropped only
+# once its start is known, so it is passed on.
+scan_kept : Scanning(p), XmlTree.Event, (p, XmlTree.Event -> p) -> Scanning(p)
+scan_kept = |state, event, scan|
+	match event {
+		Start(start) => {
+			depth = state.depth + 1
+			go_back_start = start.name.local == "bookmarkStart" and start.name.namespace == Uri(wordprocessingml) and value_in(start.attributes, "name") == Ok("_GoBack")
+			go_back = if (go_back_start) List.append(state.go_back, value_in(start.attributes, "id") ?? "") else state.go_back
+			if state.skip > 0 {
+				{ ..state, depth, go_back }
+			} else if depth > 1 and (go_back_start or is_dropped_mark(start.name)) {
+				{ ..state, depth, go_back, skip: depth }
+			} else {
+				{ ..state, depth, go_back, inner: scan(state.inner, event) }
+			}
+		}
+
+		End =>
+			if state.skip == state.depth {
+				{ ..state, depth: state.depth - 1, skip: 0 }
+			} else if state.skip > 0 {
+				{ ..state, depth: state.depth - 1 }
+			} else {
+				{ ..state, depth: state.depth - 1, inner: scan(state.inner, event) }
+			}
+	}
+
+# Whether a name is a rendered page break's or a proofing mark's, which
+# reading drops wherever they are.
+is_dropped_mark : XmlTree.Name -> Bool
+is_dropped_mark = |name| (name.local == "lastRenderedPageBreak" or name.local == "proofErr") and name.namespace == Uri(wordprocessingml)
+
+# Whether a root's child is the body [WmlRead.read_body] reads: a `w:body`
+# of a `w:document`.
+is_body : XmlTree.Name, XmlTree.Name -> Bool
+is_body = |root, child| root.local == "document" and child.local == "body" and root.namespace == Uri(wordprocessingml) and child.namespace == Uri(wordprocessingml)
+
+# The root's children after the body, in a main document's tree without the
+# body's content.
+after_body : XmlTree.Node -> List(XmlTree.Node)
+after_body = |tree|
+	match tree {
+		Element(root) => {
+			index = root.children.find_first_index(
+				|child|
+					match child {
+						Element(element) => is_body(root.name, element.name)
+						Text(_) => Bool.False
+					},
+			)
+			match index {
+				Ok(at) => root.children.drop_first(at + 1)
+				Err(_) => []
+			}
+		}
+
+		Text(_) => []
+	}
 
 # A repair as a diagnostic of the part it was made in.
 repaired : Str, Lenient.Repair -> Document.Diagnostic
@@ -1257,8 +1454,11 @@ go_back_ids = |root| {
 
 # The value of a WordprocessingML attribute of an element.
 value_of : Element, Str -> Try(Str, [NotFound])
-value_of = |element, local|
-	element.attributes.find_first(|attribute| attribute.name.namespace == Uri(wordprocessingml) and attribute.name.local == local).map_ok(|attribute| attribute.value)
+value_of = |element, local| value_in(element.attributes, local)
+
+value_in : List(XmlTree.Attribute), Str -> Try(Str, [NotFound])
+value_in = |attributes, local|
+	attributes.find_first(|attribute| attribute.name.namespace == Uri(wordprocessingml) and attribute.name.local == local).map_ok(|attribute| attribute.value)
 
 is_save_id : XmlTree.Attribute -> Bool
 is_save_id = |attribute| attribute.name.namespace == Uri(wordprocessingml) and attribute.name.local.starts_with("rsid")

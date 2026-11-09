@@ -93,6 +93,20 @@ WmlRead :: [].{
 			_ => { blocks: [], diagnostics: [] }
 		}
 
+	## The reader [Document.from_package_with_body] reads a main document's
+	## body with one block at a time, giving the blocks and diagnostics
+	## [WmlRead.read_body] gives for the part's tree: its first pass learns
+	## the names of the part's bookmarks and moves, and its second reads
+	## each block as it comes.
+	body_reader : Context -> Document.BodyReader(NamesScan, BodyReading)
+	body_reader = |context| {
+		scanned: { names: no_range_names, depth: 0, opaque: 0 },
+		scan: names_step,
+		start: |scan| { within: reading_with(context, scan.names), read: { blocks: List.with_capacity(64), diagnostics: List.with_capacity(0) } },
+		block: |state, node| { within: state.within, read: block_step(state.read, node, state.within) },
+		finish: |state| state.read,
+	}
+
 	## The notes of a footnotes or endnotes part, in the part's order, from
 	## the part's tree as [Docx.parse] read it. A note's content is read as a
 	## body's blocks are, and `w:type` says what kind of note it is. A tree
@@ -372,12 +386,14 @@ Reading : {
 }
 
 reading : XmlTree.Node, WmlRead.Context -> Reading
-reading = |tree, context| {
+reading = |tree, context| reading_with(context, range_names(tree))
+
+reading_with : WmlRead.Context, RangeNames -> Reading
+reading_with = |context, names| {
 	var $relationships = Dict.with_capacity(context.relationships.len())
 	for relationship in context.relationships {
 		$relationships = $relationships.insert(relationship.id, relationship)
 	}
-	names = range_names(tree)
 	{
 		relationships: $relationships,
 		bookmarks: names.bookmarks,
@@ -389,6 +405,41 @@ reading = |tree, context| {
 		deleted: Bool.False,
 	}
 }
+
+# What the first pass of [WmlRead.body_reader] carries: the range names so
+# far, the depth of the element being read and that of the element whose
+# content holds no range names being passed over, if any.
+NamesScan : { names : RangeNames, depth : U64, opaque : U64 }
+
+# What the second pass of [WmlRead.body_reader] carries: what reading looks
+# up, and the blocks read so far with what reading them noticed.
+BodyReading : { within : Reading, read : { blocks : List(Document.Block), diagnostics : List(WmlRead.Diagnostic) } }
+
+# The range names of a part read as events, as [range_names] finds them in
+# its tree.
+names_step : NamesScan, XmlTree.Event -> NamesScan
+names_step = |state, event|
+	match event {
+		Start(start) => {
+			depth = state.depth + 1
+			if state.opaque > 0 {
+				{ ..state, depth }
+			} else {
+				match range_rule(start.name, start.attributes) {
+					Named(named) => { names: with_name(state.names, named), depth, opaque: depth }
+					Opaque => { ..state, depth, opaque: depth }
+					Through => { ..state, depth }
+				}
+			}
+		}
+
+		End =>
+			if state.opaque == state.depth {
+				{ ..state, depth: state.depth - 1, opaque: 0 }
+			} else {
+				{ ..state, depth: state.depth - 1 }
+			}
+	}
 
 places : List(Str) -> Dict(Str, U64)
 places = |ids| {
@@ -402,40 +453,69 @@ places = |ids| {
 }
 
 # The names of a tree's bookmarks, and of its moves' source and destination
-# ranges, by identifier, from every start that has both, outside runs and
-# property elements of any namespace, where neither ever is. The tree is
-# walked as deep as the readers walk it, within the XML depth limit, without
-# copying any list of children, and names are compared by local name first,
-# as comparing a namespace costs an allocation.
+# ranges, by identifier, from every start that has both, outside runs,
+# property elements of any namespace and bookmark ends, where none ever is.
+# The tree is walked as deep as the readers walk it, within the XML depth
+# limit, without copying any list of children.
 RangeNames : { bookmarks : Dict(Str, Str), move_sources : Dict(Str, Str), move_destinations : Dict(Str, Str) }
 
+no_range_names : RangeNames
+no_range_names = { bookmarks: Dict.with_capacity(0), move_sources: Dict.with_capacity(0), move_destinations: Dict.with_capacity(0) }
+
 range_names : XmlTree.Node -> RangeNames
-range_names = |root| names_in({ bookmarks: Dict.with_capacity(0), move_sources: Dict.with_capacity(0), move_destinations: Dict.with_capacity(0) }, root)
+range_names = |root| names_in(no_range_names, root)
 
 names_in : RangeNames, XmlTree.Node -> RangeNames
 names_in = |names, node|
 	match node {
-		Element(element) if element.name.local == "bookmarkStart" and is_w(element.name, "bookmarkStart") =>
-			match (value_of(element, "id"), value_of(element, "name")) {
-				(Ok(id), Ok(name)) => { ..names, bookmarks: names.bookmarks.insert(id, name) }
-				_ => names
+		Element(element) =>
+			match range_rule(element.name, element.attributes) {
+				Named(named) => with_name(names, named)
+				Opaque => names
+				Through => element.children.fold(names, names_in)
 			}
 
-		Element(element) if element.name.local == "moveFromRangeStart" and is_w(element.name, "moveFromRangeStart") =>
-			match (value_of(element, "id"), value_of(element, "name")) {
-				(Ok(id), Ok(name)) => { ..names, move_sources: names.move_sources.insert(id, name) }
-				_ => names
-			}
-
-		Element(element) if element.name.local == "moveToRangeStart" and is_w(element.name, "moveToRangeStart") =>
-			match (value_of(element, "id"), value_of(element, "name")) {
-				(Ok(id), Ok(name)) => { ..names, move_destinations: names.move_destinations.insert(id, name) }
-				_ => names
-			}
-
-		Element(element) if element.name.local == "r" or element.name.local.ends_with("Pr") => names
-		Element(element) => element.children.fold(names, names_in)
 		Text(_) => names
+	}
+
+# What an element is to the range names: the start of a bookmark or of a
+# move's source or destination range with its identifier and name, an
+# element whose content holds none, or one whose content is looked through.
+# Names are compared by local name first, as comparing a namespace costs an
+# allocation.
+range_rule : XmlTree.Name, List(XmlTree.Attribute) -> [Named({ range : [Bookmark, MoveSource, MoveDestination], id : Str, name : Str }), Opaque, Through]
+range_rule = |name, attributes| {
+	range = if name.local == "bookmarkStart" and is_w(name, "bookmarkStart") {
+		Ok(Bookmark)
+	} else if name.local == "moveFromRangeStart" and is_w(name, "moveFromRangeStart") {
+		Ok(MoveSource)
+	} else if name.local == "moveToRangeStart" and is_w(name, "moveToRangeStart") {
+		Ok(MoveDestination)
+	} else {
+		Err(NotARange)
+	}
+	match range {
+		Ok(kind) =>
+			match (attribute_value(attributes, "id"), attribute_value(attributes, "name")) {
+				(Ok(id), Ok(named)) => Named({ range: kind, id, name: named })
+				_ => Opaque
+			}
+
+		Err(NotARange) =>
+			if name.local == "r" or name.local.ends_with("Pr") or (name.local == "bookmarkEnd" and is_w(name, "bookmarkEnd")) {
+				Opaque
+			} else {
+				Through
+			}
+	}
+}
+
+with_name : RangeNames, { range : [Bookmark, MoveSource, MoveDestination], id : Str, name : Str } -> RangeNames
+with_name = |names, named|
+	match named.range {
+		Bookmark => { ..names, bookmarks: names.bookmarks.insert(named.id, named.name) }
+		MoveSource => { ..names, move_sources: names.move_sources.insert(named.id, named.name) }
+		MoveDestination => { ..names, move_destinations: names.move_destinations.insert(named.id, named.name) }
 	}
 
 # The note elements of a footnotes or endnotes part's root.
@@ -901,27 +981,31 @@ inline_containers = ["sdt", "sdtContent", "smartTag", "customXml", "dir", "bdo"]
 # what it read.
 blocks : List(XmlTree.Node), Reading, List(WmlRead.Diagnostic) -> { blocks : List(Document.Block), diagnostics : List(WmlRead.Diagnostic) }
 blocks = |nodes, within, diagnostics| {
-	var $out = List.with_capacity(nodes.len())
-	var $diagnostics = diagnostics
+	var $read = { blocks: List.with_capacity(nodes.len()), diagnostics }
 	for node in nodes {
-		if is_content(node) {
-			read = block(node, within, $diagnostics)
-			match read.block {
-				Paragraph(read_paragraph) if read_paragraph.properties.preserved.any(is_plain_section) => {
-					ended = section_end(read_paragraph, within, read.diagnostics)
-					$out = List.append(List.append($out, Paragraph(ended.paragraph)), Section(ended.section))
-					$diagnostics = ended.diagnostics
-				}
-
-				_ => {
-					$out = List.append($out, read.block)
-					$diagnostics = read.diagnostics
-				}
-			}
-		}
+		$read = block_step($read, node, within)
 	}
-	{ blocks: $out, diagnostics: $diagnostics }
+	$read
 }
+
+# The blocks read so far with the next node read after them: nothing for
+# whitespace, and a paragraph whose mark ends a section followed by the
+# section.
+block_step : { blocks : List(Document.Block), diagnostics : List(WmlRead.Diagnostic) }, XmlTree.Node, Reading -> { blocks : List(Document.Block), diagnostics : List(WmlRead.Diagnostic) }
+block_step = |so_far, node, within|
+	if is_content(node) {
+		read = block(node, within, so_far.diagnostics)
+		match read.block {
+			Paragraph(read_paragraph) if read_paragraph.properties.preserved.any(is_plain_section) => {
+				ended = section_end(read_paragraph, within, read.diagnostics)
+				{ blocks: List.append(List.append(so_far.blocks, Paragraph(ended.paragraph)), Section(ended.section)), diagnostics: ended.diagnostics }
+			}
+
+			_ => { blocks: List.append(so_far.blocks, read.block), diagnostics: read.diagnostics }
+		}
+	} else {
+		so_far
+	}
 
 # A paragraph whose mark ends a section holds the section's properties in its
 # own; they are read as the section that ends after it.
@@ -2408,8 +2492,10 @@ without_children = |element| Element({ name: element.name, bindings: element.bin
 
 # The value of a WordprocessingML attribute of an element.
 value_of : Element, Str -> Try(Str, [NotFound])
-value_of = |element, local|
-	element.attributes.find_first(|attribute| is_w(attribute.name, local)).map_ok(|attribute| attribute.value)
+value_of = |element, local| attribute_value(element.attributes, local)
+
+attribute_value : List(XmlTree.Attribute), Str -> Try(Str, [NotFound])
+attribute_value = |attributes, local| attributes.find_first(|attribute| is_w(attribute.name, local)).map_ok(|attribute| attribute.value)
 
 relationships_namespace : Str
 relationships_namespace = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"

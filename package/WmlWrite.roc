@@ -97,7 +97,113 @@ WmlWrite :: [].{
 		tree = Element({ name: root.name, bindings: root.bindings, attributes: root.attributes, children: $children })
 		Ok({ tree, relationships: $state.relationships })
 	}
+
+	## The tree of a footnotes or endnotes part holding `notes`, and the
+	## part's relationships with any it needs added, as [WmlWrite.document]
+	## gives a main document's. `shell` is the part as it was read: its
+	## root's declarations and attributes and its children other than notes
+	## are kept, and each note takes the place, the identifier and every
+	## attribute but the kind of the note at its place in the shell, which
+	## is how references name it. A note's kind, `w:type` except for a
+	## `Note`, and its content are written from the model, its blocks as a
+	## body's are outside a table cell. A note beyond the shell's is written
+	## after the last, with the lowest identifier no note uses; a note of the
+	## shell beyond the model's is not written. A shell whose root is not a
+	## WordprocessingML footnotes or endnotes part is returned as it is.
+	##
+	## Bookmark identifiers are allocated across the part's notes as across a
+	## main document's body.
+	notes : XmlTree.Node, List(Document.Note), Context -> Try({ tree : XmlTree.Node, relationships : List(Opc.Relationship) }, WriteError)
+	notes = |shell, content, context| {
+		root = match shell {
+			Element(part) if is_w(part.name, "footnotes") or is_w(part.name, "endnotes") => part
+			_ => return Ok({ tree: shell, relationships: context.relationships })
+		}
+		local = if (is_w(root.name, "footnotes")) "footnote" else "endnote"
+		var $state = initial(List.join(content.map(|note| note.content)), context)?
+		var $children = List.with_capacity(root.children.len() + 1)
+		var $used = Set.with_capacity(content.len())
+		var $index = 0.U64
+		for child in root.children {
+			match child {
+				Element(kept) if is_w(kept.name, local) => {
+					match content.get($index) {
+						Ok(note) => {
+							out = blocks(note.content, Flow, $state)
+							attributes = with_kind(kept.attributes, note.kind)
+							node : XmlTree.Node
+							node = Element({ name: kept.name, bindings: kept.bindings, attributes, children: out.nodes })
+							$children = List.append($children, node)
+							$state = out.state
+							$used = $used.insert(value_of(kept.attributes, "id") ?? "")
+						}
+
+						Err(_) => {}
+					}
+					$index = $index + 1
+				}
+
+				_ => {
+					$children = List.append($children, child)
+				}
+			}
+		}
+		var $next = 0.U64
+		while $index < content.len() {
+			match content.get($index) {
+				Ok(note) => {
+					$next = free_id($used, $next)
+					out = blocks(note.content, Flow, $state)
+					$children = List.append($children, element(local, with_kind([{ name: { namespace: Uri(wordprocessingml), local: "id", prefix: Prefix("w") }, value: $next.to_str() }], note.kind), out.nodes))
+					$state = out.state
+					$used = $used.insert($next.to_str())
+				}
+
+				Err(_) => {}
+			}
+			$index = $index + 1
+		}
+		tree : XmlTree.Node
+		tree = Element({ name: root.name, bindings: root.bindings, attributes: root.attributes, children: $children })
+		Ok({ tree, relationships: $state.relationships })
+	}
+
+	## The tree of a header or footer part holding `content`, and the part's
+	## relationships with any it needs added, as [WmlWrite.document] gives a
+	## main document's. `shell` is the part as it was read: its root's
+	## declarations and attributes are kept, and its content is written from
+	## the model, its blocks as a body's are outside a table cell. A shell
+	## whose root is not a WordprocessingML header or footer is returned as it
+	## is.
+	header_footer : XmlTree.Node, List(Document.Block), Context -> Try({ tree : XmlTree.Node, relationships : List(Opc.Relationship) }, WriteError)
+	header_footer = |shell, content, context| {
+		root = match shell {
+			Element(part) if is_w(part.name, "hdr") or is_w(part.name, "ftr") => part
+			_ => return Ok({ tree: shell, relationships: context.relationships })
+		}
+		out = blocks(content, Flow, initial(content, context)?)
+		tree : XmlTree.Node
+		tree = Element({ name: root.name, bindings: root.bindings, attributes: root.attributes, children: out.nodes })
+		Ok({ tree, relationships: out.state.relationships })
+	}
 }
+
+# A note's attributes with its kind: `w:type` in its place, or last where
+# there was none, and none for a `Note`, which is the schema's default.
+with_kind : List(XmlTree.Attribute), [Note, Separator, ContinuationSeparator, ContinuationNotice] -> List(XmlTree.Attribute)
+with_kind = |attributes, kind| {
+	type_name = { namespace: Uri(wordprocessingml), local: "type", prefix: Prefix("w") }
+	match kind {
+		Note => attributes.drop_if(|existing| is_w(existing.name, "type"))
+		Separator => with_attribute(attributes, type_name, "separator")
+		ContinuationSeparator => with_attribute(attributes, type_name, "continuationSeparator")
+		ContinuationNotice => with_attribute(attributes, type_name, "continuationNotice")
+	}
+}
+
+# The value of a WordprocessingML attribute.
+value_of : List(XmlTree.Attribute), Str -> Try(Str, [NotFound])
+value_of = |attributes, local| attributes.find_first(|existing| is_w(existing.name, local)).map_ok(|existing| existing.value)
 
 # What writing carries from one piece of content to the next: the part's
 # relationships so far, the notes' identifiers, each modelled bookmark
@@ -1493,4 +1599,22 @@ expect {
 expect {
 	other = XmlTree.parse("<w:styles xmlns:w='${wordprocessingml}'/>".to_utf8(), {}) ?? Text("")
 	WmlWrite.document(other, [paragraph([])], no_context) == Ok({ tree: other, relationships: [] })
+}
+
+## Notes take the place, identifier and attributes of the shell's note at
+## their place, with their kind and content from the model: a note beyond
+## the shell's takes the lowest identifier no note uses, and a shell's note
+## beyond the model's is not written. A header's content is its blocks.
+expect {
+	notes_shell = XmlTree.parse("<w:footnotes xmlns:w='${wordprocessingml}'><w:footnote w:type='normal' w:id='0'/><w:footnote w:id='1' w:type='separator'/></w:footnotes>".to_utf8(), {}) ?? Text("")
+	notes = [{ kind: Separator, content: [paragraph([])] }, { kind: Note, content: [paragraph([run([Text("a")])])] }, { kind: ContinuationNotice, content: [] }]
+	header_shell = XmlTree.parse("<w:hdr xmlns:w='${wordprocessingml}'><w:p/></w:hdr>".to_utf8(), {}) ?? Text("")
+	rendered = |result|
+		match result {
+			Ok({ tree, relationships: _ }) => Str.from_utf8(XmlTree.render(tree) ?? []) ?? ""
+			Err(_) => "not written"
+		}
+	rendered(WmlWrite.notes(notes_shell, notes, no_context)).ends_with("<w:footnotes xmlns:w=\"${wordprocessingml}\"><w:footnote w:type=\"separator\" w:id=\"0\"><w:p/></w:footnote><w:footnote w:id=\"1\"><w:p><w:r><w:t>a</w:t></w:r></w:p></w:footnote><w:footnote w:id=\"2\" w:type=\"continuationNotice\"/></w:footnotes>")
+		and rendered(WmlWrite.notes(notes_shell, notes.take_first(1), no_context)).ends_with("<w:footnote w:type=\"separator\" w:id=\"0\"><w:p/></w:footnote></w:footnotes>")
+		and rendered(WmlWrite.header_footer(header_shell, [paragraph([run([Tab])]), paragraph([])], no_context)).ends_with("<w:hdr xmlns:w=\"${wordprocessingml}\"><w:p><w:r><w:tab/></w:r></w:p><w:p/></w:hdr>")
 }

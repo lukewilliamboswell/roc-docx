@@ -239,20 +239,27 @@ limits, and `Docx.to_bytes` writes a document back:
 written = Docx.to_bytes(document)?
 ----
 
-A document is its package and the tree of each XML part, which is every
-part whose content type is `application/xml`, `text/xml` or ends in `+xml`;
-<<read-a-documents-text>> reads the body's model from the main document's
-tree. Writing writes the main document from that model, in the canonical
-form <<write-a-document>> describes, renders every other tree with
+A document is its package, the model of its main document's body and the
+tree of each XML part, which is every part whose content type is
+`application/xml`, `text/xml` or ends in `+xml`. The body is read one block
+at a time as the main document part is parsed, and kept as the model
+<<read-a-documents-text>> describes, so no tree of the whole body is held
+beside it; the main document's tree is the rest of the part, the shell the
+body is written into. Writing writes the main document, its notes and its
+headers and footers from their models, in the canonical form
+<<write-a-document>> describes, renders every other tree with
 `XmlTree.render`, its extensions declared ignorable by
 `Mce.declare_extensions`, and copies every other part, such as an image,
 exactly as the archive stored it; the parts, their content types and their
-relationships are those of the original, with any relationship the main
-document needs added, in the order `Opc.writer` fixes.
+relationships are those of the original, with any relationship a part
+written from its model needs added, in the order `Opc.writer` fixes.
 The same document always gives the same bytes. A document holds the
-archive's bytes and the trees of its XML parts; reading and writing it hold
-one part's bytes beyond them. `Document.from_package` reads a package you
-opened yourself, with limits of your choosing.
+archive's bytes, the body's model and the trees of its other XML parts;
+reading and writing it hold one part's bytes beyond them, and reading the
+main document holds one block's tree. `Document.from_package` reads a
+package you opened yourself, with limits of your choosing, every XML part
+as a tree; `Document.from_package_with_body` reads it as `Docx.parse` does,
+the body with the reader you give it.
 
 Reading drops editor state that the producing application regenerates and
 that carries no document meaning, and reports what it dropped, as
@@ -286,8 +293,8 @@ namespace rule or exceeds a limit fails the parse with
 `XmlPartUnreadable({ part, problem })`.
 
 `Docx.equivalent` says whether two documents are the same in the sense a
-document keeps when it is written and read again: the main document parts
-the same when each is written from its model, so that spellings the model
+document keeps when it is written and read again: the main document, notes,
+header and footer parts the same when each is written from its model, so that spellings the model
 reads alike and identifiers the writer allocates make no difference, and
 every other part as `Document.equivalent` compares them. That is the same
 parts with the same content types and relationships, every part that is not

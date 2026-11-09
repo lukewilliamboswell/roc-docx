@@ -1,15 +1,15 @@
 = Write a document
 
-This chapter writes a document's body from the model that
-<<read-a-documents-text>> reads, and says what the written markup looks like
-and how the identifiers in it are chosen. It continues from
+This chapter writes a document's body, notes, headers and footers from the
+model that <<read-a-documents-text>> reads, and says what the written markup
+looks like and how the identifiers in it are chosen. It continues from
 <<read-and-write-the-parts-of-a-document>>, which passes a whole document
 through.
 
 == Write the body from its model
 
 `Docx.to_bytes` writes the main document part from the model `Docx.body`
-reads, not from the tree it was read as:
+gives, not from the markup it was read as:
 
 [source,roc]
 ----
@@ -22,9 +22,15 @@ typed values, and everything else as the XML it was read as, in its place.
 So the body that comes back when the written bytes are read is the body that
 was written, and writing that again gives the same bytes. The main document
 root keeps its declarations, its attributes and whatever it holds beside the
-body, such as a page background. The other parts, the footnotes and
-endnotes, headers and footers, styles and numbering among them, are written
-from the trees they were read as, as
+body, such as a page background.
+
+The footnotes and endnotes are written from the notes `Docx.footnotes` and
+`Docx.endnotes` give, and every header and footer the main document relates
+to from the blocks `Docx.header_footer` gives, in the same canonical form as
+the body. Each note keeps the identifier and the place of the note it was
+read as, which is what note references name, and takes its kind and content
+from the model. The other parts, styles and numbering among them, are
+written from the trees they were read as, as
 <<read-and-write-the-parts-of-a-document>> describes.
 
 `WmlWrite.document` is the writer on its own. It takes the main document
@@ -39,7 +45,10 @@ needed added:
 ----
 
 A tree whose root is not a WordprocessingML document is not a main document
-part, and comes back as it is. A note reference names its note by its place
+part, and comes back as it is. `WmlWrite.notes` writes a footnotes or
+endnotes part from its tree as read and a list of notes, and
+`WmlWrite.header_footer` a header or footer part from its tree and its
+blocks, in the same way. A note reference names its note by its place
 among the document's footnotes or endnotes; one whose place the context does
 not have cannot be written, and fails with `MissingNote({ kind, note })`.
 
@@ -89,7 +98,9 @@ relationships alone:
 * A bookmark takes the lowest number that no other bookmark and no element
   kept as it was read uses as its `w:id`, in the order the bookmarks begin,
   so that bookmarks, comments and revisions share one space of identifiers
-  without colliding. A bookmark's end takes its start's identifier.
+  without colliding. A bookmark's end takes its start's identifier. Each
+  part allocates its own: the notes of a footnotes part share one space,
+  and a header's bookmarks have theirs.
 * A hyperlink, picture, header or footer uses the part's relationship to its
   target, in the same mode, internal or external; a header or footer needs
   one of the header or footer kind. When the part has none, a relationship
@@ -103,6 +114,6 @@ relationships alone:
 
 An identifier written by the package therefore need not be the one the
 document was read with, which is why two documents are compared with
-`Docx.equivalent`: the main document parts are the same when each is
-written from its model, so a document and the document its written bytes
+`Docx.equivalent`: the parts written from the model are the same when each
+is written from its model, so a document and the document its written bytes
 read back as are equivalent.
