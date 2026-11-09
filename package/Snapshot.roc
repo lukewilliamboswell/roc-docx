@@ -4,12 +4,13 @@
 ##
 ## The snapshot has the contract's fixed shape, every field present, and
 ## declares in `keys` only what the package is authoritative for: the
-## body's blocks with their kind, level and text, their runs' direct
-## formatting and hyperlinks, the notes' kinds and text, the sections' page
-## geometry and header and footer text, and the core properties. Every other
+## body's blocks with their kind, level, list kind and text, their runs'
+## direct formatting and hyperlinks, the notes' kinds and text, the sections'
+## page geometry and header and footer text, and the core properties. Every other
 ## field holds its empty value.
 import Docx
 import Document
+import Numbering
 import Opc
 import Styles
 import XmlTree
@@ -38,8 +39,10 @@ Snapshot :: [].{
 	## A paragraph is a heading when its effective outline level, from its
 	## style or stated directly, is one of the nine heading levels, its level
 	## counted from 1; otherwise it is a list item when its effective
-	## numbering reference names a numbering instance, its level its list
-	## level counted from 1. Paragraphs joined into one block take the kind of
+	## numbering reference resolves to a list level by [Numbering.level], its
+	## level that list level counted from 1 and its list a bullet list when
+	## the level is numbered with bullets, a numbered list otherwise.
+	## Paragraphs joined into one block take the kind of
 	## the last of them, whose mark remains.
 	##
 	## The notes are the footnotes and endnotes the body refers to, in the
@@ -53,8 +56,8 @@ Snapshot :: [].{
 	json : Document, { path : Str, version : Str } -> Str
 	json = |document, { path, version }| {
 		body = Docx.body(document)
-		styles = Docx.styles(document).styles
-		blocks = snapshot_of_blocks(body, styles).map(block_json)
+		tables = { styles: Docx.styles(document).styles, numbering: Docx.numbering(document).numbering }
+		blocks = snapshot_of_blocks(body, tables).map(block_json)
 		footnotes = Docx.footnotes(document)
 		endnotes = Docx.endnotes(document)
 		notes = body.fold(List.with_capacity(8), note_references).keep_oks(
@@ -64,7 +67,7 @@ Snapshot :: [].{
 					Endnote => ("endnote", endnotes)
 				}
 				note = list.get(reference.note) ? |_| Missing
-				text = Str.join_with(snapshot_of_blocks(note.content, styles).map(|block| block.text), "\n")
+				text = Str.join_with(snapshot_of_blocks(note.content, tables).map(|block| block.text), "\n")
 				Ok("{\"kind\": \"${kind}\", \"text\": ${quoted(text)}}")
 			},
 		)
@@ -79,7 +82,7 @@ Snapshot :: [].{
 				"  \"notes\": [${list_json(notes)}],",
 				"  \"comments\": [],",
 				"  \"revisions\": [],",
-				"  \"sections\": [${list_json(sections_json(document, body, styles))}],",
+				"  \"sections\": [${list_json(sections_json(document, body, tables))}],",
 				"  \"properties\": ${properties_json(Docx.core_properties(document))}",
 				"}",
 				"",
@@ -96,6 +99,7 @@ keys : List(Str)
 keys = [
 	"blocks.kind",
 	"blocks.level",
+	"blocks.list",
 	"blocks.text",
 	"blocks.rows",
 	"blocks.runs.bold",
@@ -133,8 +137,8 @@ keys = [
 # 15,840 twips, with margins of 1,440. Its header and footer are the text of
 # its default header and footer, a section without one having the previous
 # section's, each block's text joined by line feeds as a note's is.
-sections_json : Document, List(Document.Block), Styles -> List(Str)
-sections_json = |document, body, styles| {
+sections_json : Document, List(Document.Block), Tables -> List(Str)
+sections_json = |document, body, tables| {
 	unstated = { start: Unset, page_size: Unset, margins: Unset, columns: Unset, page_numbers: Unset, title_page: Unset, headers: [], footers: [], preserved: [] }
 	trailing = match body.last() {
 		Ok(Section(_)) => []
@@ -146,7 +150,7 @@ sections_json = |document, body, styles| {
 	for section in List.concat(Document.sections(body), trailing) {
 		$header = default_part(section.headers, $header)
 		$footer = default_part(section.footers, $footer)
-		$out = List.append($out, section_json(section, region_text(document, $header, styles), region_text(document, $footer, styles)))
+		$out = List.append($out, section_json(section, region_text(document, $header, tables), region_text(document, $footer, tables)))
 	}
 	$out
 }
@@ -158,10 +162,10 @@ default_part = |references, previous|
 		Err(_) => previous
 	}
 
-region_text : Document, Try(Str, [NoPart]), Styles -> Str
-region_text = |document, part, styles|
+region_text : Document, Try(Str, [NoPart]), Tables -> Str
+region_text = |document, part, tables|
 	match part {
-		Ok(name) => Str.join_with(snapshot_of_blocks(Docx.header_footer(document, name), styles).map(|block| block.text), "\n")
+		Ok(name) => Str.join_with(snapshot_of_blocks(Docx.header_footer(document, name), tables).map(|block| block.text), "\n")
 		Err(NoPart) => ""
 	}
 
@@ -197,7 +201,7 @@ properties_json = |core| {
 
 # A block of the snapshot, and a run of its text with its direct formatting
 # and its hyperlink's target.
-SnapshotBlock : { kind : Str, level : U64, text : Str, runs : List(SnapshotRun), rows : List(List(Str)) }
+SnapshotBlock : { kind : Str, level : U64, list : Str, text : Str, runs : List(SnapshotRun), rows : List(List(Str)) }
 
 SnapshotRun : { text : Str, formatting : Formatting, link : Str }
 
@@ -218,16 +222,26 @@ formatting = |properties| {
 	subscript: properties.vertical_align == Subscript,
 }
 
-# A paragraph's kind and level: a heading by its outline level, otherwise a
-# list item by its numbering reference, otherwise a paragraph.
-paragraph_shape : Styles, Document.ParagraphProperties -> { kind : Str, level : U64 }
-paragraph_shape = |styles, properties| {
-	effective = Styles.effective_paragraph(styles, properties, {})
-	match (effective.outline_level, effective.numbering.instance, effective.numbering.level) {
-		(Level(level), _, _) if level < 9 => { kind: "heading", level: level.to_u64() + 1 }
-		(_, Instance(instance), Level(level)) if instance != 0 => { kind: "list_item", level: level.to_u64() + 1 }
-		(_, Instance(instance), Unset) if instance != 0 => { kind: "list_item", level: 1 }
-		_ => { kind: "paragraph", level: 0 }
+# The style and numbering tables blocks are read with.
+Tables : { styles : Styles, numbering : Numbering }
+
+# A paragraph's kind, level and list kind: a heading by its outline level,
+# otherwise a list item by the list level its numbering reference resolves
+# to, a bullet list where the level is numbered with bullets and a numbered
+# list otherwise, otherwise a paragraph. The outline level is resolved with
+# the list level's paragraph properties.
+paragraph_shape : Tables, Document.ParagraphProperties -> { kind : Str, level : U64, list : Str }
+paragraph_shape = |tables, properties| {
+	stated = Styles.effective_paragraph(tables.styles, properties, {})
+	listed = Numbering.level(tables.numbering, tables.styles, stated.numbering)
+	effective = match listed {
+		Ok(level) => Styles.effective_paragraph(tables.styles, properties, { numbering: level.paragraph })
+		Err(_) => stated
+	}
+	match (effective.outline_level, listed) {
+		(Level(level), _) if level < 9 => { kind: "heading", level: level.to_u64() + 1, list: "" }
+		(_, Ok(level)) => { kind: "list_item", level: level.level.to_u64() + 1, list: if (level.format == Bullet) "bullet" else "number" }
+		_ => { kind: "paragraph", level: 0, list: "" }
 	}
 }
 
@@ -245,12 +259,12 @@ OpenField : { code : Str, in_result : Bool }
 Runs : { runs : List(SnapshotRun), fields : List(OpenField) }
 
 # The snapshot blocks of blocks.
-snapshot_of_blocks : List(Document.Block), Styles -> List(SnapshotBlock)
-snapshot_of_blocks = |blocks, styles| flush(blocks.fold({ blocks: List.with_capacity(64), joined: Err(NoParagraph), fields: [] }, |state, block| snapshot_blocks(state, block, styles)), styles).blocks
+snapshot_of_blocks : List(Document.Block), Tables -> List(SnapshotBlock)
+snapshot_of_blocks = |blocks, tables| flush(blocks.fold({ blocks: List.with_capacity(64), joined: Err(NoParagraph), fields: [] }, |state, block| snapshot_blocks(state, block, tables)), tables).blocks
 
 # Append a block's snapshot blocks.
-snapshot_blocks : Blocks, Document.Block, Styles -> Blocks
-snapshot_blocks = |state, block, styles|
+snapshot_blocks : Blocks, Document.Block, Tables -> Blocks
+snapshot_blocks = |state, block, tables|
 	match block {
 		Paragraph(paragraph) => {
 			before = state.joined ?? { text: "", anchored: Bool.False, runs: [], properties: paragraph.properties }
@@ -259,27 +273,27 @@ snapshot_blocks = |state, block, styles|
 			if Document.joins_next(paragraph) {
 				{ blocks: state.blocks, joined: Ok(joined), fields: read.fields }
 			} else {
-				flush({ blocks: state.blocks, joined: Ok(joined), fields: read.fields }, styles)
+				flush({ blocks: state.blocks, joined: Ok(joined), fields: read.fields }, tables)
 			}
 		}
 
 		Table(table) => {
-			flushed = flush(state, styles)
-			{ blocks: List.append(flushed.blocks, { kind: "table", level: 0, text: "", runs: [], rows: rows(table) }), joined: Err(NoParagraph), fields: flushed.fields }
+			flushed = flush(state, tables)
+			{ blocks: List.append(flushed.blocks, { kind: "table", level: 0, list: "", text: "", runs: [], rows: rows(table) }), joined: Err(NoParagraph), fields: flushed.fields }
 		}
 
-		Container({ element: _, content }) => content.fold(state, |inner_state, inner| snapshot_blocks(inner_state, inner, styles))
+		Container({ element: _, content }) => content.fold(state, |inner_state, inner| snapshot_blocks(inner_state, inner, tables))
 		Section(_) => state
 		Preserved(_) => state
 	}
 
 # Append the joined paragraph, as a block when it has text or anchors something.
-flush : Blocks, Styles -> Blocks
-flush = |state, styles|
+flush : Blocks, Tables -> Blocks
+flush = |state, tables|
 	match state.joined {
 		Ok(joined) if joined.text != "" or joined.anchored => {
-			shape = paragraph_shape(styles, joined.properties)
-			{ blocks: List.append(state.blocks, { kind: shape.kind, level: shape.level, text: joined.text, runs: joined.runs, rows: [] }), joined: Err(NoParagraph), fields: state.fields }
+			shape = paragraph_shape(tables, joined.properties)
+			{ blocks: List.append(state.blocks, { kind: shape.kind, level: shape.level, list: shape.list, text: joined.text, runs: joined.runs, rows: [] }), joined: Err(NoParagraph), fields: state.fields }
 		}
 
 		_ => { blocks: state.blocks, joined: Err(NoParagraph), fields: state.fields }
@@ -436,7 +450,7 @@ block_json = |block| {
 		},
 	)
 	row_json = |cells| "[${Str.join_with(cells.map(quoted), ", ")}]"
-	"{\"kind\": \"${block.kind}\", \"level\": ${block.level.to_str()}, \"list\": \"\", \"text\": ${quoted(block.text)}, \"runs\": [${Str.join_with(runs, ", ")}], \"rows\": [${Str.join_with(block.rows.map(row_json), ", ")}]}"
+	"{\"kind\": \"${block.kind}\", \"level\": ${block.level.to_str()}, \"list\": \"${block.list}\", \"text\": ${quoted(block.text)}, \"runs\": [${Str.join_with(runs, ", ")}], \"rows\": [${Str.join_with(block.rows.map(row_json), ", ")}]}"
 }
 
 # Objects of a JSON list, one to a line.
@@ -544,7 +558,9 @@ quoted = |text| {
 
 # The snapshot of a package whose main document has this body content, with
 # an external hyperlink relationship `rId1`, these notes in its footnotes
-# and endnotes parts, and a header part, `rId4`, saying `Draft`.
+# and endnotes parts, a header part, `rId4`, saying `Draft`, and through
+# `rId5` the numbering instances 3, of a numbered list, and 4, of a bulleted
+# one.
 snapshot_of : Str, { footnotes : Str, endnotes : Str } -> Try(Str, _)
 snapshot_of = |content, notes| {
 	relationships = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
@@ -560,11 +576,13 @@ snapshot_of = |content, notes| {
 					{ id: "rId2", kind: "${relationships}/footnotes", target: "/word/footnotes.xml", mode: Internal },
 					{ id: "rId3", kind: "${relationships}/endnotes", target: "/word/endnotes.xml", mode: Internal },
 					{ id: "rId4", kind: "${relationships}/header", target: "/word/header1.xml", mode: Internal },
+					{ id: "rId5", kind: "${relationships}/numbering", target: "/word/numbering.xml", mode: Internal },
 				],
 			},
 			part("footnotes", "footnotes"),
 			part("endnotes", "endnotes"),
 			part("header1", "header"),
+			part("numbering", "numbering"),
 		],
 	}
 	declarations = "xmlns:w='${wordprocessingml}' xmlns:r='${relationships}'"
@@ -575,6 +593,9 @@ snapshot_of = |content, notes| {
 			"<w:endnotes ${declarations}>${notes.endnotes}</w:endnotes>"
 		} else if name == "/word/header1.xml" {
 			"<w:hdr ${declarations}><w:p><w:r><w:t>Draft</w:t></w:r></w:p></w:hdr>"
+		} else if name == "/word/numbering.xml" {
+			level = |at, format| "<w:lvl w:ilvl='${at}'><w:numFmt w:val='${format}'/></w:lvl>"
+			"<w:numbering ${declarations}><w:abstractNum w:abstractNumId='1'>${level("0", "decimal")}${level("1", "lowerLetter")}</w:abstractNum><w:abstractNum w:abstractNumId='2'>${level("0", "bullet")}</w:abstractNum><w:num w:numId='3'><w:abstractNumId w:val='1'/></w:num><w:num w:numId='4'><w:abstractNumId w:val='2'/></w:num></w:numbering>"
 		} else {
 			"<w:document ${declarations}><w:body>${content}</w:body></w:document>"
 		}
@@ -649,13 +670,15 @@ expect {
 	snapshot_of("<w:tbl>${Str.join_with(rows_xml, "")}</w:tbl>", no_notes).map_ok(|json| json.contains(expected)) == Ok(Bool.True)
 }
 
-## A heading is recognised by its outline level and a list item by its
-## numbering reference; runs carry their direct formatting through
+## A heading is recognised by its outline level and a list item by the list
+## level its numbering reference resolves to, of a bulleted or numbered list
+## by the level's format, while a reference to an instance that does not
+## exist makes no list item; runs carry their direct formatting through
 ## hyperlinks, neighbours with the same formatting and link joined.
 expect {
 	heading = "<w:p><w:pPr><w:outlineLvl w:val='1'/></w:pPr><w:r><w:t>Head</w:t></w:r></w:p><w:p><w:pPr><w:outlineLvl w:val='9'/></w:pPr><w:r><w:t>Body</w:t></w:r></w:p>"
 	formatted = "<w:r><w:rPr><w:b/></w:rPr><w:t>Item</w:t></w:r><w:r><w:rPr><w:b w:val='true'/></w:rPr><w:t xml:space='preserve'> one</w:t></w:r><w:hyperlink w:anchor='b'><w:r><w:rPr><w:i/><w:u w:val='single'/><w:vertAlign w:val='superscript'/><w:dstrike/></w:rPr><w:t>2</w:t></w:r></w:hyperlink><w:r><w:rPr><w:b w:val='0'/><w:u w:val='none'/><w:vertAlign w:val='subscript'/></w:rPr><w:t>3</w:t></w:r>"
-	item = "<w:p><w:pPr><w:numPr><w:ilvl w:val='1'/><w:numId w:val='3'/></w:numPr></w:pPr><w:bookmarkStart w:id='1' w:name='b'/>${formatted}<w:bookmarkEnd w:id='1'/></w:p><w:p><w:pPr><w:numPr><w:numId w:val='0'/></w:numPr></w:pPr><w:r><w:t>Not listed</w:t></w:r></w:p>"
+	item = "<w:p><w:pPr><w:numPr><w:ilvl w:val='1'/><w:numId w:val='3'/></w:numPr></w:pPr><w:bookmarkStart w:id='1' w:name='b'/>${formatted}<w:bookmarkEnd w:id='1'/></w:p><w:p><w:pPr><w:numPr><w:numId w:val='0'/></w:numPr></w:pPr><w:r><w:t>Not listed</w:t></w:r></w:p><w:p><w:pPr><w:numPr><w:numId w:val='4'/></w:numPr></w:pPr><w:r><w:t>Bullet</w:t></w:r></w:p><w:p><w:pPr><w:numPr><w:ilvl w:val='0'/><w:numId w:val='9'/></w:numPr></w:pPr><w:r><w:t>Missing</w:t></w:r></w:p>"
 	run = |text, flags, link| "{\"text\": \"${text}\", ${flags}, \"link\": \"${link}\"}"
 	runs = Str.join_with(
 		[
@@ -668,8 +691,10 @@ expect {
 	json = snapshot_of("${heading}${item}", no_notes)?
 	json.contains("{\"kind\": \"heading\", \"level\": 2, \"list\": \"\", \"text\": \"Head\"")
 		and json.contains("{\"kind\": \"paragraph\", \"level\": 0, \"list\": \"\", \"text\": \"Body\"")
-		and json.contains("{\"kind\": \"list_item\", \"level\": 2, \"list\": \"\", \"text\": \"Item one23\", \"runs\": [${runs}]")
+		and json.contains("{\"kind\": \"list_item\", \"level\": 2, \"list\": \"number\", \"text\": \"Item one23\", \"runs\": [${runs}]")
 		and json.contains("{\"kind\": \"paragraph\", \"level\": 0, \"list\": \"\", \"text\": \"Not listed\"")
+		and json.contains("{\"kind\": \"list_item\", \"level\": 1, \"list\": \"bullet\", \"text\": \"Bullet\"")
+		and json.contains("{\"kind\": \"paragraph\", \"level\": 0, \"list\": \"\", \"text\": \"Missing\"")
 }
 
 ## A body with no blocks has an empty list of them.
@@ -722,8 +747,8 @@ expect {
 	control = "<w:sdt><w:sdtContent><w:p><w:r><w:t>e</w:t></w:r></w:p></w:sdtContent></w:sdt>"
 	table = "<w:tbl><w:tr><w:tc><w:p/></w:tc></w:tr></w:tbl>"
 	body = "${moved}${deleted_mark("d")}${control}${deleted_mark("f")}${table}${deleted_mark("")}<w:p/>"
-	paragraph = |text| block_json({ kind: "paragraph", level: 0, text, runs: if (text == "") [] else [{ text, formatting: formatting(Document.no_run_properties), link: "" }], rows: [] })
-	expected = [paragraph("ac"), paragraph("de"), paragraph("f"), block_json({ kind: "table", level: 0, text: "", runs: [], rows: [[""]] }), paragraph("")]
+	paragraph = |text| block_json({ kind: "paragraph", level: 0, list: "", text, runs: if (text == "") [] else [{ text, formatting: formatting(Document.no_run_properties), link: "" }], rows: [] })
+	expected = [paragraph("ac"), paragraph("de"), paragraph("f"), block_json({ kind: "table", level: 0, list: "", text: "", runs: [], rows: [[""]] }), paragraph("")]
 	snapshot_of(body, no_notes).map_ok(|json| json.contains("\"blocks\": [\n    ${Str.join_with(expected, ",\n    ")}\n  ],")) == Ok(Bool.True)
 }
 

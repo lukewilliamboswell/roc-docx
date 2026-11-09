@@ -231,7 +231,8 @@ are combined as the standard says: each kind of style that turns one on
 inverts it, so a bold character style in a bold paragraph style gives text
 that is not bold, and direct formatting sets it outright. A table style and a numbering level contribute
 only when the caller passes their properties, as `{ table_paragraph,
-table_run, numbering }`; `Styles.inherited` gives a style's properties with
+table_run, numbering }`, the last from the paragraph's list level as
+<<lists>> describes; `Styles.inherited` gives a style's properties with
 its bases', such as a table style's. The model keeps only what the document
 states, so resolving never changes what a document writes.
 
@@ -244,6 +245,78 @@ A heading is a paragraph whose effective outline level is 0 to 8, whether
 its style or the paragraph itself gives it; level 9 is body text. That is
 how LibreOffice reads headings, and it recognises a style based on a
 heading style as a heading.
+
+== Lists
+
+A paragraph is a list item when its numbering reference names a list. The
+reference is the paragraph's `numbering`: an `instance` and a `level` from
+0, stated on the paragraph or given by its paragraph style, so the
+effective one comes from `Styles.effective_paragraph`. `Docx.numbering`
+reads the document's numbering table with `Numbering.read`, and
+`Numbering.level` resolves a reference to the list level the paragraph is
+at:
+
+[source,roc]
+----
+{ styles, diagnostics: _ } = Docx.styles(document)
+{ numbering, diagnostics: _ } = Docx.numbering(document)
+items = Docx.body(document).keep_oks(
+    |block|
+        match block {
+            Paragraph(paragraph) => {
+                reference = Styles.effective_paragraph(styles, paragraph.properties, {}).numbering
+                level = Numbering.level(numbering, styles, reference)?
+                Ok({ depth: level.level, bullet: level.format == Bullet, text: Document.paragraph_text(paragraph) })
+            }
+
+            _ => Err(NotAListItem)
+        },
+)
+----
+
+A list is described twice over. A `Numbering.Definition` holds the levels,
+up to nine of them, and each `Numbering.Level` says how it is numbered
+(`format`), the number it `start`s from, the `text` it shows, where `%1` to
+`%9` stand for the current numbers of levels 1 to 9, its `alignment`, the
+`paragraph_style` that takes the level, and the `paragraph` and `run`
+properties it gives. The format is `Bullet`, which includes picture bullets;
+`NoNumber`, a list item that shows nothing; `Number(name)` with the schema's
+name for the numbering, such as `decimal`, `lowerLetter` or `upperRoman`; or
+`Unset`, which the standard reads as `decimal`. A `Numbering.Instance` is
+what paragraphs name: it uses one definition, by its identifier, and its
+`overrides` can restart a level at another number or replace a level
+outright, so two lists can share a definition and still be numbered
+separately. `Numbering.level` applies them: the level is the definition's,
+or the override's replacement, starting from the override's number where it
+gives one. A definition can stand for a numbering style, and another can use
+that style instead of levels of its own; the levels then come from the
+definition of the instance the numbering style names, or failing that from
+the definition that stands for the style.
+
+A reference names no list when its instance is 0, which is how a paragraph
+removes the numbering its style gives it, or it names no instance at all.
+An instance that does not exist, or whose definition does not exist, names
+no list either, and `Numbering.level` says which as `MissingInstance` or
+`MissingDefinition`, as pandoc reads it; LibreOffice numbers such a
+paragraph anyway. A level the definition does not give is still a list
+level, with every property `Unset`, as LibreOffice reads it.
+
+A list level's `paragraph` properties take part in the paragraph's
+effective properties, after the document defaults and a table style and
+before its paragraph style: pass them as
+`Styles.effective_paragraph(styles, properties, { numbering: level.paragraph })`.
+The level's `run` properties format the number or bullet, not the
+paragraph's text.
+
+What reading the numbering part did not take as written is a
+`Numbering.Diagnostic`: a definition or instance without a usable
+identifier, or with one already taken, which is skipped, and an instance
+whose definition does not exist. Within a definition, a level and an
+override the model cannot hold whole, and every element it does not model,
+such as a level's suffix or restart rule, stay in the `preserved` list of
+the definition, level or instance, and attributes such as a level's
+template code in `preserved_attributes`. The numbering part's own picture
+bullet definitions are not part of the table.
 
 == Tables
 

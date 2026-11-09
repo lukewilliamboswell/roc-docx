@@ -270,6 +270,11 @@ WmlRead :: [].{
 		}
 		$properties
 	}
+
+	## The alignment a paragraph's `w:jc` or a list level's `w:lvlJc` names,
+	## as the schema spells it.
+	alignment : Str -> Try(Document.Alignment, [CannotHold])
+	alignment = |value| paragraph_alignment(value)
 }
 
 # What reading a part looks up: its relationships and its bookmarks' names by

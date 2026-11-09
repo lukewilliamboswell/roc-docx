@@ -8,6 +8,7 @@
 ## back as diagnostics beside the document, never printed.
 import Document
 import Mce
+import Numbering
 import Opc
 import Styles
 import WmlRead
@@ -141,6 +142,21 @@ Docx :: [].{
 	custom_properties : Document -> List(Document.CustomProperty)
 	custom_properties = |document| WmlRead.custom_properties(properties_tree(document, custom_properties_relationship))
 
+	## A document's numbering table, read from the numbering part of its main
+	## document by [Numbering.read], with what reading did not take as
+	## written. A document without a numbering part has no lists.
+	numbering : Document -> { numbering : Numbering, diagnostics : List(Numbering.Diagnostic) }
+	numbering = |document| {
+		found = match Document.related(document, "/", Opc.officedocument_relationship) {
+			Ok(main) => Document.related(document, main.name, numbering_relationship)
+			Err(NotFound) => Err(NotFound)
+		}
+		match found {
+			Ok(part) => Numbering.read(part.tree)
+			Err(NotFound) => { numbering: Numbering.empty, diagnostics: [] }
+		}
+	}
+
 	## The current text of a document's body, its tracked changes as they
 	## stand: every paragraph's text, as [Document.paragraph_text] gives it,
 	## followed by a line feed, in reading order, including the paragraphs in
@@ -194,6 +210,9 @@ notes = |document, kind| {
 		Err(NotFound) => []
 	}
 }
+
+numbering_relationship : Str
+numbering_relationship = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering"
 
 styles_relationship : Str
 styles_relationship = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles"
