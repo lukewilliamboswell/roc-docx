@@ -178,7 +178,12 @@ large example may cost the small one's plus a stated share for each further
 byte, so `Docx.parse` and `Docx.to_bytes` on the largest fixture are bounded
 by a one-paragraph document and the fixture's further bytes. That check
 holds even when both exact ceilings are raised, so growth beyond linear
-cannot be ratcheted in. To set or revise a ceiling:
+cannot be ratcheted in. Sets, dictionaries and lists grow by doubling, so the
+bytes an item costs rise and fall as counts cross their capacities; where
+that carries a pair's bytes past the count ratio, the target allows a stated
+margin beside the per-item range it measured, as `fuzz/comment_anchors` does
+for writing comments, small enough that a quadratic step still fails. To set
+or revise a ceiling:
 
 [source,sh]
 ----

@@ -439,14 +439,19 @@ Comments :: [].{
 	## comment whose replies lead up to the same one.
 	thread : List(Document.Comment), U64 -> Set(U64)
 	thread = |comments, place| {
-		top = thread_root(comments, place)
-		indices(comments).fold(Set.with_capacity(4), |found, other| if (thread_root(comments, other) == top) found.insert(other) else found)
+		tops = followed(comments, |_| Bool.False, |at| Root(at), Round)
+		top = |other|
+			match tops.get(other) {
+				Ok(Root(at)) => at
+				_ => other
+			}
+		places_where(tops, |other, _| top(other) == top(place))
 	}
 
 	## The places of the comment at `place` and of every comment whose
 	## replies lead up to it, following parents.
 	replies : List(Document.Comment), U64 -> Set(U64)
-	replies = |comments, place| indices(comments).fold(Set.with_capacity(4), |found, other| if (leads_to(comments, other, place)) found.insert(other) else found)
+	replies = |comments, place| places_where(followed(comments, |at| at == place, |at| if (at == place) Leads else Apart, Apart), |_, leads| leads == Leads)
 }
 
 # Placing a new comment's range in a body: the current text so far, counted
@@ -815,35 +820,102 @@ relabel_inlines = |inlines, places|
 renamed : U64, List(List(U64)) -> List(U64)
 renamed = |place, places| places.get(place) ?? [place]
 
-# Every place among the comments.
-indices : List(Document.Comment) -> List(U64)
-indices = |comments| {
-	var $out = List.with_capacity(comments.len())
-	var $place = 0.U64
+# Where following parents up from each comment ends: `ends(at)` at the first
+# place `stops`, at a comment without a parent or beyond the comments, and
+# `round` where the parents go round without stopping. A walk ends early at
+# a comment an earlier walk passed, taking its outcome, and follows its
+# steps again to give each comment it passed that outcome, so every comment
+# is followed at most twice and the whole is linear in the comments.
+followed : List(Document.Comment), (U64 -> Bool), (U64 -> a), a -> List(a)
+followed = |comments, stops, ends, round| {
+	var $settled = List.repeat(Unsettled, comments.len())
+	var $start = 0.U64
 	for _ in comments {
-		$out = List.append($out, $place)
-		$place = $place + 1
-	}
-	$out
-}
+		var $at = $start
+		var $outcome = round
+		var $walking = Bool.True
+		while $walking {
+			if stops($at) {
+				$outcome = ends($at)
+				$walking = Bool.False
+			} else {
+				match $settled.get($at) {
+					Ok(Unsettled) => {
+						$settled = List.set($settled, $at, Walking) ?? $settled
+						match parent_of(comments, $at) {
+							Ok(above) => {
+								$at = above
+							}
 
-# The comment a comment's replies lead up to: following parents, the first
-# without a parent, or the comment itself when the parents go round.
-thread_root : List(Document.Comment), U64 -> U64
-thread_root = |comments, place| {
-	var $at = place
-	for _ in comments {
-		match parent_of(comments, $at) {
-			Ok(above) => {
-				$at = above
-			}
+							Err(NoParent) => {
+								$outcome = ends($at)
+								$walking = Bool.False
+							}
+						}
+					}
 
-			Err(NoParent) => {
-				return $at
+					Ok(Walking) => {
+						$outcome = round
+						$walking = Bool.False
+					}
+
+					Ok(Settled(outcome)) => {
+						$outcome = outcome
+						$walking = Bool.False
+					}
+
+					Err(_) => {
+						$outcome = ends($at)
+						$walking = Bool.False
+					}
+				}
 			}
 		}
+		$at = $start
+		$walking = Bool.True
+		while $walking {
+			match $settled.get($at) {
+				Ok(Walking) if !stops($at) => {
+					$settled = List.set($settled, $at, Settled($outcome)) ?? $settled
+					match parent_of(comments, $at) {
+						Ok(above) => {
+							$at = above
+						}
+
+						Err(NoParent) => {
+							$walking = Bool.False
+						}
+					}
+				}
+
+				_ => {
+					$walking = Bool.False
+				}
+			}
+		}
+		$start = $start + 1
 	}
-	place
+	$settled.map_with_index(
+		|state, at|
+			match state {
+				Settled(outcome) => outcome
+				_ => ends(at)
+			},
+	)
+}
+
+# The places of the items `keeps` keeps, given each item's place.
+places_where : List(a), (U64, a -> Bool) -> Set(U64)
+places_where = |items, keeps| {
+	var $found = Set.with_capacity(4)
+	var $place = 0.U64
+	for item in items {
+		if keeps($place, item) {
+			$found = $found.insert($place)
+		}
+		$place = $place + 1
+	}
+	$found
 }
 
 # The place of the comment a comment replies to.
@@ -858,28 +930,6 @@ parent_of = |comments, place|
 
 		Err(_) => Err(NoParent)
 	}
-
-# Whether following parents from the comment at `place` leads to `target`,
-# the comment itself included.
-leads_to : List(Document.Comment), U64, U64 -> Bool
-leads_to = |comments, place, target| {
-	var $at = place
-	for _ in comments {
-		if $at == target {
-			return Bool.True
-		}
-		match parent_of(comments, $at) {
-			Ok(above) => {
-				$at = above
-			}
-
-			Err(NoParent) => {
-				return Bool.False
-			}
-		}
-	}
-	$at == target
-}
 
 # The body's current text so far, with every comment's range as offsets in
 # it; whether the last paragraph joins the next; and how many anchors have
@@ -1383,4 +1433,19 @@ expect {
 		and again.extended == kept.extended
 		and again.ids == kept.ids
 		and again.extensible == kept.extensible
+}
+
+## A thread follows parents up a chain of replies to its top, and the
+## replies to a comment are those whose parents lead to it: in a chain
+## 0, 1, 2, each replying to the one before, and a cycle of 3 and 4 replying
+## to each other with 5 replying into it, the thread of 2 is the chain, the
+## replies to 1 are 1 and 2, the cycle leaves 4 a thread of its own, and the
+## replies to 4 are 3, 4 and 5.
+expect {
+	comment = |parent| { author: "Ada Reviewer", initials: Unset, date: Unset, content: [], preserved: [], parent, resolved: Bool.False, durable_id: Unset, utc_date: Unset }
+	comments = [comment(Unset), comment(Parent(0)), comment(Parent(1)), comment(Parent(4)), comment(Parent(3)), comment(Parent(3))]
+	Comments.thread(comments, 2) == Set.from_list([0, 1, 2])
+		and Comments.replies(comments, 1) == Set.from_list([1, 2])
+		and Comments.thread(comments, 4) == Set.from_list([4])
+		and Comments.replies(comments, 4) == Set.from_list([3, 4, 5])
 }

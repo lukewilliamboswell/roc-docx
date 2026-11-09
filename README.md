@@ -5,9 +5,18 @@ including their comments and tracked changes.
 
 roc-docx is for applications that handle business documents: read what Word,
 LibreOffice or Google Docs produced, change it without losing anything, and
-generate new documents that open cleanly. It is under construction and makes
-no capability claims yet; the gates in
-[implementation-plan.md](implementation-plan.md) say what is verified.
+generate new documents that open cleanly. It is under construction; the gates
+in [implementation-plan.md](implementation-plan.md) say what is verified.
+
+**Comments.** roc-docx reads the comments Word, LibreOffice, Google Docs and
+pandoc write: each comment's author, date and content, the text it is anchored
+to, and, where the document records them, its replies and whether its thread
+is resolved. It writes them back with their threads, which LibreOffice reads
+as the same comments, replies and resolution, and which Word for Mac opens
+with its threads intact. It adds a comment over a span of the text, replies to
+one, resolves a thread and removes a comment with its replies, leaving the
+text unchanged; LibreOffice reads each edited document as edited. See
+[Comments](docs/comments.adoc) in the manual.
 
 - [The manual](docs/index.adoc), for application authors and contributors:
   what the package is, how to use it, the enduring
