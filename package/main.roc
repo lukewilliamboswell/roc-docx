@@ -4,6 +4,6 @@
 package
 	[Limits, Opc]
 	{
-		parser: "https://github.com/lukewilliamboswell/roc-parser/releases/download/4.0.0/FZVf39nPJLaMEmchcwTU5rWtMrcipBGbGsTk3nHzvjzk.tar.zst",
-		zip: "https://github.com/niclas-ahden/roc-zip/releases/download/0.2.2/FpMTcemHxwRmDRCwnTtcrQeCRnqA5UcJ1TZzYL3iPtA4.tar.zst",
+		parser: "https://github.com/lukewilliamboswell/roc-parser/releases/download/6.0.0-rc.1/73WRCGdN4doPdfzqKAHBkwKQksAxmtoAr4Fu3dzDMvTC.tar.zst",
+		zip: "https://github.com/lukewilliamboswell/roc-zip/releases/download/0.3.0-rc1/3vvx2cPVp1vjjVgrXcugJqqfrp55ZrURYQUcSArAUHdr.tar.zst",
 	}

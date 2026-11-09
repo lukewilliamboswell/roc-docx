@@ -50,5 +50,7 @@ Opc.open(bytes, { max_entries: 64 })
 The defaults allow 4096 entries, 64 MiB per part and 256 MiB in total. A
 document over a limit fails with the limit's own error, such as
 `TooManyEntries(count)` or `PartTooLarge({ name, bytes })`, before anything
-is decompressed beyond it. The other errors say what is wrong with the archive
-or with `[Content_Types].xml`; none of them is a crash.
+is decompressed beyond it. The other errors say what is wrong with the archive,
+such as `DuplicatePart(name)` for two parts with the same name or
+`PartSizeMismatch({ name, declared })` for a part whose content is not the size
+its entry declares, or with `[Content_Types].xml`; none of them is a crash.

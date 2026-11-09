@@ -1,7 +1,7 @@
 app [target] {
 	docx: "../../package/main.roc",
 	fuzz: platform "https://github.com/lukewilliamboswell/roc-fuzz/releases/download/0.5.0/9WT86CuwM7ZJBSs8iTd1jLyrUFTTiGp5hcJE63TwswGE.tar.zst",
-	zip: "https://github.com/niclas-ahden/roc-zip/releases/download/0.2.2/FpMTcemHxwRmDRCwnTtcrQeCRnqA5UcJ1TZzYL3iPtA4.tar.zst",
+	zip: "https://github.com/lukewilliamboswell/roc-zip/releases/download/0.3.0-rc1/3vvx2cPVp1vjjVgrXcugJqqfrp55ZrURYQUcSArAUHdr.tar.zst",
 }
 
 import fuzz.Fuzz
@@ -43,10 +43,10 @@ test! = |bytes| {
 	}
 }
 
-# Measured 60 allocations and 7 reallocations on nightly-2026-11-07; the
-# fixed part is the ZIP layer's decode tables.
+# Measured 52 allocations and 5 reallocations on nightly-2026-11-07 with
+# roc-zip 0.3.0-rc1; the fixed part is the ZIP layer's decode tables.
 minimal_package_allocation_ceiling : U64
-minimal_package_allocation_ceiling = 67
+minimal_package_allocation_ceiling = 57
 
 linear_allocation_ceiling : U64 -> U64
 linear_allocation_ceiling = |input_bytes| 16 + input_bytes

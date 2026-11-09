@@ -30,8 +30,10 @@ Opc :: [].{
 	## An attribute a package part must have and does not.
 	AttributeLocation : { part : Str, element : Str, attribute : Str }
 
-	## Why a package cannot be opened: the ZIP layer's own archive errors, the
-	## limit that was exceeded, or what is wrong with `[Content_Types].xml`.
+	## Why a package cannot be opened: the ZIP layer's own archive errors, two
+	## parts with the same name, a part whose content is not the size its
+	## entry declares, the limit that was exceeded, or what is wrong with
+	## `[Content_Types].xml`.
 	OpenError : [
 		InvalidSignature,
 		TruncatedArchive,
@@ -39,6 +41,8 @@ Opc :: [].{
 		CompressionNotSupported(U16),
 		CrcMismatch({ path : Str, expected : U32, actual : U32 }),
 		InvalidCompressedData(Str),
+		DuplicatePart(Str),
+		PartSizeMismatch({ name : Str, declared : U64 }),
 		TooManyEntries(U64),
 		PartTooLarge({ name : Str, bytes : U64 }),
 		PackageTooLarge(U64),
@@ -72,7 +76,17 @@ Opc :: [].{
 		if bytes.len() > limits.max_total_bytes {
 			return Err(PackageTooLarge(bytes.len()))
 		}
-		entries = Zip.extract(bytes)?
+		entries = Zip.extract(bytes) ? |err| match err {
+			InvalidSignature => InvalidSignature
+			TruncatedArchive => TruncatedArchive
+			InvalidFilename => InvalidFilename
+			CompressionNotSupported(method) => CompressionNotSupported(method)
+			CrcMismatch(mismatch) => CrcMismatch(mismatch)
+			InvalidCompressedData(message) => InvalidCompressedData(message)
+			DuplicatePath(name) => DuplicatePart(name)
+			EntryTooLarge({ path, declared, max_bytes: _ }) => PartTooLarge({ name: path, bytes: declared })
+			SizeMismatch({ path, declared }) => PartSizeMismatch({ name: path, declared })
+		}
 		if entries.len() > limits.max_entries {
 			return Err(TooManyEntries(entries.len()))
 		}
@@ -283,15 +297,20 @@ expect {
 }
 
 # A minimal package: the three parts every WordprocessingML document has.
-sample_archive : Try(List(U8), [EmptyPath(Str), PathTooLong(Str)])
-sample_archive = Zip.create(
+sample_archive : Try(List(U8), [EmptyPath(Str), PathTooLong(Str), DuplicatePart(Str)])
+sample_archive = match Zip.create(
 	[
 		{ path: content_types_path, content: sample_content_types.to_utf8() },
 		{ path: "_rels/.rels", content: sample_rels.to_utf8() },
 		{ path: "word/document.xml", content: sample_document.to_utf8() },
 	],
 	None,
-)
+) {
+	Ok(archive) => Ok(archive)
+	Err(EmptyPath(path)) => Err(EmptyPath(path))
+	Err(PathTooLong(path)) => Err(PathTooLong(path))
+	Err(DuplicatePath(path)) => Err(DuplicatePart(path))
+}
 
 sample_content_types : Str
 sample_content_types = "<?xml version='1.0' encoding='UTF-8'?><Types xmlns='http://schemas.openxmlformats.org/package/2006/content-types'><Default Extension='RELS' ContentType='application/vnd.openxmlformats-package.relationships+xml'/><Default Extension='xml' ContentType='application/xml'/><Override PartName='/word/document.xml' ContentType='application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml'/></Types>"
