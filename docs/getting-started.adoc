@@ -1,8 +1,9 @@
-= Read the parts of a document
+= Read and write the parts of a document
 
-This chapter opens a `.docx` and lists the parts inside it. It needs a Roc
-nightly on your `PATH` as `roc`. Until the first release, an application
-depends on the package by relative path from a checkout of the repository.
+This chapter opens a `.docx`, lists the parts inside it and writes them to a
+new package. It needs a Roc nightly on your `PATH` as `roc`. Until the first
+release, an application depends on the package by relative path from a
+checkout of the repository.
 
 == What a document is made of
 
@@ -77,6 +78,59 @@ running on. The other errors say what is wrong with the archive, such as
 `DuplicatePart(name)` for two parts with the same name, or with
 `[Content_Types].xml`; none of them is a crash. `Opc.part_bytes` reports the
 same kinds of damage for the part it decompresses.
+
+== Write the parts to a new package
+
+`Opc.graph` reads the part graph of an opened package: every part with its
+content type and the relationships whose source it is, and the package's own
+relationships. `Opc.writer` takes a graph, checks it, and fixes the order of
+the new archive:
+
+. `[Content_Types].xml`, generated from the parts' content types;
+. `_rels/.rels`, the package's relationships;
+. the main document, then the other parts the package's relationships reach,
+  breadth first in relationship order, then the parts nothing reaches, each
+  part followed by its relationship part, and the parts that are not XML,
+  such as images, after all the others.
+
+Every relationship part is generated from the graph too. An internal target
+inside its source part's directory is written relative to it, as producers
+write them, and any other as an absolute part name. A relationship part with
+no relationships, or whose source part is not in the package, stays an
+ordinary part of the graph and is copied like one.
+
+`Opc.pending` names the parts still to write, in that order. `Opc.add` writes
+the next one from its content and returns the next chunk of the archive, and
+`Opc.finish` returns the last chunk. The content is `Bytes(content)`, which
+is compressed with DEFLATE at one fixed level, or stored when compressing
+would not make it smaller; or `Copied(pkg)`, which writes the part of the same
+name from an opened package exactly as its archive stored it, with its
+compression method, checksum and sizes, without decompressing it. The writer holds only the
+archive's directory of entries between chunks, so a document written to a
+file chunk by chunk holds one part at a time. `examples/repackage` writes a
+document to a new package that way:
+
+[source,roc]
+----
+include::../examples/repackage/main.roc[]
+----
+
+`Opc.to_bytes(graph, content_of)` runs the same loop, asking `content_of` for
+each part's content by name, and returns the whole archive; its bytes are the
+chunks concatenated. The same graph and content always give the same bytes:
+entries carry no timestamps and no data descriptors.
+
+The checks run when the writer starts, so a graph that cannot be written fails
+before any chunk exists: `InvalidPartName(name)` for a name that is not
+absolute, has an empty segment or one ending in a dot, or holds a control
+character; `DuplicatePart(name)` for two parts, generated ones included, whose
+names differ only in case; `InvalidContentType(name)` for an empty content
+type or one XML cannot carry; and `InvalidRelationship({ source, id })` or
+`DuplicateRelationshipId({ source, id })` for a relationship whose identifier
+is not an XML name or repeats one of its source, or whose internal target is
+not a part name. After that, `add` and `finish` fail only when driven out of order, with
+`NothingPending` or `NotWritten(name)`, or when a copied part cannot be read
+from its package.
 
 == A part's XML
 

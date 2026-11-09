@@ -36,5 +36,7 @@ document may consume, and the same document always serializes to the same
 bytes.
 
 The package is under development and claims no document capability yet. The
-first thing it can do is open a package and list its parts, which
-xref:getting-started.adoc#read-the-parts-of-a-document[the next chapter] shows.
+first thing it can do is open a package, list its parts and write them to a
+new package, which
+xref:getting-started.adoc#read-and-write-the-parts-of-a-document[the next chapter]
+shows.

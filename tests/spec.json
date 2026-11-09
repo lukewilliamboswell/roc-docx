@@ -12,6 +12,19 @@
         }
       ],
       "path": "examples/inspect/main.roc"
+    },
+    {
+      "cases": [
+        {
+          "args": [],
+          "exit_code": 0,
+          "name": "default",
+          "stderr": "",
+          "stdin": "",
+          "stdout": "Wrote repackaged.docx:\n  /_rels/.rels  (generated)\n  /word/document.xml  (copied)\n  /word/_rels/document.xml.rels  (generated)\n  /docProps/app.xml  (copied)\n  /docProps/core.xml  (copied)\n  /docProps/custom.xml  (copied)\n  /word/numbering.xml  (copied)\n  /word/styles.xml  (copied)\n  /word/settings.xml  (copied)\n  /word/webSettings.xml  (copied)\n  /word/fontTable.xml  (copied)\n  /word/theme/theme1.xml  (copied)\n  /word/footnotes.xml  (copied)\n  /word/comments.xml  (copied)\n  /word/_rels/footnotes.xml.rels  (copied)\n"
+        }
+      ],
+      "path": "examples/repackage/main.roc"
     }
   ],
   "dependencies": [],
