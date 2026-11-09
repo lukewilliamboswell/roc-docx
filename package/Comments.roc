@@ -361,6 +361,524 @@ Comments :: [].{
 		}
 		extension_part(shell, w15, "people", "person", $written)
 	}
+
+	## Where a new comment applies: the current text of a body from byte
+	## `start` up to byte `end`, as offsets into the text [Docx.text] gives,
+	## which comments never change. A span ending just after a paragraph's
+	## line feed ends at that paragraph's end, so the range covers the
+	## paragraph's text and not its line feed; a span whose start and end are
+	## the same is a comment on no text at that place.
+	Span : { start : U64, end : U64 }
+
+	## A new comment or reply: who writes it, by name, what it says, and,
+	## where the application gives them, the author's initials and when it is
+	## written, as an XML Schema `dateTime` such as `2026-11-10T09:00:00Z`.
+	## The package reads no clock, so a comment without a date has none.
+	## `Text(text)` is a paragraph for every line of `text`; `Blocks(blocks)`
+	## is content of any paragraphs and tables.
+	New := {
+		author : Str,
+		content : [Text(Str), Blocks(List(Document.Block))],
+		initials : [Unset, Initials(Str)] ?? Unset,
+		date : [Unset, Date(Str)] ?? Unset,
+	}
+
+	## The comment a [Comments.New] describes: no parent, unresolved, and
+	## without a durable identifier or UTC date, or the date it gives when
+	## that is not a date and time.
+	comment : New -> Try(Document.Comment, [NotADate(Str)])
+	comment = |new| {
+		date = match new.date {
+			Date(written) => Date(WmlRead.date_time(written) ? |_| NotADate(written))
+			Unset => Unset
+		}
+		content = match new.content {
+			Text(text) => text.split_on("\n").map(|line| Paragraph({ properties: Document.no_paragraph_properties, content: if (line == "") [] else [Run({ properties: Document.no_run_properties, content: [Text(line)] })] }))
+			Blocks(blocks) => blocks
+		}
+		Ok({ author: new.author, initials: new.initials, date, content, preserved: [], parent: Unset, resolved: Bool.False, durable_id: Unset, utc_date: Unset })
+	}
+
+	## The body with the range of the comment at `place` around `span`, as
+	## [Comments.Span] places it, and a reference to the comment just after
+	## the range's end, in the paragraph the range ends in. The range starts
+	## just before the first character of the span and ends just after its
+	## last, inside a hyperlink, field or tracked change where the character
+	## is, a run split in two where the span starts or ends inside it; the
+	## reference is a run of its own outside them. A span that starts at a
+	## paragraph's line feed starts at that paragraph's end. Counting is
+	## [Comments.anchored]'s, so the comment is anchored to the span's text.
+	##
+	## A span that does not lie within the text, ends before it starts or
+	## starts or ends inside a character fails.
+	mark : List(Document.Block), U64, Span -> Try(List(Document.Block), [OutsideText({ start : U64, end : U64 }), NotACharacterBoundary(U64)])
+	mark = |body, place, span| {
+		if span.start > span.end {
+			return Err(OutsideText(span))
+		}
+		start = { at: 0, joining: Bool.False, place, start: span.start, end: span.end, started: Bool.False, ended: Bool.False, refer: Bool.False, problem: Fine }
+		walked = mark_blocks(body, start)
+		match walked.state.problem {
+			Boundary(at) => Err(NotACharacterBoundary(at))
+			Fine if walked.state.ended => Ok(walked.blocks)
+			Fine => Err(OutsideText(span))
+		}
+	}
+
+	## The blocks with every comment range boundary and reference named
+	## again: one naming the comment at place `p` becomes one for each place
+	## `places` gives at `p`, in order, so that no place removes it, another
+	## renames it and more add another comment's beside it. A run whose
+	## references are all removed and that holds nothing else is removed. A
+	## place beyond `places` keeps its name.
+	relabel : List(Document.Block), List(List(U64)) -> List(Document.Block)
+	relabel = |blocks, places| relabel_blocks(blocks, places)
+
+	## The places of the comments in the thread of the comment at `place`:
+	## the comment its replies lead up to, following parents, and every
+	## comment whose replies lead up to the same one.
+	thread : List(Document.Comment), U64 -> Set(U64)
+	thread = |comments, place| {
+		top = thread_root(comments, place)
+		indices(comments).fold(Set.with_capacity(4), |found, other| if (thread_root(comments, other) == top) found.insert(other) else found)
+	}
+
+	## The places of the comment at `place` and of every comment whose
+	## replies lead up to it, following parents.
+	replies : List(Document.Comment), U64 -> Set(U64)
+	replies = |comments, place| indices(comments).fold(Set.with_capacity(4), |found, other| if (leads_to(comments, other, place)) found.insert(other) else found)
+}
+
+# Placing a new comment's range in a body: the current text so far, counted
+# as [Comments.anchored] counts it, and whether the last paragraph joins the
+# next; the comment's place and its span; whether its start and its end are
+# placed, and whether the end was placed inside a hyperlink, field or change,
+# so the reference follows the paragraph's inline around it; and a span
+# boundary inside a character.
+Marking : { at : U64, joining : Bool, place : U64, start : U64, end : U64, started : Bool, ended : Bool, refer : Bool, problem : [Fine, Boundary(U64)] }
+
+mark_blocks : List(Document.Block), Marking -> { blocks : List(Document.Block), state : Marking }
+mark_blocks = |blocks, state| {
+	var $state = state
+	var $out = List.with_capacity(blocks.len())
+	for block in blocks {
+		match block {
+			Paragraph(paragraph) => {
+				marked = mark_paragraph(paragraph, $state)
+				$out = List.append($out, Paragraph(marked.paragraph))
+				$state = marked.state
+			}
+
+			Table(table) => {
+				var $inner = owed_line($state)
+				var $content = List.with_capacity(table.content.len())
+				for item in table.content {
+					marked = mark_table_content(item, $inner)
+					$content = List.append($content, marked.content)
+					$inner = marked.state
+				}
+				$out = List.append($out, Table({ ..table, content: $content }))
+				$state = owed_line($inner)
+			}
+
+			Container({ element, content }) => {
+				marked = mark_blocks(content, $state)
+				$out = List.append($out, Container({ element, content: marked.blocks }))
+				$state = marked.state
+			}
+
+			_ => {
+				$out = List.append($out, block)
+			}
+		}
+	}
+	{ blocks: $out, state: $state }
+}
+
+mark_table_content : Document.TableContent, Marking -> { content : Document.TableContent, state : Marking }
+mark_table_content = |item, state|
+	match item {
+		Row(row) => {
+			var $inner = owed_line(state)
+			var $content = List.with_capacity(row.content.len())
+			for cell in row.content {
+				marked = mark_row_content(cell, $inner)
+				$content = List.append($content, marked.content)
+				$inner = marked.state
+			}
+			{ content: Row({ ..row, content: $content }), state: owed_line($inner) }
+		}
+
+		Container({ element, content }) => {
+			var $inner = state
+			var $marked = List.with_capacity(content.len())
+			for child in content {
+				out = mark_table_content(child, $inner)
+				$marked = List.append($marked, out.content)
+				$inner = out.state
+			}
+			{ content: Container({ element, content: $marked }), state: $inner }
+		}
+
+		_ => { content: item, state }
+	}
+
+mark_row_content : Document.RowContent, Marking -> { content : Document.RowContent, state : Marking }
+mark_row_content = |item, state|
+	match item {
+		Cell(cell) => {
+			marked = mark_blocks(cell.content, owed_line(state))
+			{ content: Cell({ ..cell, content: marked.blocks }), state: owed_line(marked.state) }
+		}
+
+		Container({ element, content }) => {
+			var $inner = state
+			var $marked = List.with_capacity(content.len())
+			for child in content {
+				out = mark_row_content(child, $inner)
+				$marked = List.append($marked, out.content)
+				$inner = out.state
+			}
+			{ content: Container({ element, content: $marked }), state: $inner }
+		}
+
+		_ => { content: item, state }
+	}
+
+# The line feed a joining paragraph owes where nothing follows it to join, as
+# [Comments.anchored] counts it.
+owed_line : Marking -> Marking
+owed_line = |state| if (state.joining) { ..state, at: state.at + 1, joining: Bool.False } else state
+
+# A paragraph with the range's boundaries it holds. An end owed from a line
+# feed before the paragraph is placed at its beginning; a start at the
+# paragraph's line feed, and an end just after it, at its end.
+mark_paragraph : Document.Paragraph, Marking -> { paragraph : Document.Paragraph, state : Marking }
+mark_paragraph = |paragraph, state| {
+	var $state = state
+	var $out = List.with_capacity(paragraph.content.len() + 3)
+	if $state.started and !$state.ended and $state.end <= $state.at {
+		$out = List.concat($out, [CommentEnd($state.place), reference_run($state.place)])
+		$state = { ..$state, ended: Bool.True }
+	}
+	for inline in paragraph.content {
+		marked = mark_inline(inline, $state, Bool.True, Bool.True)
+		$out = List.concat($out, marked.inlines)
+		$state = marked.state
+		if $state.refer {
+			$out = List.append($out, reference_run($state.place))
+			$state = { ..$state, refer: Bool.False }
+		}
+	}
+	joins = Document.joins_next(paragraph)
+	if !$state.started and $state.start == $state.at {
+		$out = List.append($out, CommentStart($state.place))
+		$state = { ..$state, started: Bool.True }
+	}
+	if $state.started and !$state.ended and ($state.end == $state.at or ($state.end == $state.at + 1 and !joins)) {
+		$out = List.concat($out, [CommentEnd($state.place), reference_run($state.place)])
+		$state = { ..$state, ended: Bool.True }
+	}
+	at = if (joins) $state.at else $state.at + 1
+	{ paragraph: { ..paragraph, content: $out }, state: { ..$state, at, joining: joins } }
+}
+
+# A run holding nothing but a reference to the comment at `place`.
+reference_run : U64 -> Document.Inline
+reference_run = |place| Run({ properties: Document.no_run_properties, content: [CommentReference(place)] })
+
+# An inline with the range's boundaries inside it, where its current text
+# has them. `top` is whether the inline is directly in its paragraph, where
+# an end is followed by the reference.
+mark_inline : Document.Inline, Marking, Bool, Bool -> { inlines : List(Document.Inline), state : Marking }
+mark_inline = |inline, state, current, top|
+	match inline {
+		Run(run) if current => mark_run(run, state, top)
+		Hyperlink({ target, preserved, content }) => {
+			marked = mark_inlines(content, state, current)
+			{ inlines: [Hyperlink({ target, preserved, content: marked.inlines })], state: marked.state }
+		}
+
+		SimpleField({ code, preserved, content }) => {
+			marked = mark_inlines(content, state, current)
+			{ inlines: [SimpleField({ code, preserved, content: marked.inlines })], state: marked.state }
+		}
+
+		Container({ element, content }) => {
+			marked = mark_inlines(content, state, current)
+			{ inlines: [Container({ element, content: marked.inlines })], state: marked.state }
+		}
+
+		Revision(revision) => {
+			marked = mark_inlines(revision.content, state, current and revision.kind != Deletion and revision.kind != MoveSource)
+			{ inlines: [Revision({ ..revision, content: marked.inlines })], state: marked.state }
+		}
+
+		_ => { inlines: [inline], state }
+	}
+
+mark_inlines : List(Document.Inline), Marking, Bool -> { inlines : List(Document.Inline), state : Marking }
+mark_inlines = |inlines, state, current| {
+	var $state = state
+	var $out = List.with_capacity(inlines.len())
+	for inline in inlines {
+		marked = mark_inline(inline, $state, current, Bool.False)
+		$out = List.concat($out, marked.inlines)
+		$state = marked.state
+	}
+	{ inlines: $out, state: $state }
+}
+
+# A run split where the range starts or ends inside it. Each piece of
+# content contributes its text; a boundary falls before the piece that holds
+# the span's first byte and after the one that holds its last, a text piece
+# split in two at a boundary inside it.
+mark_run : Document.Run, Marking, Bool -> { inlines : List(Document.Inline), state : Marking }
+mark_run = |run, state, top| {
+	var $state = state
+	var $pieces = List.with_capacity(3)
+	var $held = List.with_capacity(run.content.len())
+	var $cut = Bool.False
+	for item in run.content {
+		size = Document.inline_text(Run({ properties: run.properties, content: [item] })).to_utf8().len()
+		var $cuts = List.with_capacity(2)
+		if !$state.started and $state.start >= $state.at and $state.start < $state.at + size {
+			$cuts = List.append($cuts, { boundary: Start, offset: $state.start - $state.at })
+			if $state.end == $state.start {
+				$cuts = List.append($cuts, { boundary: End, offset: $state.start - $state.at })
+			}
+		}
+		if !$state.ended and $state.end != $state.start and ($state.started or !$cuts.is_empty()) and $state.end > $state.at and $state.end <= $state.at + size {
+			$cuts = List.append($cuts, { boundary: End, offset: $state.end - $state.at })
+		}
+		if $cuts.is_empty() {
+			$held = List.append($held, item)
+		} else {
+			$cut = Bool.True
+			split = split_item(item, size, $cuts.map(|cut| cut.offset))
+			match split.inside {
+				Ok(offset) => {
+					$state = { ..$state, problem: Boundary($state.at + offset) }
+				}
+
+				Err(NoneInside) => {}
+			}
+			var $index = 0.U64
+			for cut in $cuts {
+				$held = List.concat($held, split.pieces.get($index) ?? [])
+				if !$held.is_empty() {
+					$pieces = List.append($pieces, Run({ properties: run.properties, content: $held }))
+					$held = List.with_capacity(run.content.len())
+				}
+				match cut.boundary {
+					Start => {
+						$pieces = List.append($pieces, CommentStart($state.place))
+						$state = { ..$state, started: Bool.True }
+					}
+
+					End => {
+						$pieces = List.append($pieces, CommentEnd($state.place))
+						if top {
+							$pieces = List.append($pieces, reference_run($state.place))
+						}
+						$state = { ..$state, ended: Bool.True, refer: !top }
+					}
+				}
+				$index = $index + 1
+			}
+			$held = List.concat($held, split.pieces.get($index) ?? [])
+		}
+		$state = { ..$state, at: $state.at + size }
+	}
+	if !$cut {
+		return { inlines: [Run(run)], state: $state }
+	}
+	if !$held.is_empty() {
+		$pieces = List.append($pieces, Run({ properties: run.properties, content: $held }))
+	}
+	{ inlines: $pieces, state: $state }
+}
+
+# A piece of run content of `size` bytes of text split at offsets in
+# order: the content before the first, between each two and after the last;
+# and the first offset inside a character, where text cannot be split.
+split_item : Document.RunContent, U64, List(U64) -> { pieces : List(List(Document.RunContent)), inside : Try(U64, [NoneInside]) }
+split_item = |item, size, offsets| {
+	inside = |is_between| match offsets.find_first(|offset| !is_between(offset)) {
+		Ok(offset) => Ok(offset)
+		Err(_) => Err(NoneInside)
+	}
+	match item {
+		Text(text) => {
+			bytes = text.to_utf8()
+			var $pieces = List.with_capacity(offsets.len() + 1)
+			var $from = 0.U64
+			for offset in List.append(offsets, size) {
+				$pieces = List.append($pieces, if (offset > $from) [Text(Str.from_utf8(bytes.sublist({ start: $from, len: offset - $from })) ?? "")] else [])
+				$from = offset
+			}
+			{ pieces: $pieces, inside: inside(|offset| is_boundary(bytes, offset)) }
+		}
+
+		_ => {
+			before = offsets.keep_if(|offset| offset == 0).len()
+			pieces = List.repeat([], offsets.len() + 1)
+			{ pieces: List.set(pieces, before, [item]) ?? pieces, inside: inside(|offset| offset == 0 or offset == size) }
+		}
+	}
+}
+
+# Whether an offset into UTF-8 text is between characters.
+is_boundary : List(U8), U64 -> Bool
+is_boundary = |bytes, offset|
+	match bytes.get(offset) {
+		Ok(byte) => byte < 0x80 or byte >= 0xC0
+		Err(_) => Bool.True
+	}
+
+relabel_blocks : List(Document.Block), List(List(U64)) -> List(Document.Block)
+relabel_blocks = |blocks, places|
+	blocks.fold(
+		List.with_capacity(blocks.len()),
+		|out, block|
+			match block {
+				Paragraph(paragraph) => List.append(out, Paragraph({ ..paragraph, content: relabel_inlines(paragraph.content, places) }))
+				Table(table) => List.append(out, Table({ ..table, content: relabel_table(table.content, places) }))
+				CommentStart(place) => List.concat(out, renamed(place, places).map(|other| CommentStart(other)))
+				CommentEnd(place) => List.concat(out, renamed(place, places).map(|other| CommentEnd(other)))
+				Container({ element, content }) => List.append(out, Container({ element, content: relabel_blocks(content, places) }))
+				_ => List.append(out, block)
+			},
+	)
+
+relabel_table : List(Document.TableContent), List(List(U64)) -> List(Document.TableContent)
+relabel_table = |content, places|
+	content.fold(
+		List.with_capacity(content.len()),
+		|out, item|
+			match item {
+				Row(row) => List.append(out, Row({ ..row, content: relabel_row(row.content, places) }))
+				CommentStart(place) => List.concat(out, renamed(place, places).map(|other| CommentStart(other)))
+				CommentEnd(place) => List.concat(out, renamed(place, places).map(|other| CommentEnd(other)))
+				Container({ element, content: inner }) => List.append(out, Container({ element, content: relabel_table(inner, places) }))
+				Preserved(_) => List.append(out, item)
+			},
+	)
+
+relabel_row : List(Document.RowContent), List(List(U64)) -> List(Document.RowContent)
+relabel_row = |content, places|
+	content.fold(
+		List.with_capacity(content.len()),
+		|out, item|
+			match item {
+				Cell(cell) => List.append(out, Cell({ ..cell, content: relabel_blocks(cell.content, places) }))
+				CommentStart(place) => List.concat(out, renamed(place, places).map(|other| CommentStart(other)))
+				CommentEnd(place) => List.concat(out, renamed(place, places).map(|other| CommentEnd(other)))
+				Container({ element, content: inner }) => List.append(out, Container({ element, content: relabel_row(inner, places) }))
+				Preserved(_) => List.append(out, item)
+			},
+	)
+
+relabel_inlines : List(Document.Inline), List(List(U64)) -> List(Document.Inline)
+relabel_inlines = |inlines, places|
+	inlines.fold(
+		List.with_capacity(inlines.len()),
+		|out, inline|
+			match inline {
+				Run(run) => {
+					content = run.content.fold(
+						List.with_capacity(run.content.len()),
+						|items, item|
+							match item {
+								CommentReference(place) => List.concat(items, renamed(place, places).map(|other| CommentReference(other)))
+								_ => List.append(items, item)
+							},
+					)
+					if content.is_empty() and !run.content.is_empty() {
+						out
+					} else {
+						List.append(out, Run({ ..run, content }))
+					}
+				}
+
+				Hyperlink(link) => List.append(out, Hyperlink({ ..link, content: relabel_inlines(link.content, places) }))
+				SimpleField(field) => List.append(out, SimpleField({ ..field, content: relabel_inlines(field.content, places) }))
+				Revision(revision) => List.append(out, Revision({ ..revision, content: relabel_inlines(revision.content, places) }))
+				Container({ element, content }) => List.append(out, Container({ element, content: relabel_inlines(content, places) }))
+				CommentStart(place) => List.concat(out, renamed(place, places).map(|other| CommentStart(other)))
+				CommentEnd(place) => List.concat(out, renamed(place, places).map(|other| CommentEnd(other)))
+				_ => List.append(out, inline)
+			},
+	)
+
+# The places a boundary or reference naming `place` names instead.
+renamed : U64, List(List(U64)) -> List(U64)
+renamed = |place, places| places.get(place) ?? [place]
+
+# Every place among the comments.
+indices : List(Document.Comment) -> List(U64)
+indices = |comments| {
+	var $out = List.with_capacity(comments.len())
+	var $place = 0.U64
+	for _ in comments {
+		$out = List.append($out, $place)
+		$place = $place + 1
+	}
+	$out
+}
+
+# The comment a comment's replies lead up to: following parents, the first
+# without a parent, or the comment itself when the parents go round.
+thread_root : List(Document.Comment), U64 -> U64
+thread_root = |comments, place| {
+	var $at = place
+	for _ in comments {
+		match parent_of(comments, $at) {
+			Ok(above) => {
+				$at = above
+			}
+
+			Err(NoParent) => {
+				return $at
+			}
+		}
+	}
+	place
+}
+
+# The place of the comment a comment replies to.
+parent_of : List(Document.Comment), U64 -> Try(U64, [NoParent])
+parent_of = |comments, place|
+	match comments.get(place) {
+		Ok(found) =>
+			match found.parent {
+				Parent(above) => Ok(above)
+				Unset => Err(NoParent)
+			}
+
+		Err(_) => Err(NoParent)
+	}
+
+# Whether following parents from the comment at `place` leads to `target`,
+# the comment itself included.
+leads_to : List(Document.Comment), U64, U64 -> Bool
+leads_to = |comments, place, target| {
+	var $at = place
+	for _ in comments {
+		if $at == target {
+			return Bool.True
+		}
+		match parent_of(comments, $at) {
+			Ok(above) => {
+				$at = above
+			}
+
+			Err(NoParent) => {
+				return Bool.False
+			}
+		}
+	}
+	$at == target
 }
 
 # The body's current text so far, with every comment's range as offsets in

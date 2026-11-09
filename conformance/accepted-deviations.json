@@ -54,10 +54,10 @@
     },
     {
       "oracle": "libreoffice",
-      "document": "tests/fixtures/word/report.docx",
+      "document": "*/word/report.docx",
       "key": "sections.footer",
       "message_pattern": "^\"Page 2 of 2\" against \"Page 1 of 2\"$",
-      "cause": "Both sections' footers hold a PAGE field whose result Word last calculated as 1. The package never evaluates fields and reports that result; LibreOffice recalculates PAGE on import, and its Flat ODT export gives each page style's footer the number of the first page in that style, 2 for the second section. A page number in a footer is a different value on every page, not a fact of the footer.",
+      "cause": "Both sections' footers hold a PAGE field whose result Word last calculated as 1. The package never evaluates fields and reports that result; LibreOffice recalculates PAGE on import, and its Flat ODT export gives each page style's footer the number of the first page in that style, 2 for the second section. A page number in a footer is a different value on every page, not a fact of the footer. The review cases write the fixture with comments added as .roc-docx/review/word/report.docx, whose footers are the same.",
       "reference": "https://docs.oasis-open.org/office/OpenDocument/v1.3/os/part3-schema/OpenDocument-v1.3-os-part3-schema.html#element-text_page-number (text:page-number displays the current page number)",
       "reviewed_on": "2026-11-09"
     },

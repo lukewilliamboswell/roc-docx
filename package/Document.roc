@@ -832,13 +832,39 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 	}
 
 	## The XML part named `name`, the target of a relationship as the package
-	## resolved it.
+	## resolved it, or a part [Document.with_new_part] added by that name.
 	xml_part : Document, Str -> Try(XmlPart, [NotFound])
 	xml_part = |document, name| {
-		part = Opc.part(document.pkg, name) ? |_| NotFound
-		tree = document.trees.get(part.name) ? |_| NotFound
-		target = document.graph.parts.find_first(|candidate| candidate.name == part.name) ? |_| NotFound
-		Ok({ name: part.name, tree, relationships: target.relationships })
+		found = match Opc.part(document.pkg, name) {
+			Ok(part) => part.name
+			Err(_) => name
+		}
+		tree = document.trees.get(found) ? |_| NotFound
+		target = document.graph.parts.find_first(|candidate| candidate.name == found) ? |_| NotFound
+		Ok({ name: found, tree, relationships: target.relationships })
+	}
+
+	## The document with a new XML part: `name`, of `content_type`, holding
+	## `tree`, and a relationship of type `kind` to it from the part named
+	## `source`, whose identifier is the lowest `rIdN` from `rId1` up that no
+	## relationship of the source uses. A name the document already has, or a
+	## source it does not, changes nothing. The part is written from its tree,
+	## as [Document.to_bytes] writes every XML part.
+	with_new_part : Document, { source : Str, kind : Str, name : Str, content_type : Str }, XmlTree.Node -> Document
+	with_new_part = |document, new, tree| {
+		if document.graph.parts.any(|part| part.name == new.name) or !document.graph.parts.any(|part| part.name == new.source) {
+			return document
+		}
+		related_from = |relationships| {
+			var $number = 1.U64
+			while relationships.any(|existing| existing.id == "rId${$number.to_str()}") {
+				$number = $number + 1
+			}
+			List.append(relationships, { id: "rId${$number.to_str()}", kind: new.kind, target: new.name, mode: Internal })
+		}
+		parts = document.graph.parts.map(|part| if (part.name == new.source) { name: part.name, content_type: part.content_type, relationships: related_from(part.relationships) } else part)
+		added = List.append(parts, { name: new.name, content_type: new.content_type, relationships: [] })
+		{ pkg: document.pkg, graph: { relationships: document.graph.relationships, parts: added }, trees: document.trees.insert(new.name, tree), body: document.body }
 	}
 
 	## Every XML part of the document, in the order of its part graph.

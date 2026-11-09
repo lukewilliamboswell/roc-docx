@@ -1,0 +1,36 @@
+{
+  "schema": "roc-docx-snapshot/1",
+  "producer": {"name": "roc-docx", "version": "working tree"},
+  "document": ".roc-docx/review/pandoc/lists.docx",
+  "keys": ["blocks.kind", "blocks.level", "blocks.list", "blocks.text", "blocks.rows", "blocks.runs.bold", "blocks.runs.italic", "blocks.runs.underline", "blocks.runs.strike", "blocks.runs.superscript", "blocks.runs.subscript", "blocks.runs.link", "notes.kind", "notes.text", "comments.author", "comments.date", "comments.text", "comments.anchor", "comments.thread", "comments.resolved", "revisions.kind", "revisions.author", "revisions.date", "revisions.text", "sections.page_width", "sections.page_height", "sections.orientation", "sections.margin_top", "sections.margin_bottom", "sections.margin_left", "sections.margin_right", "sections.header", "sections.footer", "properties.title", "properties.subject", "properties.creator", "properties.keywords", "properties.description", "properties.last_modified_by", "properties.created", "properties.modified"],
+  "blocks": [
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Board Meeting Agenda", "runs": [{"text": "Board Meeting Agenda", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "heading", "level": 1, "list": "", "text": "Agenda", "runs": [{"text": "Agenda", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "list_item", "level": 1, "list": "number", "text": "Welcome and apologies", "runs": [{"text": "Welcome and apologies", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "list_item", "level": 1, "list": "number", "text": "Minutes of the previous meeting", "runs": [{"text": "Minutes of the previous meeting", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "list_item", "level": 1, "list": "number", "text": "Matters arising", "runs": [{"text": "Matters arising", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "list_item", "level": 2, "list": "number", "text": "Office relocation", "runs": [{"text": "Office relocation", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "list_item", "level": 2, "list": "number", "text": "Insurance renewal", "runs": [{"text": "Insurance renewal", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "list_item", "level": 1, "list": "number", "text": "Reports", "runs": [{"text": "Reports", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "list_item", "level": 2, "list": "bullet", "text": "Finance", "runs": [{"text": "Finance", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "list_item", "level": 2, "list": "bullet", "text": "Operations", "runs": [{"text": "Operations", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "list_item", "level": 2, "list": "bullet", "text": "People", "runs": [{"text": "People", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "list_item", "level": 1, "list": "number", "text": "Any other business", "runs": [{"text": "Any other business", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "heading", "level": 2, "list": "", "text": "Actions carried forward", "runs": [{"text": "Actions carried forward", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "list_item", "level": 1, "list": "bullet", "text": "Confirm the relocation timeline", "runs": [{"text": "Confirm the relocation timeline", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "list_item", "level": 2, "list": "bullet", "text": "Obtain two further quotes", "runs": [{"text": "Obtain two further quotes", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "list_item", "level": 2, "list": "bullet", "text": "Brief the staff representatives", "runs": [{"text": "Brief the staff representatives", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "list_item", "level": 1, "list": "bullet", "text": "Renew the insurance policy before 30 June", "runs": [{"text": "Renew the insurance policy before 30 June", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "list_item", "level": 1, "list": "bullet", "text": "Publish the revised travel policy", "runs": [{"text": "Publish the revised travel policy", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []}
+  ],
+  "notes": [],
+  "comments": [
+    {"author": "Morgan Reviewer", "date": "2026-11-10T09:00:00Z", "text": "Please give the parties' full legal names.", "anchor": "Board Meeting Agenda", "thread": 0, "resolved": true},
+    {"author": "Lin Editor", "date": "2026-11-10T09:30:00Z", "text": "Done; both names now match the register.", "anchor": "Board Meeting Agenda", "thread": 0, "resolved": true}
+  ],
+  "revisions": [],
+  "sections": [
+    {"page_width": 12240, "page_height": 15840, "orientation": "portrait", "margin_top": 1440, "margin_bottom": 1440, "margin_left": 1440, "margin_right": 1440, "header": "", "footer": ""}
+  ],
+  "properties": {"title": "Board Meeting Agenda", "subject": "", "creator": "", "keywords": "", "description": "", "last_modified_by": "", "created": "2023-11-14T22:13:20Z", "modified": "2023-11-14T22:13:20Z"}
+}

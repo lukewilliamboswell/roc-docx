@@ -78,12 +78,13 @@ blueprint run libreoffice   # pandoc, LibreOffice and the package agree; LibreOf
 It runs the cases first, so it needs `roc` as well, and then compares
 LibreOffice's snapshot of each document they wrote with its snapshot of the
 fixture it came from, and LibreOffice's snapshot of each generated document
-with the package's:
+and each reviewed fixture with the package's:
 
 [source,sh]
 ----
 python3 -I oracle/compare_snapshots.py --written libreoffice tests/fixtures .roc-docx/passthrough
 python3 -I oracle/compare_snapshots.py --lane libreoffice,package .roc-docx/generated
+python3 -I oracle/compare_snapshots.py --lane libreoffice,package .roc-docx/review
 ----
 
 Pull-request CI runs `check`, the LibreOffice lane and the manual build, and
@@ -150,6 +151,16 @@ pass through as a fixture does; its expectation under `tests/generated/`
 is the pass-through report with the tracked changes read back. The written
 documents go to `.roc-docx/generated/`, which `oracle-schema-written`
 validates and the LibreOffice lane compares with the package's snapshots.
+
+The review cases edit every fixture as the `review_contract` example edits
+its contract: a comment on the first line of text, a reply to the comment
+that comes first, that thread resolved and the last of the fixture's own
+comments removed when it has more than one. The edits must leave the text
+as it was, and the edited document must write twice to the same bytes and
+read back as the same comments. Each expectation under `tests/review/` is
+the edited document's snapshot. The documents and their snapshots go to
+`.roc-docx/review/`, where `oracle-schema-written` validates them and the
+LibreOffice lane compares LibreOffice's reading with the package's.
 
 == Performance ratchets
 

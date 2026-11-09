@@ -1,5 +1,5 @@
-## Read a Word document from its bytes, read its body and text, and write it
-## back.
+## Read a Word document from its bytes, read its body and text, edit its
+## comments, and write it back.
 ##
 ## `Docx.parse` opens the package within the default `Limits` and reads it as
 ## a [Document]; `Docx.body` and `Docx.text` read what its body says,
@@ -7,6 +7,8 @@
 ## changes, `Docx.footnotes` and `Docx.endnotes` its notes, `Docx.comments`
 ## its comments, `Docx.people` their authors, `Docx.fields` its fields and
 ## `Docx.tracks_revisions` whether it tracks changes;
+## `Docx.add_comment`, `Docx.reply`, `Docx.resolve` and
+## `Docx.remove_comment` edit its comments;
 ## `Docx.to_bytes` writes a document as a package, its body written from the
 ## model, and `Docx.equivalent` says whether two documents write the same.
 ## What reading drops comes back as diagnostics beside the document, never
@@ -264,7 +266,149 @@ Docx :: [].{
 	## of its main document. A document without the part does not.
 	tracks_revisions : Document -> Bool
 	tracks_revisions = |document| WmlRead.tracks_revisions(main_related_tree(document, settings_relationship))
+
+	## Why a comment cannot be added, replied to, resolved or removed: the
+	## document has no main document part; the span is not within the text,
+	## ends before it starts, or starts or ends inside a character, as
+	## [Comments.mark] says; no comment has the place; the date is not a date
+	## and time; or the document cannot be written, as [Docx.WriteError]
+	## says.
+	EditError : [
+		NoMainDocument,
+		OutsideText({ start : U64, end : U64 }),
+		NotACharacterBoundary(U64),
+		NoSuchComment(U64),
+		NotADate(Str),
+		MissingNote({ kind : Document.NoteKind, note : U64 }),
+		MissingComment(U64),
+		CommentWithoutParagraph(U64),
+	]
+
+	## The document with a new comment around `span` of its current text, as
+	## [Comments.mark] places it, and the comment's `id`, its place among the
+	## comments, after every comment the document has. The document is
+	## written as [Docx.to_bytes] writes it, with a comments part where it
+	## had none.
+	add_comment : Document, Comments.Span, Comments.New -> Try({ document : Document, id : U64 }, EditError)
+	add_comment = |document, span, new| {
+		_ = main_part(document)?
+		read = threads(document)
+		id = read.comments.len()
+		marked = Comments.mark(Docx.body(document), id, span)?
+		comment = Comments.comment(new)?
+		edited = written_with(document, { body: marked, comments: List.append(read.comments, comment), kept: read.kept, places: [] })?
+		Ok({ document: edited, id })
+	}
+
+	## The document with a reply to the comment `to`, and the reply's `id`,
+	## after every comment the document has. The reply's range starts and
+	## ends just after its parent's, and its reference follows its
+	## parent's, wherever they are. The document is written as
+	## [Docx.to_bytes] writes it, with an extended comments part where it had
+	## none, so the reply is a reply.
+	reply : Document, U64, Comments.New -> Try({ document : Document, id : U64 }, EditError)
+	reply = |document, to, new| {
+		_ = main_part(document)?
+		read = threads(document)
+		if to >= read.comments.len() {
+			return Err(NoSuchComment(to))
+		}
+		id = read.comments.len()
+		comment = Comments.comment(new)?
+		places = List.set(unchanged(read.comments), to, [to, id]) ?? []
+		edited = written_with(document, { body: Comments.relabel(Docx.body(document), places), comments: List.append(read.comments, { ..comment, parent: Parent(to) }), kept: read.kept, places })?
+		Ok({ document: edited, id })
+	}
+
+	## The document with the thread of the comment `id` resolved: every
+	## comment in it, from the comment its replies lead up to, marked done,
+	## as Word marks a thread. The document is written as [Docx.to_bytes]
+	## writes it, with an extended comments part where it had none.
+	resolve : Document, U64 -> Try(Document, EditError)
+	resolve = |document, id| {
+		_ = main_part(document)?
+		read = threads(document)
+		if id >= read.comments.len() {
+			return Err(NoSuchComment(id))
+		}
+		thread = Comments.thread(read.comments, id)
+		var $comments = List.with_capacity(read.comments.len())
+		var $place = 0.U64
+		for comment in read.comments {
+			$comments = List.append($comments, if (thread.contains($place)) { ..comment, resolved: Bool.True } else comment)
+			$place = $place + 1
+		}
+		written_with(document, { body: Docx.body(document), comments: $comments, kept: read.kept, places: [] })
+	}
+
+	## The document without the comment `id` and its replies, and the replies
+	## to those, with their ranges' boundaries and their references, in the
+	## body, its notes and its headers and footers, and their entries in the
+	## parts beside the comments part. A reply is not left without what it
+	## replies to. The comments after a removed one move up to its place, so
+	## their ids change: [Docx.comments] gives them again.
+	remove_comment : Document, U64 -> Try(Document, EditError)
+	remove_comment = |document, id| {
+		_ = main_part(document)?
+		read = threads(document)
+		if id >= read.comments.len() {
+			return Err(NoSuchComment(id))
+		}
+		removed = Comments.replies(read.comments, id)
+		var $places = List.with_capacity(read.comments.len())
+		var $next = 0.U64
+		var $place = 0.U64
+		for _ in read.comments {
+			if removed.contains($place) {
+				$places = List.append($places, [])
+			} else {
+				$places = List.append($places, [$next])
+				$next = $next + 1
+			}
+			$place = $place + 1
+		}
+		var $comments = List.with_capacity($next)
+		$place = 0
+		for comment in read.comments {
+			if !removed.contains($place) {
+				parent = match comment.parent {
+					Parent(above) =>
+						match $places.get(above) {
+							Ok([moved]) => Parent(moved)
+							_ => Unset
+						}
+
+					Unset => Unset
+				}
+				$comments = List.append($comments, { ..comment, parent })
+			}
+			$place = $place + 1
+		}
+		written_with(document, { body: Comments.relabel(Docx.body(document), $places), comments: $comments, kept: read.kept, places: $places })
+	}
 }
+
+# The main document part, which every edit needs.
+main_part : Document -> Try(Document.XmlPart, [NoMainDocument])
+main_part = |document| Document.related(document, "/", Opc.officedocument_relationship).map_err(|_| NoMainDocument)
+
+# Every comment keeping its place.
+unchanged : List(Document.Comment) -> List(List(U64))
+unchanged = |comments| {
+	var $places = List.with_capacity(comments.len())
+	var $place = 0.U64
+	for _ in comments {
+		$places = List.append($places, [$place])
+		$place = $place + 1
+	}
+	$places
+}
+
+# What a document is written with: its body, its comments in their places,
+# the entries beside the comments part kept as read, and where each
+# comment's boundaries and references in the notes, headers and footers go,
+# as [Comments.relabel] takes them, or nothing where they stay.
+Written : { body : List(Document.Block), comments : List(Document.Comment), kept : Comments.Kept, places : List(List(U64)) }
 
 # What reading and writing the main document part need from the rest of the
 # package: its relationships and its notes' and comments' identifiers.
@@ -296,22 +440,31 @@ part_context = |part, comments| { relationships: part.relationships, footnotes: 
 # name them by those.
 as_written : Document -> Try(Document, WmlWrite.WriteError)
 as_written = |document| {
+	read = threads(document)
+	written_with(document, { body: Docx.body(document), comments: read.comments, kept: read.kept, places: [] })
+}
+
+# The document written as [as_written] writes it, from this body and these
+# comments, with the comments' boundaries and references in its notes,
+# headers and footers taking their places.
+written_with : Document, Written -> Try(Document, WmlWrite.WriteError)
+written_with = |document, change| {
 	main = match Document.related(document, "/", Opc.officedocument_relationship) {
 		Ok(found) => found
 		Err(NotFound) => return Ok(document)
 	}
 	read_ids = comment_ids(document)
-	body = Docx.body(document)
-	read = threads(document)
-	threaded = read.comments
-	comments = WmlWrite.comment_ids(body, threaded)
-	written = WmlWrite.document(main.tree, body, { ..main_context(document, main.name, main.relationships), comments })?
+	moved = |blocks| if (change.places.is_empty()) blocks else Comments.relabel(blocks, change.places)
+	comments = WmlWrite.comment_ids(change.body, change.comments)
+	written = WmlWrite.document(main.tree, change.body, { ..main_context(document, main.name, main.relationships), comments })?
 	var $document = Document.with_part(document, main.name, written.tree, written.relationships)
 	for kind in [footnotes_relationship, endnotes_relationship] {
 		match Document.related(document, main.name, kind) {
 			Ok(part) => {
 				context = part_context(part, comments)
-				notes_written = WmlWrite.notes(part.tree, WmlRead.notes(part.tree, part_context(part, read_ids)), context)?
+				read_notes = WmlRead.notes(part.tree, part_context(part, read_ids))
+				placed = if (change.places.is_empty()) read_notes else read_notes.map(|note| { ..note, content: Comments.relabel(note.content, change.places) })
+				notes_written = WmlWrite.notes(part.tree, placed, context)?
 				$document = Document.with_part($document, part.name, notes_written.tree, notes_written.relationships)
 			}
 
@@ -323,7 +476,7 @@ as_written = |document| {
 			match Document.xml_part(document, relationship.target) {
 				Ok(part) => {
 					context = part_context(part, comments)
-					part_written = WmlWrite.header_footer(part.tree, WmlRead.header_footer(part.tree, part_context(part, read_ids)), context)?
+					part_written = WmlWrite.header_footer(part.tree, moved(WmlRead.header_footer(part.tree, part_context(part, read_ids))), context)?
 					$document = Document.with_part($document, part.name, part_written.tree, part_written.relationships)
 				}
 
@@ -331,7 +484,7 @@ as_written = |document| {
 			}
 		}
 	}
-	with_comments($document, threaded, read.kept, comments)
+	with_comments($document, change.comments, change.kept, comments)
 }
 
 header_relationship : Str
@@ -343,30 +496,81 @@ footer_relationship = "http://schemas.openxmlformats.org/officeDocument/2006/rel
 # The document with its comments part written from `comments`, taking `ids`,
 # and its extended comments, comment identifiers, extensible comments and
 # people parts written from the model, each where the document has it. The
-# comments' identifiers avoid those of every other part.
+# comments' identifiers avoid those of every other part. A document with
+# comments and without a comments part is given one, and one whose comments
+# have threads, durable identifiers or UTC dates to write and that has no
+# part for them is given the part, as [new_part] names it.
 with_comments : Document, List(Document.Comment), Comments.Kept, List(Str) -> Try(Document, WmlWrite.WriteError)
 with_comments = |document, comments, kept, ids| {
 	people = match Document.related(document, main_name(document), people_relationship) {
 		Ok(part) => Document.with_part(document, part.name, Comments.people_part(part.tree, Comments.people(part.tree).people), part.relationships)
 		Err(NotFound) => document
 	}
-	match comments_part(people) {
-		Ok(part) => {
-			rewritten = [part.name, related_name(people, comments_extended_relationship), related_name(people, comments_ids_relationship)]
-			others = Document.xml_parts(people).drop_if(|other| rewritten.contains(other.name)).map(|other| other.tree)
-			taken = WmlWrite.taken(List.join([others, kept.extended, kept.ids]))
-			written = WmlWrite.comments(part.tree, comments, { relationships: part.relationships, footnotes: [], endnotes: [], comments: ids }, taken)?
-			shells = { extended: main_related_tree(people, comments_extended_relationship), ids: main_related_tree(people, comments_ids_relationship), extensible: main_related_tree(people, comments_extensible_relationship) }
-			split = Comments.split(comments, written.paragraphs, shells, kept)
-			with_part = Document.with_part(people, part.name, written.tree, written.relationships)
-			with_extended = rewrite(with_part, comments_extended_relationship, split.extended)
-			with_ids = rewrite(with_extended, comments_ids_relationship, split.ids)
-			Ok(rewrite(with_ids, comments_extensible_relationship, split.extensible))
+	{ document: with_part, part } = match comments_part(people) {
+		Ok(found) => { document: people, part: found }
+		Err(NotFound) if comments.is_empty() => return Ok(people)
+		Err(NotFound) => {
+			added = new_part(people, comments_relationship, Text(""))
+			{ document: added.document, part: { name: added.name, tree: Text(""), relationships: [] } }
 		}
-
-		Err(NotFound) => Ok(people)
 	}
+	rewritten = [part.name, related_name(with_part, comments_extended_relationship), related_name(with_part, comments_ids_relationship)]
+	others = Document.xml_parts(with_part).drop_if(|other| rewritten.contains(other.name)).map(|other| other.tree)
+	taken = WmlWrite.taken(List.join([others, kept.extended, kept.ids]))
+	written = WmlWrite.comments(part.tree, comments, { relationships: part.relationships, footnotes: [], endnotes: [], comments: ids }, taken)?
+	shells = { extended: main_related_tree(with_part, comments_extended_relationship), ids: main_related_tree(with_part, comments_ids_relationship), extensible: main_related_tree(with_part, comments_extensible_relationship) }
+	split = Comments.split(comments, written.paragraphs, shells, kept)
+	with_comments_part = Document.with_part(with_part, part.name, written.tree, written.relationships)
+	threaded = comments.any(|comment| comment.parent != Unset or comment.resolved)
+	durable = comments.any(|comment| comment.durable_id != Unset)
+	dated = comments.any(|comment| comment.durable_id != Unset and comment.utc_date != Unset)
+	with_extended = rewrite(with_comments_part, comments_extended_relationship, split.extended, threaded)
+	with_ids = rewrite(with_extended, comments_ids_relationship, split.ids, durable)
+	Ok(rewrite(with_ids, comments_extensible_relationship, split.extensible, dated))
 }
+
+# The document with a new part of a kind the comments need, related from the
+# main document: the comments part, `comments.xml`, or the extended comments,
+# comment identifiers or extensible comments part, `commentsExtended.xml`,
+# `commentsIds.xml` or `commentsExtensible.xml`, beside the main document,
+# with the content type Word gives it, a number after the name when the
+# document already has a part by that name; and the part's name.
+new_part : Document, Str, XmlTree.Node -> { document : Document, name : Str }
+new_part = |document, kind, tree| {
+	local = if kind == comments_relationship {
+		"comments"
+	} else if kind == comments_extended_relationship {
+		"commentsExtended"
+	} else if kind == comments_ids_relationship {
+		"commentsIds"
+	} else {
+		"commentsExtensible"
+	}
+	main = main_name(document)
+	directory = match main.split_last("/") {
+		Ok({ before, after: _ }) => before
+		Err(_) => ""
+	}
+	var $name = "${directory}/${local}.xml"
+	var $number = 1.U64
+	while Document.xml_parts(document).any(|part| part.name == $name) {
+		$number = $number + 1
+		$name = "${directory}/${local}${$number.to_str()}.xml"
+	}
+	content_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.${local}+xml"
+	{ document: Document.with_new_part(document, { source: main, kind, name: $name, content_type }, tree), name: $name }
+}
+
+# The document with the part the main document's relationship of `kind`
+# targets holding `tree`, where it has one, or with a new part holding it,
+# as [new_part] adds it, where it has none and `needed`.
+rewrite : Document, Str, XmlTree.Node, Bool -> Document
+rewrite = |document, kind, tree, needed|
+	match Document.related(document, main_name(document), kind) {
+		Ok(part) => Document.with_part(document, part.name, tree, part.relationships)
+		Err(NotFound) if needed => new_part(document, kind, tree).document
+		Err(NotFound) => document
+	}
 
 # The name of the part the main document's relationship of `kind` targets,
 # or the empty string where there is none.
@@ -375,15 +579,6 @@ related_name = |document, kind|
 	match Document.related(document, main_name(document), kind) {
 		Ok(part) => part.name
 		Err(NotFound) => ""
-	}
-
-# The document with the part the main document's relationship of `kind`
-# targets holding `tree`, where it has one.
-rewrite : Document, Str, XmlTree.Node -> Document
-rewrite = |document, kind, tree|
-	match Document.related(document, main_name(document), kind) {
-		Ok(part) => Document.with_part(document, part.name, tree, part.relationships)
-		Err(NotFound) => document
 	}
 
 # The name of the main document part, or the package's own `/` when there is
@@ -937,4 +1132,107 @@ expect {
 		and header.contains("<w:p><w:r><w:rPr><w:b/></w:rPr><w:t>Draft</w:t></w:r></w:p></w:hdr>")
 		and footnotes.map_ok(|text| text.contains("<w:footnote w:type=\"separator\" w:id=\"0\">") and text.contains("<w:hyperlink r:id=\"rId7\">")) == Ok(Bool.True)
 		and Docx.equivalent(parsed.document, again.document)
+}
+
+# Each comment's place, author, content as text, anchor, parent and resolved
+# mark, as `Docx.comments` gives them.
+summary : Document -> List({ id : U64, author : Str, text : List(Str), anchor : Comments.Anchor, parent : [Unset, Parent(U64)], resolved : Bool })
+summary = |document|
+	Docx.comments(document).comments.map(|entry| { id: entry.id, author: entry.comment.author, text: entry.comment.content.map(paragraph_of), anchor: entry.anchor, parent: entry.comment.parent, resolved: entry.comment.resolved })
+
+## A comment added to a document without comments is anchored to the span of
+## its text, a run split where the span starts and ends, with a reference
+## after the range; the document gains a comments part, the text is
+## unchanged, and the comment reads back the same from the written bytes.
+expect {
+	parsed = Docx.parse(package_of("<w:p><w:r><w:t>Rent is due monthly.</w:t></w:r></w:p>")?)?
+	added = Docx.add_comment(parsed.document, { start: 8, end: 11 }, { author: "Morgan Reviewer", content: Text("Which day?\nIn advance?"), date: Date("2026-11-10T09:00:00+01:00") })?
+	again = Docx.parse(Docx.to_bytes(added.document)?)?
+	run = |text| Run({ properties: Document.no_run_properties, content: [Text(text)] })
+	reference = Run({ properties: Document.no_run_properties, content: [CommentReference(0)] })
+	stamp = Docx.comments(added.document).comments.map(|entry| entry.comment.date)
+	added.id == 0
+		and Docx.body(added.document) == [Paragraph({ properties: Document.no_paragraph_properties, content: [run("Rent is "), CommentStart(0), run("due"), CommentEnd(0), reference, run(" monthly.")] })]
+		and summary(added.document) == [{ id: 0, author: "Morgan Reviewer", text: ["Which day?", "In advance?"], anchor: Range("due"), parent: Unset, resolved: Bool.False }]
+		and stamp == [Date({ written: "2026-11-10T09:00:00+01:00", utc_seconds: 1_794_297_600 })]
+		and summary(again.document) == summary(added.document)
+		and Docx.text(added.document) == Docx.text(parsed.document)
+		and Opc.parts(Opc.open(Docx.to_bytes(added.document)?, {})?).any(|part| part.name == "/word/comments.xml" and part.content_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml")
+}
+
+## A reply to a comment of a document without the extended comments part
+## shares its parent's range and follows its reference; resolving the reply
+## resolves the whole thread, and the document gains the extended comments
+## part, so the thread reads back from the written bytes.
+expect {
+	parsed = Docx.parse(commented({})?)?
+	replied = Docx.reply(parsed.document, 1, { author: "Lin Editor", content: Text("Agreed."), initials: Initials("LE") })?
+	resolved = Docx.resolve(replied.document, replied.id)?
+	again = Docx.parse(Docx.to_bytes(resolved)?)?
+	parts = Opc.parts(Opc.open(Docx.to_bytes(resolved)?, {})?)
+	extended = parts.any(|part| part.name == "/word/commentsExtended.xml" and part.content_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.commentsExtended+xml")
+	replied.id == 2
+		and summary(resolved)
+			== [
+				{ id: 1, author: "Morgan Reviewer", text: ["Earlier"], anchor: Range("first"), parent: Unset, resolved: Bool.True },
+				{ id: 2, author: "Lin Editor", text: ["Agreed."], anchor: Range("first"), parent: Parent(1), resolved: Bool.True },
+				{ id: 0, author: "Morgan Reviewer", text: ["Later"], anchor: Range("second"), parent: Unset, resolved: Bool.False },
+			]
+		and summary(again.document) == summary(resolved)
+		and extended
+		and !parts.any(|part| part.name == "/word/commentsIds.xml")
+		and Docx.text(resolved) == Docx.text(parsed.document)
+}
+
+## Removing a comment removes its replies, their ranges and references and
+## a run left holding nothing; the comments after it move up, and the text is
+## unchanged.
+expect {
+	parsed = Docx.parse(commented({})?)?
+	replied = Docx.reply(parsed.document, 1, { author: "Lin Editor", content: Text("Agreed.") })?
+	again = Docx.reply(replied.document, replied.id, { author: "Morgan Reviewer", content: Text("Thanks.") })?
+	removed = Docx.remove_comment(again.document, 1)?
+	body_ok = match Docx.body(removed) {
+		[Paragraph({ properties: _, content: [Run(_), Run(_), CommentStart(0), Run(_), CommentEnd(0), Run(reference)] })] => reference.content == [CommentReference(0)]
+		_ => Bool.False
+	}
+	body_ok
+		and summary(removed) == [{ id: 0, author: "Morgan Reviewer", text: ["Later"], anchor: Range("second"), parent: Unset, resolved: Bool.False }]
+		and Docx.text(removed) == Docx.text(parsed.document)
+		and Docx.remove_comment(removed, 1).map_ok(|_| {}) == Err(NoSuchComment(1))
+}
+
+## A span is placed in the current text: across paragraphs, inside a
+## hyperlink and an insertion with the reference after them, at a
+## paragraph's end without its line feed, and on no text; a span outside the
+## text or inside a character fails.
+expect {
+	link = "<w:hyperlink w:anchor='terms'><w:r><w:t>terms</w:t></w:r></w:hyperlink>"
+	inserted = "<w:ins w:author='A'><w:r><w:t>new</w:t></w:r></w:ins><w:del w:author='A'><w:r><w:delText>old</w:delText></w:r></w:del>"
+	parsed = Docx.parse(package_of("<w:p><w:r><w:t xml:space='preserve'>See </w:t></w:r>${link}</w:p><w:p>${inserted}<w:r><w:t>é.</w:t></w:r></w:p>")?)?
+	new : Comments.New
+	new = { author: "Ada Reviewer", content: Text("Check.") }
+	anchors = |spans| {
+		var $document = parsed.document
+		for span in spans {
+			$document = Docx.add_comment($document, span, new)?.document
+		}
+		Ok(Docx.comments($document).comments.map(|entry| entry.anchor))
+	}
+	inner = match Docx.add_comment(parsed.document, { start: 5, end: 9 }, new) {
+		Ok({ document, id: _ }) =>
+			match Docx.body(document) {
+				[Paragraph({ properties: _, content: [_, Hyperlink(found), Run(after)] }), _] => (found.content.len(), after.content)
+				_ => (0, [])
+			}
+
+		Err(_) => (0, [])
+	}
+	Docx.text(parsed.document) == "See terms\nnewé.\n"
+		and anchors([{ start: 4, end: 13 }, { start: 0, end: 10 }, { start: 10, end: 10 }, { start: 13, end: 17 }])
+			== Ok([Range("See terms"), Range("terms\nnew"), Range(""), Range("é.")])
+		and inner == (4, [CommentReference(0)])
+		and Docx.add_comment(parsed.document, { start: 3, end: 30 }, new).map_ok(|_| {}) == Err(OutsideText({ start: 3, end: 30 }))
+		and Docx.add_comment(parsed.document, { start: 14, end: 15 }, new).map_ok(|_| {}) == Err(NotACharacterBoundary(14))
+		and Docx.add_comment(parsed.document, { start: 4, end: 2 }, new).map_ok(|_| {}) == Err(OutsideText({ start: 4, end: 2 }))
 }

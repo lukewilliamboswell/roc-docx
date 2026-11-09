@@ -1,0 +1,37 @@
+{
+  "schema": "roc-docx-snapshot/1",
+  "producer": {"name": "roc-docx", "version": "working tree"},
+  "document": ".roc-docx/review/libreoffice/review.docx",
+  "keys": ["blocks.kind", "blocks.level", "blocks.list", "blocks.text", "blocks.rows", "blocks.runs.bold", "blocks.runs.italic", "blocks.runs.underline", "blocks.runs.strike", "blocks.runs.superscript", "blocks.runs.subscript", "blocks.runs.link", "notes.kind", "notes.text", "comments.author", "comments.date", "comments.text", "comments.anchor", "comments.thread", "comments.resolved", "revisions.kind", "revisions.author", "revisions.date", "revisions.text", "sections.page_width", "sections.page_height", "sections.orientation", "sections.margin_top", "sections.margin_bottom", "sections.margin_left", "sections.margin_right", "sections.header", "sections.footer", "properties.title", "properties.subject", "properties.creator", "properties.keywords", "properties.description", "properties.last_modified_by", "properties.created", "properties.modified"],
+  "blocks": [
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Consulting Agreement (Reviewed)", "runs": [{"text": "Consulting Agreement (Reviewed)", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Grace Author", "runs": [{"text": "Grace Author", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "heading", "level": 1, "list": "", "text": "Consulting Agreement", "runs": [{"text": "Consulting Agreement", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "heading", "level": 2, "list": "", "text": "1. Engagement", "runs": [{"text": "1. Engagement", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Contoso engages the Consultant to provide the services described in Schedule 1 for a term of nine months.", "runs": [{"text": "Contoso engages the Consultant to provide the services described in Schedule 1 for a term of nine months.", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "heading", "level": 2, "list": "", "text": "2. Fees and expenses", "runs": [{"text": "2. Fees and expenses", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "table", "level": 0, "list": "", "text": "", "runs": [], "rows": [["Item", "Rate"], ["Daily rate", "1,200"], ["Travel", "at cost"]]},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Expenses are reimbursed monthly against receipts. Receipts must be itemised.", "runs": [{"text": "Expenses are reimbursed monthly against receipts. Receipts must be itemised.", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "heading", "level": 2, "list": "", "text": "3. Confidentiality", "runs": [{"text": "3. Confidentiality", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "list_item", "level": 1, "list": "bullet", "text": "The Consultant keeps Contoso’s information confidential.", "runs": [{"text": "The Consultant keeps Contoso’s information confidential.", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "list_item", "level": 1, "list": "bullet", "text": "The obligation survives termination for two years.", "runs": [{"text": "The obligation survives termination for two years.", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "list_item", "level": 1, "list": "bullet", "text": "", "runs": [], "rows": []}
+  ],
+  "notes": [],
+  "comments": [
+    {"author": "Morgan Reviewer", "date": "2026-11-10T09:00:00Z", "text": "Please give the parties' full legal names.", "anchor": "Consulting Agreement (Reviewed)", "thread": 0, "resolved": true},
+    {"author": "Lin Editor", "date": "2026-11-10T09:30:00Z", "text": "Done; both names now match the register.", "anchor": "Consulting Agreement (Reviewed)", "thread": 0, "resolved": true},
+    {"author": "Ada Reviewer", "date": "2026-05-05T11:00:00Z", "text": "", "anchor": "for a term of nine months", "thread": 2, "resolved": false}
+  ],
+  "revisions": [
+    {"kind": "deletion", "author": "Ada Reviewer", "date": "2026-05-05T11:02:00Z", "text": "six"},
+    {"kind": "insertion", "author": "Ada Reviewer", "date": "2026-05-05T11:02:00Z", "text": "nine"},
+    {"kind": "insertion", "author": "Grace Author", "date": "2026-05-06T08:20:00Z", "text": "monthly"},
+    {"kind": "insertion", "author": "Ada Reviewer", "date": "2026-05-07T15:10:00Z", "text": "The obligation survives termination for two years."},
+    {"kind": "deletion", "author": "Ada Reviewer", "date": "2026-05-07T15:10:00Z", "text": "The obligation ends on termination."}
+  ],
+  "sections": [
+    {"page_width": 12240, "page_height": 15840, "orientation": "portrait", "margin_top": 1440, "margin_bottom": 1440, "margin_left": 1440, "margin_right": 1440, "header": "", "footer": ""}
+  ],
+  "properties": {"title": "Consulting Agreement (Reviewed)", "subject": "", "creator": "Grace Author", "keywords": "", "description": "", "last_modified_by": "", "created": "2023-11-14T22:13:20Z", "modified": "2023-11-14T22:13:20Z"}
+}

@@ -36,12 +36,24 @@ import docx.XmlTree
 ## bytes that read back as an equivalent document that writes the same bytes
 ## again.
 ##
+## For a program of at most 1,024 bytes, the document read back, or for a
+## program of odd length the same document packaged without the parts beside
+## the comments part, as pandoc writes one, is then edited: `Docx.add_comment` over a span of its text,
+## `Docx.reply` to a comment, `Docx.resolve` of a thread and
+## `Docx.remove_comment`, each chosen by the program's first bytes. No edit
+## changes the text; the added comment is anchored to its span, the reply
+## replies to its parent with its parent's anchor, resolving resolves exactly
+## the thread, and removing removes exactly the comment and its replies; and
+## every edited document writes with its ranges balanced and its identifiers
+## unique, and reads back as the same comments.
+##
 ## Allocation ratchets, which only ever move down: writing the comments and
-## their threads allocates at most linearly in the written trees' nodes and
-## attributes and keeps at most linearly many bytes live, and each declared
-## example allocates no more than it did when its ceiling was set. The large
-## declared document, sixteen times the small one, allocates at most sixteen
-## times as often as the small one does in the same run. The bytes it
+## their threads, and the four edits, each allocate at most linearly in the
+## written trees' nodes and attributes and keep at most linearly many bytes
+## live, and each declared example allocates no more than it did when its
+## ceiling was set. The large declared document, sixteen times the small one,
+## allocates at most sixteen times as often as the small one does in the
+## same run, writing and editing. The bytes it
 ## requests are bounded by the linear ceiling instead: measured at 4, 16, 64
 ## and 256 repetitions they run 29.7, 29.5, 31.0 and 31.9 KiB a repetition,
 ## within the ceiling but not within an exact sixteen-fold. Raising a ceiling
@@ -50,10 +62,14 @@ test! : List(U8) => Fuzz.Outcome
 test! = |program| {
 	cost = round_trip!(program)
 	match exact_ceiling(program) {
-		Ok(ceiling) =>
-			if cost.allocations > ceiling {
+		Ok(ceiling) => {
+			if cost.allocations > ceiling.write {
 				crash "a declared document allocated more than its ceiling"
 			}
+			if cost.edits > ceiling.edit {
+				crash "editing a declared document's comments allocated more than its ceiling"
+			}
+		}
 
 		Err(NotDeclared) => {}
 	}
@@ -61,6 +77,9 @@ test! = |program| {
 		small = round_trip!(small_program)
 		if cost.allocations > 16 * small.allocations {
 			crash "the large document allocated more than sixteen times the small one"
+		}
+		if cost.edits > 16 * small.edits {
+			crash "editing the large document's comments allocated more than sixteen times the small one's"
 		}
 	}
 	Fuzz.keep
@@ -72,7 +91,7 @@ generator = Fuzz.bytes
 # Write a program's document, measuring the writing of its comments, and
 # check the round trip. Returns the allocations and reallocations writing
 # the comments made.
-round_trip! : List(U8) => { allocations : U64 }
+round_trip! : List(U8) => { allocations : U64, edits : U64 }
 round_trip! = |program| {
 	built = build(program)
 	ids = WmlWrite.comment_ids(built.body, built.comments)
@@ -90,7 +109,8 @@ round_trip! = |program| {
 		},
 	)
 	parts = written ?? crash "generated comments did not write"
-	check_linear(stats, [parts.comments.tree, parts.split.extended, parts.split.ids, parts.split.extensible, parts.people].fold(0, |total, tree| total + size(tree)))
+	nodes = [parts.comments.tree, parts.split.extended, parts.split.ids, parts.split.extensible, parts.people].fold(0, |total, tree| total + size(tree))
+	check_linear(stats, nodes)
 	check_identifiers(main.tree, parts.comments.tree)
 	trees = [
 		("/word/document.xml", main.tree),
@@ -122,7 +142,132 @@ round_trip! = |program| {
 	if Docx.to_bytes(again.document) != Ok(first) {
 		crash "writing a rewritten document gave different bytes"
 	}
-	{ allocations: stats.allocs + stats.reallocs }
+	if program.len() > edited_program_bytes {
+		return { allocations: stats.allocs + stats.reallocs, edits: 0 }
+	}
+	edited = if (program.len() % 2 == 0) parsed.document else without_threads(trees, main.relationships)
+	{ allocations: stats.allocs + stats.reallocs, edits: operate!(program, edited, nodes + size(main.tree)) }
+}
+
+# The longest program whose document is edited. Each edit writes the whole
+# document and the checks write and read each edited one again, so a program
+# of 1,348 bytes took longer than the smoke run's ten seconds on a loaded
+# machine; the large declared program, 832 bytes, is within it.
+edited_program_bytes : U64
+edited_program_bytes = 1024
+
+# The document packaged with its main document and comments part only, as
+# pandoc and LibreOffice write one: without the parts that make threads.
+without_threads : List((Str, XmlTree.Node)), List(Opc.Relationship) -> Document
+without_threads = |trees, relationships| {
+	full = graph(relationships)
+	dropped = ["/word/commentsExtended.xml", "/word/commentsIds.xml", "/word/commentsExtensible.xml", "/word/people.xml"]
+	parts = full.parts
+		.drop_if(|part| dropped.contains(part.name))
+		.map(|part| { ..part, relationships: part.relationships.drop_if(|relationship| dropped.contains(relationship.target)) })
+	bytes = Opc.to_bytes({ relationships: full.relationships, parts }, |name| Bytes(rendered(trees, name))) ?? crash "a document without threads did not package"
+	(Docx.parse(bytes) ?? crash "a document without threads did not parse").document
+}
+
+# Add a comment, reply to one, resolve one and remove one, as the program's
+# first bytes choose them, measuring the four edits, and check each: the
+# text never changes; the new comment is anchored to its span; the reply
+# replies to its parent and shares its anchor; the resolved comment's thread
+# is resolved and nothing else changes; the removed comment goes with its
+# replies and the others stay; and the written document's ranges are
+# balanced and its identifiers unique, and it reads back as the same
+# comments. Returns the allocations and reallocations the edits made.
+operate! : List(U8), Document, U64 => U64
+operate! = |program, document, nodes| {
+	text = Docx.text(document)
+	length = text.to_utf8().len()
+	choose = |index, range| (program.get(index) ?? 0).to_u64() * 37 % range
+	start = choose(1, length)
+	end = start + choose(2, length - start + 1)
+	new : Str -> Comments.New
+	new = |author| { author: author, content: Text("Edited by ${author}") }
+	{ value: outcome, stats } = Fuzz.measure!(
+		"comment-operations",
+		|| {
+			added = Docx.add_comment(document, { start, end }, new("Ada Reviewer"))?
+			count = added.id + 1
+			to = choose(3, count)
+			replied = Docx.reply(added.document, to, new("Lin Editor"))?
+			resolve_at = choose(4, count + 1)
+			resolved = Docx.resolve(replied.document, resolve_at)?
+			remove_at = choose(5, count + 1)
+			removed = Docx.remove_comment(resolved, remove_at)?
+			Ok({ added, to, replied, resolve_at, resolved, remove_at, removed })
+		},
+	)
+	steps = outcome ?? crash "a comment operation failed"
+	if stats.allocs + stats.reallocs > edit_allocation_ceiling(nodes) {
+		crash "editing comments allocated more than linearly in the document's nodes"
+	}
+	if stats.peak_live_bytes - stats.entry_live_bytes > edit_memory_ceiling(nodes) {
+		crash "editing comments held more than linearly many bytes live"
+	}
+	edited = [steps.added.document, steps.replied.document, steps.resolved, steps.removed]
+	if edited.any(|one| Docx.text(one) != text) {
+		crash "a comment operation changed the text"
+	}
+	before = listed(document)
+	added = listed(steps.added.document)
+	expected = Str.from_utf8(text.to_utf8().sublist({ start, len: end - start })) ?? ""
+	if anchor_of(added, steps.added.id) != Ok(Range(Str.drop_suffix(expected, "\n"))) or added.len() != before.len() + 1 {
+		crash "an added comment is not anchored to its span"
+	}
+	replied = listed(steps.replied.document)
+	reply = replied.find_first(|entry| entry.id == steps.replied.id) ?? crash "a reply is missing"
+	if reply.comment.parent != Parent(steps.to) or Ok(reply.anchor) != anchor_of(added, steps.to) {
+		crash "a reply does not reply to its parent with its parent's anchor"
+	}
+	resolved = listed(steps.resolved)
+	thread = Comments.thread(comments_of(replied), steps.resolve_at)
+	if resolved.any(|entry| entry.comment.resolved != (thread.contains(entry.id) or replied.any(|other| other.id == entry.id and other.comment.resolved))) {
+		crash "resolving resolved more or less than the thread"
+	}
+	gone = Comments.replies(comments_of(resolved), steps.remove_at)
+	remaining = sorted_by_id(resolved).keep_if(|entry| !gone.contains(entry.id)).map(|entry| entry.comment.content)
+	if sorted_by_id(listed(steps.removed)).map(|entry| entry.comment.content) != remaining {
+		crash "removing a comment removed more or less than it and its replies"
+	}
+	for one in edited {
+		bytes = Docx.to_bytes(one) ?? crash "an edited document did not write"
+		check_identifiers(part_tree(bytes, "/word/document.xml"), part_tree(bytes, "/word/comments.xml"))
+		if listed((Docx.parse(bytes) ?? crash "an edited document did not parse").document) != listed(one) {
+			crash "an edited document read back as different comments"
+		}
+	}
+	stats.allocs + stats.reallocs
+}
+
+# A document's comments, as `Docx.comments` gives them.
+listed : Document -> List(Comments.Anchored)
+listed = |document| Docx.comments(document).comments
+
+anchor_of : List(Comments.Anchored), U64 -> Try(Comments.Anchor, [Missing])
+anchor_of = |entries, id|
+	match entries.find_first(|entry| entry.id == id) {
+		Ok(entry) => Ok(entry.anchor)
+		Err(_) => Err(Missing)
+	}
+
+# The comments in their places.
+comments_of : List(Comments.Anchored) -> List(Document.Comment)
+comments_of = |entries| sorted_by_id(entries).map(|entry| entry.comment)
+
+sorted_by_id : List(Comments.Anchored) -> List(Comments.Anchored)
+sorted_by_id = |entries| entries.sort_with(|a, b| if (a.id < b.id) Before else if (a.id > b.id) After else Same)
+
+# A written part's tree, or an empty one where the package has no such part.
+part_tree : List(U8), Str -> XmlTree.Node
+part_tree = |bytes, name| {
+	pkg = Opc.open(bytes, {}) ?? crash "a written document did not open"
+	match Opc.part_bytes(pkg, name) {
+		Ok(content) => XmlTree.parse(content, {}) ?? crash "a written part is not XML"
+		Err(_) => Text("")
+	}
 }
 
 # A part's tree rendered as the package writes it, its extension namespaces
@@ -261,22 +406,32 @@ linear_allocation_ceiling = |nodes| 64 + 4 * nodes
 linear_memory_ceiling : U64 -> U64
 linear_memory_ceiling = |nodes| 16_384 + 512 * nodes
 
+# The four comment edits' ceilings in the nodes of the written main document
+# and comments parts: each edit writes the whole document, so they are about
+# twenty allocations and 800 bytes live a node on the declared documents.
+edit_allocation_ceiling : U64 -> U64
+edit_allocation_ceiling = |nodes| 4096 + 32 * nodes
+
+edit_memory_ceiling : U64 -> U64
+edit_memory_ceiling = |nodes| 65_536 + 1536 * nodes
+
 # Exact ceilings: the allocations and reallocations of writing each declared
-# document's comments, as measured on nightly-2026-11-07 when the ceiling
-# was set.
-exact_ceiling : List(U8) -> Try(U64, [NotDeclared])
+# document's comments and of the four edits, as measured on
+# nightly-2026-11-07 when the ceiling was set.
+exact_ceiling : List(U8) -> Try({ write : U64, edit : U64 }, [NotDeclared])
 exact_ceiling = |program|
 	if program == small_program {
-		Ok(577)
+		Ok({ write: 577, edit: 10_202 })
 	} else if program == large_program {
-		Ok(8_873)
+		Ok({ write: 8_873, edit: 145_205 })
 	} else {
 		Err(NotDeclared)
 	}
 
 # The small and large declared documents repeat one program, the large one
 # sixteen times as often. Writing their comments takes 577 and 8,873
-# allocations, a ratio of 15.4 against the sixteen the test allows.
+# allocations, a ratio of 15.4 against the sixteen the test allows; the four
+# edits take 10,202 and 145,205, a ratio of 14.2.
 small_program : List(U8)
 small_program = List.join(List.repeat(program_unit, 4))
 

@@ -25,6 +25,19 @@
         }
       ],
       "path": "examples/repackage/main.roc"
+    },
+    {
+      "cases": [
+        {
+          "args": [],
+          "exit_code": 0,
+          "name": "default",
+          "stderr": "",
+          "stdin": "",
+          "stdout": "Comments in reviewed.docx:\n  [2] Morgan Reviewer, resolved on \"Draft Services Agreement\": Please give the parties' full legal names.\n    reply [3] Lin Editor, resolved on \"Draft Services Agreement\": Done; both names now match the register.\n  [0] Ada Reviewer on \"The Provider shall perform the Services with reasonable skill and care.\"\n  [1] Grace Author on \"thirty days\"\n"
+        }
+      ],
+      "path": "examples/review_contract/main.roc"
     }
   ],
   "dependencies": [],

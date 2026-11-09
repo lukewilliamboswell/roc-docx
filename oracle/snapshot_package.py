@@ -4,12 +4,13 @@
     snapshot_package.py PATH... --out DIR    write DIR/<document>.json for every .docx under PATH
 
 The package is the subject of the comparison, not an oracle: its snapshots
-are written by the snapshot cases of the test driver (`roc tests/main.roc`)
-under .roc-docx/snapshots/, and this adapter only finds the one whose
-`document` names each requested .docx and copies it unchanged. It reads no
-.docx and runs no package code, so the comparison sees exactly what the
-package wrote. A document without a snapshot fails the run: run the cases
-first.
+are written by the test driver (`roc tests/main.roc`), the fixtures' by the
+snapshot cases under .roc-docx/snapshots/ and the edited documents' by the
+review cases beside them under .roc-docx/review/. This adapter only finds
+the one whose `document` names each requested .docx and copies it
+unchanged. It reads no .docx and runs no package code, so the comparison
+sees exactly what the package wrote. A document without a snapshot fails
+the run: run the cases first.
 """
 
 import json
@@ -17,7 +18,7 @@ import pathlib
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-SNAPSHOTS = ROOT / ".roc-docx" / "snapshots"
+SNAPSHOTS = [ROOT / ".roc-docx" / "snapshots", ROOT / ".roc-docx" / "review"]
 
 
 def label(document):
@@ -34,7 +35,7 @@ def documents(paths):
 def written():
     """The package's snapshots by the document they name."""
     found = {}
-    for path in sorted(SNAPSHOTS.rglob("*.json")) if SNAPSHOTS.exists() else []:
+    for path in sorted(path for directory in SNAPSHOTS if directory.exists() for path in directory.rglob("*.json")):
         text = path.read_text()
         found[json.loads(text)["document"]] = text
     return found
@@ -52,7 +53,7 @@ def main(argv):
     for document in documents(argv):
         name = label(document)
         if name not in snapshots:
-            print(f"FAIL {name}: no package snapshot under {SNAPSHOTS.relative_to(ROOT)}; run `roc tests/main.roc`", file=sys.stderr)
+            print(f"FAIL {name}: no package snapshot under .roc-docx/; run `roc tests/main.roc`", file=sys.stderr)
             failed += 1
         elif out is None:
             sys.stdout.write(snapshots[name])

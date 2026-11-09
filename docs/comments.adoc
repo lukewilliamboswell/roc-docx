@@ -2,7 +2,8 @@
 
 This chapter reads the comments reviewers leave on a document: who wrote
 each one and when, what it says, the text it is about, and the thread it
-belongs to, and how they are written back. It continues from
+belongs to, how to add, reply to, resolve and remove them, and how they are
+written back. It continues from
 <<read-a-documents-text>>, whose blocks and current text it builds on.
 
 == The comments
@@ -192,3 +193,104 @@ identifier or a UTC date, cannot be written, and `Docx.to_bytes` fails
 with `CommentWithoutParagraph(id)`; one without is written as it is. A
 UTC date is kept by its durable identifier, so a comment without one is
 written without its UTC date.
+
+== Edit comments
+
+Four edits change a document's comments and return a new document. Each
+names a comment by its `id` from `Docx.comments`, and none changes the
+document's text:
+
+[source,roc]
+----
+{ document, diagnostics: _ } = Docx.parse(bytes)?
+text = Docx.text(document)
+{ before, after: _ } = text.split_first("thirty days") ? |_| NotFound
+start = before.to_utf8().len()
+added = Docx.add_comment(
+    document,
+    { start, end: start + "thirty days".to_utf8().len() },
+    { author: "Morgan Reviewer", date: Date("2026-11-10T09:00:00Z"), content: Text("Our terms are fourteen days.") },
+)?
+replied = Docx.reply(added.document, added.id, { author: "Lin Editor", content: Text("Agreed.") })?
+resolved = Docx.resolve(replied.document, added.id)?
+written = Docx.to_bytes(resolved)?
+----
+
+* `Docx.add_comment(document, span, new)` adds a comment around a
+  `Comments.Span` of the document's current text and gives the new document
+  and the comment's `id`.
+* `Docx.reply(document, id, new)` adds a reply to the comment `id` and
+  gives the new document and the reply's `id`.
+* `Docx.resolve(document, id)` marks the thread of the comment `id`
+  resolved: the comment its replies lead up to, and every comment in that
+  thread, as Word resolves a thread.
+* `Docx.remove_comment(document, id)` removes the comment `id` together
+  with its replies, and theirs, so that no reply is left without what it
+  replies to.
+
+A new comment or reply is a `Comments.New`, a props record:
+
+* `author`, the name of the person who writes it;
+* `content`, `Text(text)`, a paragraph for each line of `text`, or
+  `Blocks(blocks)`, paragraphs and tables of any kind;
+* `initials`, `Initials(text)` or, by default, `Unset`;
+* `date`, `Date(text)`, an XML Schema date and time such as
+  `2026-11-10T09:00:00Z`, or, by default, `Unset`.
+
+The package reads no clock, so the author and the date come from the
+application, and a comment without a date has none. A new comment is not
+resolved and has no durable identifier or UTC date. Comments are not
+tracked changes, so these edits take no revision context and record none.
+
+=== Where a new comment goes
+
+A `Comments.Span` is `{ start, end }`, byte offsets into the text
+`Docx.text` gives, so an application finds what to comment on in that text.
+Comments never change the text, so offsets taken before one comment edit
+still hold after it.
+
+The comment's range starts just before the first character of the span and
+ends just after its last, inside a hyperlink, field or tracked change where
+the character is; a run is split in two where the span starts or ends inside
+it. The reference to the comment follows the range's end in its paragraph,
+outside any hyperlink, field or change around the end. A span that ends just
+after a paragraph's line feed ends at that paragraph's end, so a span
+covering a whole paragraph's line marks the paragraph's text and not its
+line feed; a span that starts at a line feed starts at the end of its
+paragraph. A span whose start and end are the same is a comment on no text,
+as Word writes one. The new comment's anchor is then `Range(text)` with the
+text of the span.
+
+A span that is not within the text or ends before it starts fails with
+`OutsideText(span)`, and one that starts or ends inside a character with
+`NotACharacterBoundary(offset)`.
+
+=== What the edits keep
+
+A reply's range starts and ends just after its parent's, and its reference
+follows its parent's, so it covers the same text. A new comment or reply
+comes after every comment the document has, so it takes the next `id` and
+the `id`s of the others stay. Removing a comment moves the comments after it
+up to its place, so their `id`s change; read `Docx.comments` again after
+removing one. Removing a comment removes its range's boundaries and its
+reference wherever they are, in the body, the notes and the headers and
+footers, a run left holding nothing with them, and its entries in the parts
+beside the comments part.
+
+Each edit gives the document as `Docx.to_bytes` writes it, so every query
+reads the edit, and writing it gives the same bytes. A document without a
+comments part gains one, `comments.xml` beside the main document, when a
+comment is added. A reply or a resolved thread needs the extended comments
+part to be written; a document without one, as pandoc, LibreOffice and
+Google Docs write a document, gains `commentsExtended.xml` with its content
+type and relationship, so Word and LibreOffice show the reply as a reply and
+the thread as resolved. The people part is left as it is: a new author is
+not added to it.
+
+An edit fails with `NoSuchComment(id)` for an `id` the document has no
+comment at, `NotADate(text)` for a date that is not a date and time,
+`NoMainDocument` for a package without a main document, and as
+`Docx.to_bytes` fails for a document that cannot be written.
+
+The `review_contract` example makes each edit on a contract and writes the
+result.

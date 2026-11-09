@@ -8,6 +8,7 @@ import cli.Monotonic
 import cli.Path
 import cli.Stderr
 import cli.Stdout
+import docx.Comments
 import docx.Docx
 import docx.Document
 import docx.Opc
@@ -44,6 +45,15 @@ import docx.XmlTree
 ## as a fixture does; its snapshot goes beside the fixtures' and its report,
 ## the pass-through report with the tracked changes read back, is compared
 ## with `tests/generated/<name>.txt`.
+##
+## Review: the fixture edited by the reviewer's pass of
+## `examples/review_contract`, which adds a comment on the first line of
+## text, replies to the comment that comes first, resolves that thread and
+## removes the last of the fixture's own comments when it has more than one.
+## The edits must leave the text as it was, and the edited document must
+## write twice to the same bytes and read back as the same comments. The
+## written document and its snapshot, the expectation, are what the schema
+## and LibreOffice oracles read.
 main! : List([Utf8(Str), UnixBytes(List(U8)), WindowsU16s(List(U16))]) => Try({}, _)
 main! = |args| {
 	update = args.any(|arg| is_update(arg))
@@ -65,13 +75,14 @@ main! = |args| {
 Family : {
 	name : Str,
 	extension : Str,
-	run : Str, List(U8) -> Try({ output : List(U8), output_extension : Str, report : Str }, Str),
+	run : Str, List(U8) -> Try({ outputs : List({ extension : Str, bytes : List(U8) }), report : Str }, Str),
 }
 
 families : List(Family)
 families = [
-	{ name: "passthrough", extension: ".txt", run: |_, bytes| pass_through(bytes).map_ok(|{ written, report }| { output: written, output_extension: "", report }) },
-	{ name: "snapshots", extension: ".json", run: |fixture, bytes| snapshot(fixture, bytes).map_ok(|json| { output: json.to_utf8(), output_extension: ".json", report: json }) },
+	{ name: "passthrough", extension: ".txt", run: |_, bytes| pass_through(bytes).map_ok(|{ written, report }| { outputs: [{ extension: "", bytes: written }], report }) },
+	{ name: "snapshots", extension: ".json", run: |fixture, bytes| snapshot(fixture, bytes).map_ok(|json| { outputs: [{ extension: ".json", bytes: json.to_utf8() }], report: json }) },
+	{ name: "review", extension: ".json", run: |fixture, bytes| reviewed(fixture, bytes).map_ok(|{ written, json }| { outputs: [{ extension: "", bytes: written }, { extension: ".json", bytes: json.to_utf8() }], report: json }) },
 ]
 
 # Run a family's case for every fixture and report each; the number that failed.
@@ -91,10 +102,12 @@ run_family! = |family, fixtures, update| {
 		document = Str.drop_prefix(fixture, "tests/fixtures/")
 		outcome = (family.run)(fixture, Path.read_bytes!(Path.utf8(fixture))?)
 		status = match outcome {
-			Ok({ output, output_extension, report }) => {
-				written = "${output_root}/${document}${output_extension}"
-				Path.create_all!(Path.utf8(directory_of(written)))?
-				Path.write_bytes!(Path.utf8(written), output)?
+			Ok({ outputs, report }) => {
+				for output in outputs {
+					written = "${output_root}/${document}${output.extension}"
+					Path.create_all!(Path.utf8(directory_of(written)))?
+					Path.write_bytes!(Path.utf8(written), output.bytes)?
+				}
 				expectation = Path.utf8("tests/${family.name}/${Str.drop_suffix(document, ".docx")}${family.extension}")
 				expected = Path.read_utf8!(expectation) ?? ""
 				if expected == report {
@@ -130,6 +143,60 @@ snapshot : Str, List(U8) -> Try(Str, Str)
 snapshot = |fixture, bytes| {
 	parsed = Docx.parse(bytes) ? |problem| "the fixture does not parse: ${Str.inspect(problem)}"
 	Ok(Snapshot.json(parsed.document, { path: fixture, version: "working tree" }))
+}
+
+# A fixture edited by the reviewer's pass, written, with its snapshot naming
+# it where the case writes it; or what went wrong.
+reviewed : Str, List(U8) -> Try({ written : List(U8), json : Str }, Str)
+reviewed = |fixture, bytes| {
+	parsed = Docx.parse(bytes) ? |problem| "the fixture does not parse: ${Str.inspect(problem)}"
+	edited = review(parsed.document) ? |problem| "the review's edits failed: ${Str.inspect(problem)}"
+	if Docx.text(edited) != Docx.text(parsed.document) {
+		return Err("the review's edits changed the text")
+	}
+	written = Docx.to_bytes(edited) ? |problem| "the reviewed document does not write: ${Str.inspect(problem)}"
+	if Docx.to_bytes(edited) != Ok(written) {
+		return Err("writing the reviewed document twice gave different bytes")
+	}
+	again = Docx.parse(written) ? |problem| "the reviewed document does not parse: ${Str.inspect(problem)}"
+	if Docx.comments(again.document) != Docx.comments(edited) {
+		return Err("the reviewed document reads back as different comments")
+	}
+	path = ".roc-docx/review/${Str.drop_prefix(fixture, "tests/fixtures/")}"
+	Ok({ written, json: Snapshot.json(again.document, { path, version: "working tree" }) })
+}
+
+# The reviewer's pass of `examples/review_contract`, step for step.
+review : Document -> Try(Document, Docx.EditError)
+review = |document| {
+	before = Docx.comments(document).comments.len()
+	title = first_line(Docx.text(document))
+	added = Docx.add_comment(document, title, { author: "Morgan Reviewer", initials: Initials("MR"), date: Date("2026-11-10T09:00:00Z"), content: Text("Please give the parties' full legal names.") })?
+	first = match Docx.comments(added.document).comments.first() {
+		Ok(entry) => entry.id
+		Err(_) => added.id
+	}
+	replied = Docx.reply(added.document, first, { author: "Lin Editor", initials: Initials("LE"), date: Date("2026-11-10T09:30:00Z"), content: Text("Done; both names now match the register.") })?
+	resolved = Docx.resolve(replied.document, replied.id)?
+	if before >= 2 {
+		Docx.remove_comment(resolved, before - 1)
+	} else {
+		Ok(resolved)
+	}
+}
+
+# The span of the first line of text that is not empty.
+first_line : Str -> Comments.Span
+first_line = |text| {
+	var $start = 0.U64
+	for line in text.split_on("\n") {
+		size = line.to_utf8().len()
+		if size > 0 {
+			return { start: $start, end: $start + size }
+		}
+		$start = $start + size + 1
+	}
+	{ start: 0, end: 0 }
 }
 
 # Parse a document, write it, and check the pass-through properties; the

@@ -22,7 +22,7 @@ opens a document, lists what is inside it and writes it to a new package;
 <<read-a-documents-text>> reads its body's text, blocks, formatting and styles,
 its sections, headers and footers, and its properties;
 <<read-a-documents-comments>> reads its comments and the text they are about,
-and writes them back as threads;
+adds, replies to, resolves and removes them, and writes them back as threads;
 <<read-a-documents-tracked-changes>> reads its tracked changes, its text
 with every change accepted or rejected, and whether it tracks changes,
 and writes every change back;
