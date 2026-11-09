@@ -21,13 +21,17 @@ Snapshot :: [].{
 	## and the paragraph anchors no note, comment or revision, and each table
 	## as a block of its own with no text. A paragraph anchors something when
 	## it holds a revision, a comment range boundary or reference, a footnote
-	## or endnote reference, or a revision of its paragraph mark.
+	## or endnote reference, or a revision of its paragraph mark. The text is
+	## the current text of [Document.paragraph_text], and a paragraph whose
+	## mark is deleted or moved away is one block with the paragraph after
+	## it, unless a table comes between them.
 	json : Document, { path : Str, version : Str } -> Str
 	json = |document, { path, version }| {
-		var $blocks = List.with_capacity(64)
+		var $state = { blocks: List.with_capacity(64), joined: Err(NoParagraph) }
 		for block in Docx.body(document) {
-			$blocks = snapshot_blocks($blocks, block)
+			$state = snapshot_blocks($state, block)
 		}
+		blocks = flush($state).blocks
 		properties = ["title", "subject", "creator", "keywords", "description", "last_modified_by", "created", "modified"].map(|name| "\"${name}\": \"\"")
 		Str.join_with(
 			[
@@ -36,7 +40,7 @@ Snapshot :: [].{
 				"  \"producer\": {\"name\": \"roc-docx\", \"version\": ${quoted(version)}},",
 				"  \"document\": ${quoted(path)},",
 				"  \"keys\": [\"blocks.text\", \"blocks.rows\"],",
-				"  \"blocks\": [${if ($blocks.is_empty()) "" else "\n    ${Str.join_with($blocks, ",\n    ")}\n  "}],",
+				"  \"blocks\": [${if (blocks.is_empty()) "" else "\n    ${Str.join_with(blocks, ",\n    ")}\n  "}],",
 				"  \"notes\": [],",
 				"  \"comments\": [],",
 				"  \"revisions\": [],",
@@ -53,22 +57,39 @@ Snapshot :: [].{
 wordprocessingml : Str
 wordprocessingml = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 
-# Append a block's snapshot blocks, each as one JSON object.
-snapshot_blocks : List(Str), Document.Block -> List(Str)
-snapshot_blocks = |out, block|
+# The snapshot blocks so far, each as one JSON object, and the paragraphs
+# whose marks are deleted, joined, waiting for the paragraph they run on into.
+BlockState : { blocks : List(Str), joined : Try({ text : Str, anchored : Bool }, [NoParagraph]) }
+
+# Append a block's snapshot blocks.
+snapshot_blocks : BlockState, Document.Block -> BlockState
+snapshot_blocks = |state, block|
 	match block {
 		Paragraph(paragraph) => {
-			text = Document.paragraph_text(paragraph)
-			if text != "" or anchors(paragraph) {
-				List.append(out, block_json("paragraph", text, []))
+			before = state.joined ?? { text: "", anchored: Bool.False }
+			joined = { text: Str.concat(before.text, Document.paragraph_text(paragraph)), anchored: before.anchored or anchors(paragraph) }
+			if Document.joins_next(paragraph) {
+				{ blocks: state.blocks, joined: Ok(joined) }
 			} else {
-				out
+				flush({ blocks: state.blocks, joined: Ok(joined) })
 			}
 		}
 
-		Table(table) => List.append(out, block_json("table", "", rows(table)))
-		Container({ element: _, content }) => content.fold(out, snapshot_blocks)
-		Preserved(_) => out
+		Table(table) => {
+			flushed = flush(state)
+			{ blocks: List.append(flushed.blocks, block_json("table", "", rows(table))), joined: Err(NoParagraph) }
+		}
+
+		Container({ element: _, content }) => content.fold(state, snapshot_blocks)
+		Preserved(_) => state
+	}
+
+# Append the joined paragraph, as a block when it has text or anchors something.
+flush : BlockState -> BlockState
+flush = |state|
+	match state.joined {
+		Ok({ text, anchored }) if text != "" or anchored => { blocks: List.append(state.blocks, block_json("paragraph", text, [])), joined: Err(NoParagraph) }
+		_ => { blocks: state.blocks, joined: Err(NoParagraph) }
 	}
 
 block_json : Str, Str, List(List(Str)) -> Str
@@ -258,6 +279,19 @@ expect {
 
 ## A body with no blocks has an empty list of them.
 expect snapshot_of("<w:p/>").map_ok(|json| json.contains("\"blocks\": [],")) == Ok(Bool.True)
+
+## Moved-away text is not current text; a paragraph whose mark is deleted is
+## one block with the next paragraph, through a content control, but a table
+## ends it, and a joined paragraph with no text still anchors its revision.
+expect {
+	moved = "<w:p><w:r><w:t>a</w:t></w:r><w:moveFrom><w:r><w:t>b</w:t></w:r></w:moveFrom><w:moveTo><w:r><w:t>c</w:t></w:r></w:moveTo></w:p>"
+	deleted_mark = |text| "<w:p><w:pPr><w:rPr><w:del w:id='1'/></w:rPr></w:pPr><w:r><w:t>${text}</w:t></w:r></w:p>"
+	control = "<w:sdt><w:sdtContent><w:p><w:r><w:t>e</w:t></w:r></w:p></w:sdtContent></w:sdt>"
+	table = "<w:tbl><w:tr><w:tc><w:p/></w:tc></w:tr></w:tbl>"
+	body = "${moved}${deleted_mark("d")}${control}${deleted_mark("f")}${table}${deleted_mark("")}<w:p/>"
+	expected = [block_json("paragraph", "ac", []), block_json("paragraph", "de", []), block_json("paragraph", "f", []), block_json("table", "", [[""]]), block_json("paragraph", "", [])]
+	snapshot_of(body).map_ok(|json| json.contains("\"blocks\": [\n    ${Str.join_with(expected, ",\n    ")}\n  ],")) == Ok(Bool.True)
+}
 
 ## JSON strings escape quotes, backslashes and control characters and keep
 ## other characters as they are.

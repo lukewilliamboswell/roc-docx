@@ -17,10 +17,13 @@ content controls.
 text = Docx.text(document)
 ----
 
-The text is what a reader sees with tracked changes shown as they stand:
-inserted text is included and deleted text is not. Field instructions, note
-and comment references and drawings contribute nothing; a field contributes
-the result it last displayed. Inside a run:
+The text is the current text, the document with its tracked changes as
+they stand: inserted text and text moved in are included, deleted text and
+text moved away are not. A paragraph whose mark was deleted, or moved away,
+runs on into the next paragraph without a line feed, as it does when the
+change is accepted, but never into or out of a table cell. Field
+instructions, note and comment references and drawings contribute nothing;
+a field contributes the result it last displayed. Inside a run:
 
 * a tab is a tab character;
 * a line, page or column break is a line feed;

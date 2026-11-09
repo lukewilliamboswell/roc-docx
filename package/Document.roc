@@ -181,12 +181,12 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 	## as the document writes them.
 	Color : [Unset, Auto, Rgb(Str)]
 
-	## A paragraph's text as a reader sees it, revisions shown: every run's
-	## text, inserted text included, and nothing from the content the model
-	## keeps without reading, so deleted text, field instructions and note
-	## references contribute none. A tab is a tab character, a break of any
-	## kind a line feed, a symbol its character, a soft hyphen U+00AD and a
-	## non-breaking hyphen U+2011.
+	## A paragraph's current text, its tracked changes as they stand: every
+	## run's text, inserted and moved-in text included, deleted and moved-away
+	## text not, and nothing from the content the model keeps without
+	## reading, so field instructions and note references contribute none. A
+	## tab is a tab character, a break of any kind a line feed, a symbol its
+	## character, a soft hyphen U+00AD and a non-breaking hyphen U+2011.
 	paragraph_text : Paragraph -> Str
 	paragraph_text = |paragraph| {
 		var $text = List.with_capacity(64)
@@ -205,6 +205,18 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 	## that hold them.
 	row_cells : Row -> List(Cell)
 	row_cells = |row| row.content.fold(List.with_capacity(row.content.len()), cells_of)
+
+	## Whether a paragraph's mark is deleted or moved away under tracking, so
+	## that in the current text the paragraph runs on into the next one.
+	joins_next : Paragraph -> Bool
+	joins_next = |paragraph|
+		paragraph.properties.preserved.any(
+			|property|
+				match property {
+					Element(element) if is_w_in(element.name, ["rPr"]) => element.children.any(is_removal)
+					_ => Bool.False
+				},
+		)
 
 	## The tree of the main document part, the target of the package's
 	## `officeDocument` relationship, as reading left it.
@@ -369,7 +381,7 @@ inline_text : List(U8), Document.Inline -> List(U8)
 inline_text = |text, inline|
 	match inline {
 		Run(run) => run.content.fold(text, run_content_text)
-		Container({ element: _, content }) => content.fold(text, inline_text)
+		Container({ element, content }) => if (is_removal(element)) text else content.fold(text, inline_text)
 		Preserved(_) => text
 	}
 
@@ -388,6 +400,17 @@ cells_of = |cells, content|
 		Container({ element: _, content: inner }) => inner.fold(cells, cells_of)
 		Preserved(_) => cells
 	}
+
+# Whether an element marks content deleted or moved away under tracking.
+is_removal : XmlTree.Node -> Bool
+is_removal = |node|
+	match node {
+		Element(element) => is_w_in(element.name, ["del", "moveFrom"])
+		Text(_) => Bool.False
+	}
+
+is_w_in : XmlTree.Name, List(Str) -> Bool
+is_w_in = |name, locals| name.namespace == Uri(wordprocessingml) and locals.contains(name.local)
 
 run_content_text : List(U8), Document.RunContent -> List(U8)
 run_content_text = |text, content|

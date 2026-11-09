@@ -251,8 +251,10 @@ header and footer text.
 modified by, created and modified.
 |===
 
-The current text of a paragraph includes inserted text and leaves out
-deleted text, note references and comment content. Paragraphs inside notes,
+The current text of a paragraph includes inserted and moved-in text and
+leaves out deleted and moved-away text, note references and comment
+content. A paragraph whose mark is deleted is one block with the paragraph
+after it, unless a table comes between them. Paragraphs inside notes,
 comments, cells and multi-paragraph anchors are joined with a line feed.
 
 The comparison normalizes before it compares: line endings become line
