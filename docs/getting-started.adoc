@@ -157,3 +157,37 @@ the tree was read with: each namespace is written with its fixed prefix from
 the same bytes. Content types, relationships and document properties keep
 their namespace as the default, as producers write them. A tree with a namespace outside that table fails with
 `XmlUnwritable` naming it.
+
+== Extensions and alternative content
+
+Producers add markup that older readers do not know: Word 2010 and later, and
+LibreOffice, write paragraph identifiers, newer shapes and other extensions in
+namespaces of their own. ECMA-376 Part 3 lets them mark such a namespace as
+one a reader may ignore (`mc:Ignorable`) and offer the same content twice,
+once in the newer markup and once in a form every reader understands
+(`mc:AlternateContent`). LibreOffice, for example, writes a horizontal line as
+a newer shape with a VML picture as its fallback.
+
+`Mce.process` reads a part's tree the way a reader that understands only the
+namespaces in `Mce.understood` must: ignorable content in other namespaces is
+removed, the content of each alternative is replaced by the first choice it
+can understand, or by the fallback, and the compatibility markup itself is
+removed. What you get is the interpreted tree; the tree you passed in is
+unchanged and still holds every extension, so it is what a writer keeps:
+
+[source,roc]
+----
+tree = XmlTree.parse(bytes, {})?
+{ interpreted, diagnostics } = Mce.process(tree)
+----
+
+A part that breaks a compatibility rule is still read, with a diagnostic for
+each problem: an extension namespace used without being marked ignorable, as
+Google Docs exports do (reported once per namespace), a namespace the
+producer says must be understood, a prefix with no declaration, or
+compatibility markup where the rules do not allow it. Each diagnostic names
+the element it is on and that element's position among the part's elements
+in document order, counting the root as 1. Content in such an extension
+namespace is removed from the interpreted tree as if it had been marked
+ignorable. Extension lists, which DrawingML parts such as the theme use for
+application-defined content, are kept in the interpreted tree as written.
