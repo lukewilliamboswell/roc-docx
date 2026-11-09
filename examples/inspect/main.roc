@@ -21,6 +21,7 @@ main! : List([Utf8(Str), UnixBytes(List(U8)), WindowsU16s(List(U16))]) => Try({}
 main! = |args| {
 	file = match args.first() {
 		Ok(Utf8(path)) => path
+		Ok(UnixBytes(raw)) => Str.from_utf8(raw) ?? "review.docx"
 		_ => "review.docx"
 	}
 	bytes = Path.read_bytes!(Path.utf8(file))?
