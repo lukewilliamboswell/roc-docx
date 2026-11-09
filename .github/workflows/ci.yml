@@ -46,6 +46,10 @@ jobs:
         with:
           cache: 'true'
           cache-workload: libreoffice
+      # The lane's pass-through cases write the documents LibreOffice reads back.
+      - uses: roc-lang/setup-roc@f5a74bf90aa694b43ab4a7cbfdb19273bc6aa697
+        with:
+          version: nightly-new-compiler
       # The distribution's LibreOffice; the lane prints the version it compared against.
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libreoffice-writer
       - run: blueprint run libreoffice

@@ -5,6 +5,10 @@
     compare_snapshots.py --lane ADAPTER[,ADAPTER...] PATH...
         run each adapter (pandoc, libreoffice) over every .docx under PATH,
         validate every snapshot, and compare each pair of adapters per document
+    compare_snapshots.py --written ADAPTER ORIGINALS WRITTEN
+        run the adapter over every .docx under WRITTEN and the document at the
+        same relative path under ORIGINALS, validate every snapshot, and
+        compare each written document's snapshot with its original's
 
 Validation is against oracle/snapshot_schema.json. Comparison follows the
 contract in that file: only keys in the intersection of the two sides'
@@ -214,9 +218,56 @@ def lane(adapters, paths, schema, deviations):
     return 1 if counts["FAIL"] or counts["INVALID"] else 0
 
 
+def label(path):
+    """A document's name as the adapters write it: relative to the repository when it is inside it."""
+    resolved = pathlib.Path(path).resolve()
+    return resolved.relative_to(ROOT).as_posix() if resolved.is_relative_to(ROOT) else str(path)
+
+
+def written(adapter, originals, outputs, schema, deviations):
+    """Compare the adapter's reading of each written document with its reading of the original."""
+    counts = {"AGREE": 0, "ACCEPTED": 0, "FAIL": 0, "INVALID": 0}
+    pairs = []
+    for document in sorted(pathlib.Path(outputs).rglob("*.docx")):
+        original = pathlib.Path(originals) / document.relative_to(outputs)
+        if original.exists():
+            pairs.append((original, document))
+        else:
+            counts["FAIL"] += 1
+            print(f"FAIL {label(document)}: no original at {label(original)}")
+    snapshots = {}
+    with tempfile.TemporaryDirectory() as tmp:
+        out = pathlib.Path(tmp)
+        documents = [str(path) for pair in pairs for path in pair]
+        run = subprocess.run([sys.executable, "-I", str(ADAPTERS[adapter]), *documents, "--out", str(out)])
+        if run.returncode != 0:
+            counts["FAIL"] += 1
+            print(f"FAIL {adapter} adapter exited with {run.returncode}")
+        for path in sorted(out.rglob("*.json")):
+            snapshot, errors = load(path, schema)
+            for error in errors:
+                print(f"INVALID {adapter} {path.relative_to(out)}: {error}")
+            counts["INVALID"] += bool(errors)
+            snapshots[snapshot["document"]] = snapshot
+    versions = sorted({snapshot["producer"]["version"] for snapshot in snapshots.values()})
+    print(f"{adapter}: {', '.join(versions) or 'no snapshots'}")
+    for original, document in pairs:
+        if label(original) in snapshots and label(document) in snapshots:
+            report_pair(snapshots[label(original)], snapshots[label(document)], deviations, counts)
+        else:
+            counts["FAIL"] += 1
+            print(f"FAIL {label(document)}: no snapshot of it or of {label(original)}")
+    print(f"summary: {len(pairs)} written documents, " + ", ".join(f"{k} {v}" for k, v in counts.items()))
+    return 1 if counts["FAIL"] or counts["INVALID"] else 0
+
+
 def main(argv):
     schema = json.loads(SCHEMA_PATH.read_text())
     deviations = load_deviations()
+    if len(argv) == 4 and argv[0] == "--written":
+        if argv[1] not in ADAPTERS:
+            sys.exit(f"unknown adapter {argv[1]}; known: {', '.join(ADAPTERS)}")
+        return written(argv[1], argv[2], argv[3], schema, deviations)
     if len(argv) >= 3 and argv[0] == "--lane":
         adapters = argv[1].split(",")
         if any(adapter not in ADAPTERS for adapter in adapters):

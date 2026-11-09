@@ -35,8 +35,8 @@ dependencies, it never crashes on any input, it bounds the resources a
 document may consume, and the same document always serializes to the same
 bytes.
 
-The package is under development and claims no document capability yet. The
-first thing it can do is open a package, list its parts and write them to a
-new package, which
+The package is under development and claims no document capability yet. What
+it can do so far is open a package, list its parts, read their XML, and
+write a document back with its parts and XML trees kept, which
 xref:getting-started.adoc#read-and-write-the-parts-of-a-document[the next chapter]
 shows.

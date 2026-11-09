@@ -24,12 +24,14 @@ checks : List({ name : Str, argv : List(Str) })
 checks = [
 	# The schema oracle's standards corpus, verified against the ledger.
 	{ name: "oracle-provision", argv: ["python3", "-I", "oracle/provision.py"] },
-	{ name: "fmt", argv: ["roc", "fmt", "--check", "package", "examples", "fuzz"] },
+	{ name: "fmt", argv: ["roc", "fmt", "--check", "package", "examples", "fuzz", "tests"] },
 	{ name: "fmt-scripts", argv: ["roc-stable", "fmt", "--check", "scripts"] },
 	# The mechanical checks in scripts/src/Lint.roc, and that module's own expects.
 	{ name: "lint", argv: ["scripts/lint.roc"] },
 	{ name: "scripts-test", argv: ["roc-stable", "test", "scripts/src/Lint.roc"] },
 	{ name: "test", argv: ["roc", "test", "package/main.roc"] },
+	# The data-driven cases under tests/: every fixture passes through as its expectation records.
+	{ name: "cases", argv: ["roc", "tests/main.roc"] },
 	# Every example against its recorded output in tests/spec.json.
 	{ name: "examples", argv: ["release-package", "test-examples"] },
 	# Every fuzz target: build, declared examples, a one-second bounded exploration.
@@ -38,6 +40,8 @@ checks = [
 	{ name: "fixtures-check", argv: ["python3", "-I", "oracle/make_fixtures.py", "--check"] },
 	# Every XML part of every fixture validates against the ECMA-376 schemas.
 	{ name: "oracle-schema", argv: ["python3", "-I", "oracle/validate_schema.py", "tests/fixtures"] },
+	# Every XML part of every document the cases wrote validates against the schemas.
+	{ name: "oracle-schema-written", argv: ["python3", "-I", "oracle/validate_schema.py", ".roc-docx/passthrough"] },
 	# pandoc's snapshot of every fixture conforms to the snapshot contract.
 	{ name: "oracle-snapshot", argv: ["python3", "-I", "oracle/compare_snapshots.py", "--lane", "pandoc", "tests/fixtures"] },
 ]

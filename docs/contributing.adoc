@@ -45,6 +45,9 @@ blueprint tasks          # each check on its own, and the fixture and release ta
 | test
 | Every `expect` reachable from `package/main.roc` passes
 
+| cases
+| Every data-driven case under `tests/` reports what its expectation records
+
 | examples
 | Every example prints what `tests/spec.json` records
 
@@ -57,6 +60,9 @@ blueprint tasks          # each check on its own, and the fixture and release ta
 | oracle-schema
 | Every XML part of every fixture validates against the schemas
 
+| oracle-schema-written
+| Every XML part of every document the cases wrote validates against the schemas
+
 | oracle-snapshot
 | pandoc's snapshot of every fixture conforms to the snapshot contract
 |===
@@ -66,7 +72,16 @@ LibreOffice:
 
 [source,sh]
 ----
-blueprint run libreoffice   # pandoc and LibreOffice agree on every fixture
+blueprint run libreoffice   # pandoc and LibreOffice agree; LibreOffice reads each written document as its original
+----
+
+It runs the cases first, so it needs `roc` as well, and then compares
+LibreOffice's snapshot of each document they wrote with its snapshot of the
+fixture it came from:
+
+[source,sh]
+----
+python3 -I oracle/compare_snapshots.py --written libreoffice tests/fixtures .roc-docx/passthrough
 ----
 
 Pull-request CI runs `check`, the LibreOffice lane and the manual build, and
@@ -102,6 +117,29 @@ It reports `path:line: message` for each violation. When a rule fires, fix the
 source; when a rule is wrong, change the rule in the same pull request with
 the reason. The rules are listed in the
 xref:architecture.adoc#mechanical-checks[architecture].
+
+== Data-driven cases
+
+`tests/main.roc` is one program that runs every data-driven case, printing
+each case's result and time and a summary of passes, updates, failures and
+skips. A case's expectation is a committed text file, so a change in what the
+package produces shows up as a diff to review:
+
+[source,sh]
+----
+blueprint run cases          # every case against its expectation
+blueprint run cases-update   # rewrite the expectations, then review the diff
+----
+
+The pass-through cases parse every fixture with `Docx.parse`, write it with
+`Docx.to_bytes`, and require that the written document parses to one
+`Document.equivalent` to the original with nothing left to drop, and that
+writing it twice, or writing what was written, gives the same bytes. Each
+expectation under `tests/passthrough/` records what reading dropped, the
+written package's size and FNV-1a digest, and its parts with their sizes and
+content types, so the same digest on every host shows the output is
+deterministic. The written documents go to `.roc-docx/passthrough/`, where
+`oracle-schema-written` and the LibreOffice lane read them.
 
 == Performance ratchets
 

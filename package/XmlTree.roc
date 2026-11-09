@@ -6,9 +6,10 @@
 ## element's own namespace declarations are kept beside the name. Reading is
 ## one pass over the part with a pull reader, and a malformed part, a broken
 ## namespace rule or an exceeded limit is a located error, never a crash.
-## Writing ignores the prefixes a tree was read with: each namespace is
-## written with its prefix from [XmlTree.prefixes], declared once on the root,
-## so the same tree always gives the same bytes.
+## Writing ignores the declarations a tree was read with: each namespace is
+## written with its prefix from [XmlTree.prefixes], or, outside that table,
+## with a prefix chosen by a fixed rule, declared once on the root, so the
+## same tree always gives the same bytes.
 import parser.XmlNs
 import Limits
 
@@ -69,9 +70,9 @@ XmlTree :: [].{
 
 	## Why a tree cannot be written as namespace-well-formed XML: a prefix or
 	## local name that is not an XML name, a character XML does not allow, a
-	## namespace with no prefix in [XmlTree.prefixes], or two attributes with
-	## the same name. `path` names the elements from the root to the one the
-	## problem is in.
+	## name whose namespace cannot be bound where it is used, or two
+	## attributes with the same name. `path` names the elements from the root
+	## to the one the problem is in.
 	WriteError : [
 		XmlUnwritable({ problem : [InvalidName(Str), InvalidChar(U32), UnknownNamespace(Str), DuplicateAttribute(Str)], path : List(Str) }),
 	]
@@ -168,24 +169,89 @@ XmlTree :: [].{
 	}
 
 	## Write a tree as a part: an XML declaration with `standalone="yes"`,
-	## then the root, which declares every namespace the tree uses with its
-	## prefix from [XmlTree.prefixes], in that order. Attributes are written
-	## in the order the tree gives them, so the same tree always writes the
-	## same bytes, and [XmlTree.parse] reads them back as the same tree up to
-	## prefixes and declarations.
+	## then the root, which declares every namespace the tree uses, and no
+	## other, so the same tree always writes the same bytes and [XmlTree.parse]
+	## reads them back as the same tree up to prefixes and declarations.
+	## Attributes are written in the order the tree gives them.
+	##
+	## A namespace in [XmlTree.prefixes] is written with its prefix there, and
+	## the root declares those first, in table order. Any other namespace is
+	## written with the prefix it was first read with in document order, unless
+	## that prefix is unprefixed, in the table, taken by an earlier namespace or
+	## begins with `xml`; then it is written as `ns1`, `ns2` and so on, the
+	## first that is free. Those are declared after the table's, in the order
+	## the tree first uses them. A part whose root is in a namespace of
+	## [XmlTree.default_namespaces] writes that namespace as the default.
+	##
+	## Some attribute values name namespaces by prefix: `mc:Ignorable` and
+	## `mc:MustUnderstand` list prefixes, `Requires` on `mc:Choice` too, and
+	## `mc:ProcessContent`, `mc:PreserveElements`, `mc:PreserveAttributes` and
+	## `xsi:type` list qualified names. Each prefix in them is resolved with
+	## the declarations in scope where it was read and written as the prefix
+	## its namespace is written with, and a namespace named only there is
+	## still declared, so the values mean what they meant. The items are
+	## written separated by one space. A prefix with no declaration in scope
+	## is written as it was.
 	render : Node -> Try(List(U8), WriteError)
 	render = |root| {
-		table = match root {
-			Element(element) =>
-				match element.name.namespace {
-					Uri(uri) if default_namespaces.contains(uri) => List.prepend(prefixes, { prefix: "", namespace: uri })
-					_ => prefixes
+		default = part_default(root)
+		plan = plan_prefixes(needed_prefixes(root, default))
+		written = XmlNs.render({ declaration: Err(Missing), root: canonical(root, default, plan) }, { declaration: Standalone }) ? write_error
+		Ok(written.to_utf8())
+	}
+
+	## The same tree without prefixes or declarations, so that two trees
+	## compare equal when they differ only in how they spell namespaces. In an
+	## attribute value that names namespaces by prefix, as [XmlTree.render]
+	## lists them, each declared prefix is replaced by its namespace in
+	## braces: `mc:Ignorable="w14"` becomes
+	## `{http://schemas.microsoft.com/office/word/2010/wordml}` and
+	## `xsi:type="dcterms:W3CDTF"` becomes `{http://purl.org/dc/terms/}:W3CDTF`.
+	unprefixed : Node -> Node
+	unprefixed = |root| {
+		var $pending = [Visit(root)]
+		var $scopes = List.with_capacity(16)
+		var $frames = List.with_capacity(16)
+		var $nodes = List.with_capacity(16)
+		while !$pending.is_empty() {
+			next = $pending.last() ?? Leave
+			$pending = List.drop_last($pending, 1)
+			match next {
+				Visit(Text(content)) => {
+					text : Node
+					text = Text(content)
+					$nodes = List.append($nodes, text)
 				}
 
-			Text(_) => prefixes
+				Visit(Element(element)) => {
+					$scopes = List.append($scopes, element.bindings)
+					scopes = $scopes
+					attributes = element.attributes.map(
+						|attribute| {
+							name: { namespace: attribute.name.namespace, local: attribute.name.local, prefix: Unprefixed },
+							value: rewrite(element.name, attribute, scopes, |uri| "{${uri}}"),
+						},
+					)
+					$frames = List.append($frames, { name: { namespace: element.name.namespace, local: element.name.local, prefix: Unprefixed }, attributes, first_child: $nodes.len() })
+					$pending = push_children(List.append($pending, Leave), element.children)
+				}
+
+				Leave => {
+					$scopes = List.drop_last($scopes, 1)
+					match $frames.last() {
+						Ok(frame) => {
+							$frames = List.drop_last($frames, 1)
+							node : Node
+							node = Element({ name: frame.name, bindings: [], attributes: frame.attributes, children: copy_from($nodes, frame.first_child) })
+							$nodes = List.append(truncate($nodes, frame.first_child), node)
+						}
+
+						Err(_) => {}
+					}
+				}
+			}
 		}
-		written = XmlNs.render({ declaration: Err(Missing), root: to_dependency(root) }, { declaration: Standalone, prefixes: Table(table) }) ? write_error
-		Ok(written.to_utf8())
+		$nodes.last() ?? root
 	}
 }
 
@@ -248,15 +314,148 @@ truncate = |nodes, len| {
 	$out
 }
 
-# The same tree in the dependency's node type, built with an explicit work
-# list so a deep tree cannot exhaust the call stack.
-to_dependency : XmlTree.Node -> XmlNs.Node
-to_dependency = |root| {
+# A namespace that needs a prefix, with the prefix it was first read with,
+# or "" when it was read unprefixed.
+Need : { namespace : Str, read : Str }
+
+# The prefixes a part is written with: the declarations its root makes, in
+# order, and the prefix of each namespace.
+Plan : { declarations : List({ prefix : Str, namespace : Str }), prefix_of : Dict(Str, Str) }
+
+# A walk over a tree with an explicit work list, so a deep tree cannot
+# exhaust the call stack: an element is visited, then its children, then left.
+Step : [Visit(XmlTree.Node), Leave]
+
+Element : { name : XmlTree.Name, bindings : List(XmlTree.Binding), attributes : List(XmlTree.Attribute), children : List(XmlTree.Node) }
+
+# The namespace a part writes as its default: the root's, when that is one of
+# the package-level namespaces.
+part_default : XmlTree.Node -> XmlTree.Namespace
+part_default = |root|
+	match root {
+		Element(element) =>
+			match element.name.namespace {
+				Uri(uri) if XmlTree.default_namespaces.contains(uri) => Uri(uri)
+				_ => NoNamespace
+			}
+
+		Text(_) => NoNamespace
+	}
+
+# Every namespace the tree needs a prefix for, once, in the order the tree
+# first uses it: the names of elements outside the default namespace and of
+# attributes, and the namespaces attribute values name by prefix.
+needed_prefixes : XmlTree.Node, XmlTree.Namespace -> List(Need)
+needed_prefixes = |root, default| {
+	var $needed = { order: List.with_capacity(8), seen: Set.with_capacity(8) }
+	var $scopes = List.with_capacity(16)
 	var $pending = [Visit(root)]
+	while !$pending.is_empty() {
+		next = $pending.last() ?? Leave
+		$pending = List.drop_last($pending, 1)
+		match next {
+			Visit(Element(element)) => {
+				$scopes = List.append($scopes, element.bindings)
+				if element.name.namespace != default {
+					$needed = note_name($needed, element.name)
+				}
+				for attribute in element.attributes {
+					$needed = note_name($needed, attribute.name)
+					for prefix in named_prefixes(element.name, attribute) {
+						match resolve(prefix, $scopes) {
+							Ok(namespace) => {
+								$needed = note($needed, namespace, prefix)
+							}
+
+							Err(_) => {}
+						}
+					}
+				}
+				$pending = push_children(List.append($pending, Leave), element.children)
+			}
+
+			Visit(Text(_)) => {}
+
+			Leave => {
+				$scopes = List.drop_last($scopes, 1)
+			}
+		}
+	}
+	$needed.order
+}
+
+# The namespaces needed so far, in order, and as a set.
+Needed : { order : List(Need), seen : Set(Str) }
+
+note_name : Needed, XmlTree.Name -> Needed
+note_name = |needed, name|
+	match (name.namespace, name.prefix) {
+		(Uri(uri), Prefix(prefix)) => note(needed, uri, prefix)
+		(Uri(uri), Unprefixed) => note(needed, uri, "")
+		(NoNamespace, _) => needed
+	}
+
+# Note a namespace with the prefix it was read with, unless it is noted
+# already or is the `xml` namespace, whose prefix is fixed.
+note : Needed, Str, Str -> Needed
+note = |needed, namespace, read|
+	if namespace == xml_namespace or needed.seen.contains(namespace) {
+		needed
+	} else {
+		{ order: List.append(needed.order, { namespace, read }), seen: needed.seen.insert(namespace) }
+	}
+
+# The prefix of every needed namespace: the table's for a namespace in it,
+# declared first in table order; otherwise the prefix it was read with, or
+# the first free `ns1`, `ns2` and so on, declared in the order of `needed`.
+plan_prefixes : List(Need) -> Plan
+plan_prefixes = |needed| {
+	var $declarations = List.with_capacity(needed.len())
+	var $prefix_of = Dict.with_capacity(needed.len())
+	var $taken = Set.with_capacity(XmlTree.prefixes.len() + needed.len())
+	for entry in XmlTree.prefixes {
+		$taken = $taken.insert(entry.prefix)
+		if needed.any(|need| need.namespace == entry.namespace) {
+			$declarations = List.append($declarations, entry)
+			$prefix_of = $prefix_of.insert(entry.namespace, entry.prefix)
+		}
+	}
+	var $counter = 0.U64
+	for need in needed {
+		if !$prefix_of.contains(need.namespace) {
+			var $prefix = need.read
+			if need.read == "" or $taken.contains(need.read) or is_reserved(need.read) {
+				$counter = $counter + 1
+				$prefix = "ns${$counter.to_str()}"
+				while $taken.contains($prefix) {
+					$counter = $counter + 1
+					$prefix = "ns${$counter.to_str()}"
+				}
+			}
+			$taken = $taken.insert($prefix)
+			$declarations = List.append($declarations, { prefix: $prefix, namespace: need.namespace })
+			$prefix_of = $prefix_of.insert(need.namespace, $prefix)
+		}
+	}
+	{ declarations: $declarations, prefix_of: $prefix_of }
+}
+
+# Prefixes beginning with `xml`, in any case, are reserved by Namespaces in
+# XML 1.0.
+is_reserved : Str -> Bool
+is_reserved = |prefix|
+	prefix.to_utf8().sublist({ start: 0, len: 3 }).map(|byte| if (byte >= 'A' and byte <= 'Z') byte + 32 else byte) == "xml".to_utf8()
+
+# The tree in the dependency's node type, with the prefixes and declarations
+# of `plan` and the values that name namespaces by prefix rewritten to them.
+canonical : XmlTree.Node, XmlTree.Namespace, Plan -> XmlNs.Node
+canonical = |root, default, plan| {
+	var $pending = [Visit(root)]
+	var $scopes = List.with_capacity(16)
 	var $frames = List.with_capacity(16)
 	var $nodes = List.with_capacity(16)
 	while !$pending.is_empty() {
-		next = $pending.last() ?? Close
+		next = $pending.last() ?? Leave
 		$pending = List.drop_last($pending, 1)
 		match next {
 			Visit(Text(content)) => {
@@ -266,22 +465,40 @@ to_dependency = |root| {
 			}
 
 			Visit(Element(element)) => {
-				$frames = List.append($frames, { name: element.name, bindings: element.bindings, attributes: element.attributes, first_child: $nodes.len() })
-				$pending = List.append($pending, Close)
-				var $index = element.children.len()
-				while $index > 0 {
-					$index = $index - 1
-					match element.children.get($index) {
-						Ok(child) => {
-							$pending = List.append($pending, Visit(child))
-						}
-
-						Err(_) => {}
-					}
+				$scopes = List.append($scopes, element.bindings)
+				scopes = $scopes
+				outer = match $frames.last() {
+					Ok(frame) => frame.default
+					Err(_) => NoNamespace
 				}
+				declared = if $frames.is_empty() {
+					plan.declarations.map(|entry| { prefix: Prefix(entry.prefix), namespace: Uri(entry.namespace) })
+				} else {
+					[]
+				}
+				namespace = element.name.namespace
+				inner = if (namespace == NoNamespace or namespace == default) namespace else outer
+				bindings = if (inner != outer) List.prepend(declared, { prefix: Default, namespace: inner }) else declared
+				prefix = if (namespace == default) Unprefixed else prefix_of(namespace, plan)
+				# Attributes already written as the plan writes them are kept as
+				# they are, so most elements copy nothing.
+				unchanged = element.attributes.all(|attribute| attribute.name.prefix == prefix_of(attribute.name.namespace, plan) and value_kind(element.name, attribute.name) == Plain)
+				attributes = if unchanged {
+					element.attributes
+				} else {
+					element.attributes.map(
+						|attribute| {
+							name: { namespace: attribute.name.namespace, local: attribute.name.local, prefix: prefix_of(attribute.name.namespace, plan) },
+							value: rewrite(element.name, attribute, scopes, |uri| written_prefix(uri, plan)),
+						},
+					)
+				}
+				$frames = List.append($frames, { name: { namespace, local: element.name.local, prefix }, bindings, attributes, first_child: $nodes.len(), default: inner })
+				$pending = push_children(List.append($pending, Leave), element.children)
 			}
 
-			Close =>
+			Leave => {
+				$scopes = List.drop_last($scopes, 1)
 				match $frames.last() {
 					Ok(frame) => {
 						$frames = List.drop_last($frames, 1)
@@ -292,10 +509,171 @@ to_dependency = |root| {
 
 					Err(_) => {}
 				}
+			}
 		}
 	}
 	$nodes.last() ?? Text("")
 }
+
+# How a name in a namespace is prefixed under a plan.
+prefix_of : XmlTree.Namespace, Plan -> [Prefix(Str), Unprefixed]
+prefix_of = |namespace, plan|
+	match namespace {
+		Uri(uri) => Prefix(written_prefix(uri, plan))
+		NoNamespace => Unprefixed
+	}
+
+written_prefix : Str, Plan -> Str
+written_prefix = |uri, plan|
+	if uri == xml_namespace {
+		"xml"
+	} else {
+		plan.prefix_of.get(uri) ?? ""
+	}
+
+# Children are pushed last first, so the first is visited next.
+push_children : List(Step), List(XmlTree.Node) -> List(Step)
+push_children = |pending, children| {
+	var $out = pending
+	var $index = children.len()
+	while $index > 0 {
+		$index = $index - 1
+		match children.get($index) {
+			Ok(child) => {
+				$out = List.append($out, Visit(child))
+			}
+
+			Err(_) => {}
+		}
+	}
+	$out
+}
+
+# How an attribute's value names namespaces: as a list of prefixes, as a list
+# of qualified names, or not at all.
+value_kind : XmlTree.Name, XmlTree.Name -> [Prefixes, QualifiedNames, Plain]
+value_kind = |element, attribute|
+	match attribute.namespace {
+		Uri(uri) =>
+			if uri == markup_compatibility and (attribute.local == "Ignorable" or attribute.local == "MustUnderstand") {
+				Prefixes
+			} else if uri == markup_compatibility and (attribute.local == "ProcessContent" or attribute.local == "PreserveElements" or attribute.local == "PreserveAttributes") {
+				QualifiedNames
+			} else if uri == schema_instance and attribute.local == "type" {
+				QualifiedNames
+			} else {
+				Plain
+			}
+
+		NoNamespace =>
+			if attribute.local == "Requires" and element.namespace == Uri(markup_compatibility) and element.local == "Choice" {
+				Prefixes
+			} else {
+				Plain
+			}
+	}
+
+# The prefixes an attribute's value names.
+named_prefixes : XmlTree.Name, XmlTree.Attribute -> List(Str)
+named_prefixes = |element, attribute|
+	match value_kind(element, attribute.name) {
+		Prefixes => words(attribute.value)
+		QualifiedNames => words(attribute.value).keep_oks(|word| word.split_first(":").map_ok(|parts| parts.before))
+		Plain => []
+	}
+
+# An attribute's value with every prefix it names that `scopes` declares
+# replaced by `replace` of its namespace, the items separated by one space;
+# any other value as it is.
+rewrite : XmlTree.Name, XmlTree.Attribute, List(List(XmlTree.Binding)), (Str -> Str) -> Str
+rewrite = |element, attribute, scopes, replace|
+	match value_kind(element, attribute.name) {
+		Plain => attribute.value
+		Prefixes =>
+			Str.join_with(
+				words(attribute.value).map(
+					|word|
+						match resolve(word, scopes) {
+							Ok(namespace) => replace(namespace)
+							Err(_) => word
+						},
+				),
+				" ",
+			)
+
+		QualifiedNames =>
+			Str.join_with(
+				words(attribute.value).map(
+					|word|
+						match word.split_first(":") {
+							Ok({ before, after }) =>
+								match resolve(before, scopes) {
+									Ok(namespace) => "${replace(namespace)}:${after}"
+									Err(_) => word
+								}
+
+							Err(_) => word
+						},
+				),
+				" ",
+			)
+	}
+
+# The namespace a prefix is bound to by the declarations in scope, the last
+# of `scopes` innermost; `xml` is bound everywhere.
+resolve : Str, List(List(XmlTree.Binding)) -> Try(Str, [Unbound])
+resolve = |prefix, scopes| {
+	if prefix == "xml" {
+		return Ok(xml_namespace)
+	}
+	var $index = scopes.len()
+	while $index > 0 {
+		$index = $index - 1
+		match (scopes.get($index) ?? []).find_first(|binding| binding.prefix == Prefix(prefix)) {
+			Ok({ prefix: _, namespace: Uri(uri) }) => {
+				return Ok(uri)
+			}
+
+			Ok(_) => {
+				return Err(Unbound)
+			}
+
+			Err(_) => {}
+		}
+	}
+	Err(Unbound)
+}
+
+# The items of a whitespace-separated list.
+words : Str -> List(Str)
+words = |value| {
+	var $words = List.with_capacity(4)
+	var $current = List.with_capacity(16)
+	for byte in value.to_utf8() {
+		if byte == 32 or byte == 9 or byte == 10 or byte == 13 {
+			if !$current.is_empty() {
+				$words = List.append($words, Str.from_utf8($current) ?? "")
+				$current = List.with_capacity(16)
+			}
+		} else {
+			$current = List.append($current, byte)
+		}
+	}
+	if $current.is_empty() {
+		$words
+	} else {
+		List.append($words, Str.from_utf8($current) ?? "")
+	}
+}
+
+xml_namespace : Str
+xml_namespace = "http://www.w3.org/XML/1998/namespace"
+
+markup_compatibility : Str
+markup_compatibility = "http://schemas.openxmlformats.org/markup-compatibility/2006"
+
+schema_instance : Str
+schema_instance = "http://www.w3.org/2001/XMLSchema-instance"
 
 w : Str
 w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -333,10 +711,40 @@ expect {
 	Str.from_utf8(written) == Ok("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\"/></Relationships>")
 }
 
-## A namespace outside the prefix table cannot be written.
+## A namespace outside the prefix table keeps the prefix it was read with,
+## unless the table or an earlier namespace has it, and is declared after the
+## table's namespaces.
 expect {
-	tree = XmlTree.parse("<e:x xmlns:e='urn:example'/>".to_utf8(), {})?
-	XmlTree.render(tree) == Err(XmlUnwritable({ problem: UnknownNamespace("urn:example"), path: ["e:x"] }))
+	source = "<x:document xmlns:x='${w}' xmlns:e='urn:e'><e:a xmlns:w='urn:w' w:k='1'/><x:b xmlns:e='urn:f' e:k='2'/></x:document>"
+	written = XmlTree.render(XmlTree.parse(source.to_utf8(), {})?)?
+	Str.from_utf8(written) == Ok("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<w:document xmlns:w=\"${w}\" xmlns:e=\"urn:e\" xmlns:ns1=\"urn:w\" xmlns:ns2=\"urn:f\"><e:a ns1:k=\"1\"/><w:b ns2:k=\"2\"/></w:document>")
+}
+
+## Prefixes named in compatibility attributes and in `xsi:type` are written
+## as the prefixes of their namespaces, which the root declares even when no
+## name uses them.
+expect {
+	declarations = "xmlns:x='${w}' xmlns:mc='http://schemas.openxmlformats.org/markup-compatibility/2006' xmlns:q='http://schemas.microsoft.com/office/word/2010/wordml' xmlns:z='urn:z' xmlns:i='http://www.w3.org/2001/XMLSchema-instance'"
+	source = "<x:document ${declarations} mc:Ignorable='q  z' mc:ProcessContent='z:* q:p'><mc:AlternateContent><mc:Choice Requires='z'/></mc:AlternateContent><x:p i:type='x:CT_P'/></x:document>"
+	written = XmlTree.render(XmlTree.parse(source.to_utf8(), {})?)?
+	root = "<w:document xmlns:w=\"${w}\" xmlns:mc=\"http://schemas.openxmlformats.org/markup-compatibility/2006\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:w14=\"http://schemas.microsoft.com/office/word/2010/wordml\" xmlns:z=\"urn:z\" mc:Ignorable=\"w14 z\" mc:ProcessContent=\"z:* w14:p\">"
+	Str.from_utf8(written) == Ok("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n${root}<mc:AlternateContent><mc:Choice Requires=\"z\"/></mc:AlternateContent><w:p xsi:type=\"w:CT_P\"/></w:document>")
+}
+
+## Without prefixes, two spellings of the same names and compatibility
+## values compare equal, and an undeclared prefix stays as written.
+expect {
+	declarations = "xmlns:mc='http://schemas.openxmlformats.org/markup-compatibility/2006' mc:Ignorable='e u'"
+	one = XmlTree.parse("<a:x xmlns:a='urn:a' xmlns:e='urn:e' ${declarations}/>".to_utf8(), {})?
+	other = XmlTree.parse("<b:x xmlns:b='urn:a' xmlns:f='urn:e' xmlns:mc='http://schemas.openxmlformats.org/markup-compatibility/2006' mc:Ignorable='f u'/>".to_utf8(), {})?
+	expected : XmlTree.Node
+	expected = Element({
+		name: { namespace: Uri("urn:a"), local: "x", prefix: Unprefixed },
+		bindings: [],
+		attributes: [{ name: { namespace: Uri("http://schemas.openxmlformats.org/markup-compatibility/2006"), local: "Ignorable", prefix: Unprefixed }, value: "{urn:e} u" }],
+		children: [],
+	})
+	XmlTree.unprefixed(one) == expected and XmlTree.unprefixed(other) == expected
 }
 
 ## An undeclared prefix is a located namespace error.

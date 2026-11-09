@@ -24,7 +24,8 @@ config = [
 	# Oracle adapters: pandoc is fetched; xmllint and python3 come from the host.
 	Environment("oracle", [Programs([Fetch("pandoc", pandoc)]), Expect(["python3", "xmllint"])]),
 	# The LibreOffice lane: LibreOffice is found through SOFFICE or PATH by the adapter that needs it.
-	Environment("libreoffice", [Programs([Fetch("pandoc", pandoc)]), Expect(["python3"])]),
+	# It runs the pass-through cases first, with the host's latest nightly, to write the documents LibreOffice reads back.
+	Environment("libreoffice", [Programs([Fetch("pandoc", pandoc)]), Expect(["python3", "roc", "sh"])]),
 	# Everything the check driver runs: the scripts' compiler, the oracle programs and the release utility.
 	Environment("dev", [Extend("tools"), Programs([Fetch("pandoc", pandoc), Fetch("release-package", release_package)]), Expect(["python3", "xmllint"])]),
 	Environment("docs", [Programs([Fetch("roc-docs", Recipes.file("https://github.com/lukewilliamboswell/roc-automation/releases/download/tools-0.10.0/roc-docs-{system}"))]), Expect(["realpath", "sh"])]),
@@ -33,18 +34,22 @@ config = [
 	Shell("default", [Use("dev")]),
 	# Everything a pull request must pass; the shared release workflow runs it too.
 	Task("check", [Use("dev"), Run(["scripts/check_all.roc"])]),
-	Task("fmt", [Use("package"), Run(["roc", "fmt", "--check", "package", "examples", "fuzz"])]),
+	Task("fmt", [Use("package"), Run(["roc", "fmt", "--check", "package", "examples", "fuzz", "tests"])]),
 	Task("fmt-scripts", [Use("tools"), Run(["roc-stable", "fmt", "--check", "scripts"])]),
 	Task("lint", [Use("tools"), Run(["scripts/lint.roc"])]),
 	Task("scripts-test", [Use("tools"), Run(["roc-stable", "test", "scripts/src/Lint.roc"])]),
 	Task("test", [Use("package"), Run(["roc", "test", "package/main.roc"])]),
+	Task("cases", [Use("package"), Run(["roc", "tests/main.roc"])]),
+	Task("cases-update", [Use("package"), Run(["roc", "tests/main.roc", "--update"])]),
 	Task("examples", [Use("release-test"), Run(["release-package", "test-examples"])]),
 	Task("fuzz-smoke", [Use("tools"), Run(["scripts/fuzz_smoke.roc"])]),
 	Task("oracle-provision", [Use("oracle"), Run(["python3", "-I", "oracle/provision.py"])]),
 	Task("oracle-schema", [Use("oracle"), Run(["python3", "-I", "oracle/validate_schema.py", "tests/fixtures"])]),
+	Task("oracle-schema-written", [Use("oracle"), Run(["python3", "-I", "oracle/validate_schema.py", ".roc-docx/passthrough"])]),
 	Task("oracle-snapshot", [Use("oracle"), Run(["python3", "-I", "oracle/compare_snapshots.py", "--lane", "pandoc", "tests/fixtures"])]),
-	# pandoc and LibreOffice agree on every fixture: a CI job of its own, because check does not need LibreOffice.
-	Task("libreoffice", [Use("libreoffice"), Run(["python3", "-I", "oracle/compare_snapshots.py", "--lane", "pandoc,libreoffice", "tests/fixtures"])]),
+	# pandoc and LibreOffice agree on every fixture, and LibreOffice reads every passed-through fixture as it reads the
+	# original: a CI job of its own, because check does not need LibreOffice.
+	Task("libreoffice", [Use("libreoffice"), Run(["sh", "-c", libreoffice_lane])]),
 	Task("fixtures", [Use("oracle"), Run(["python3", "-I", "oracle/make_fixtures.py"])]),
 	Task("fixtures-check", [Use("oracle"), Run(["python3", "-I", "oracle/make_fixtures.py", "--check"])]),
 	Task("docs", [Use("docs"), Run(["roc-docs", "build", "--workspace", ".", "--pdf-filename", "roc-docx.pdf"])]),
@@ -52,6 +57,9 @@ config = [
 	Task("release-package", [Use("release"), Run(["release-package"])]),
 	Task("release-test", [Use("release-test"), Run(["release-package"])]),
 ]
+
+libreoffice_lane : Str
+libreoffice_lane = "roc tests/main.roc && python3 -I oracle/compare_snapshots.py --lane pandoc,libreoffice tests/fixtures && python3 -I oracle/compare_snapshots.py --written libreoffice tests/fixtures .roc-docx/passthrough"
 
 release_package : System -> Config.Download
 release_package = Recipes.file("https://github.com/lukewilliamboswell/roc-automation/releases/download/tools-0.10.0/release-package-{system}")

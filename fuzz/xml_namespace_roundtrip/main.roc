@@ -129,7 +129,7 @@ linear_memory_ceiling : U64 -> U64
 linear_memory_ceiling = |part_bytes| 16_384 + 320 * part_bytes
 
 # The small and large generated examples repeat one program, the large one
-# sixteen times as often; their ceilings, 233 and 2,470 allocations for
+# sixteen times as often; their ceilings, 223 and 2,704 allocations for
 # writing and reading, keep the growth linear.
 small_program : List(U8)
 small_program = List.join(List.repeat(program_unit, 4))
@@ -147,26 +147,26 @@ program_unit = [0, 99, 140, 27, 23, 42, 55, 5, 5]
 # as measured when the ceiling was set.
 examples_by_program : List({ program : List(U8), allocations : U64 })
 examples_by_program = [
-	{ program: small_program, allocations: 233 },
-	{ program: large_program, allocations: 2470 },
+	{ program: small_program, allocations: 223 },
+	{ program: large_program, allocations: 2704 },
 ]
 
 fixtures : List({ name : Str, bytes : List(U8), allocations : U64 })
 fixtures = [
-	{ name: "pandoc-basics", bytes: pandoc_basics, allocations: 11_344 },
-	{ name: "pandoc-comments", bytes: pandoc_comments, allocations: 10_786 },
-	{ name: "pandoc-lists", bytes: pandoc_lists, allocations: 12_488 },
-	{ name: "pandoc-notes", bytes: pandoc_notes, allocations: 10_564 },
-	{ name: "pandoc-review", bytes: pandoc_review, allocations: 12_076 },
-	{ name: "pandoc-revisions", bytes: pandoc_revisions, allocations: 10_575 },
-	{ name: "pandoc-tables", bytes: pandoc_tables, allocations: 11_645 },
-	{ name: "libreoffice-basics", bytes: libreoffice_basics, allocations: 9_614 },
-	{ name: "libreoffice-comments", bytes: libreoffice_comments, allocations: 9_308 },
-	{ name: "libreoffice-lists", bytes: libreoffice_lists, allocations: 14_228 },
-	{ name: "libreoffice-notes", bytes: libreoffice_notes, allocations: 9_367 },
-	{ name: "libreoffice-review", bytes: libreoffice_review, allocations: 12_596 },
-	{ name: "libreoffice-revisions", bytes: libreoffice_revisions, allocations: 9_004 },
-	{ name: "libreoffice-tables", bytes: libreoffice_tables, allocations: 13_813 },
+	{ name: "pandoc-basics", bytes: pandoc_basics, allocations: 12_229 },
+	{ name: "pandoc-comments", bytes: pandoc_comments, allocations: 11_550 },
+	{ name: "pandoc-lists", bytes: pandoc_lists, allocations: 13_482 },
+	{ name: "pandoc-notes", bytes: pandoc_notes, allocations: 11_302 },
+	{ name: "pandoc-review", bytes: pandoc_review, allocations: 13_024 },
+	{ name: "pandoc-revisions", bytes: pandoc_revisions, allocations: 11_309 },
+	{ name: "pandoc-tables", bytes: pandoc_tables, allocations: 12_587 },
+	{ name: "libreoffice-basics", bytes: libreoffice_basics, allocations: 10_584 },
+	{ name: "libreoffice-comments", bytes: libreoffice_comments, allocations: 10_186 },
+	{ name: "libreoffice-lists", bytes: libreoffice_lists, allocations: 15_753 },
+	{ name: "libreoffice-notes", bytes: libreoffice_notes, allocations: 10_249 },
+	{ name: "libreoffice-review", bytes: libreoffice_review, allocations: 13_887 },
+	{ name: "libreoffice-revisions", bytes: libreoffice_revisions, allocations: 9_843 },
+	{ name: "libreoffice-tables", bytes: libreoffice_tables, allocations: 15_308 },
 ]
 
 # The tree a program of bytes describes. Each byte is one step: its low

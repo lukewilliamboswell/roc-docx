@@ -158,12 +158,31 @@ fails with a located error, such as `MalformedXml({ message, line, column })`,
 `NamespaceError({ problem, line, column })` or
 `XmlTooDeep({ max, line, column })`.
 
-`XmlTree.render` writes a tree back as a part. It does not reuse the prefixes
-the tree was read with: each namespace is written with its fixed prefix from
-`XmlTree.prefixes`, declared once on the root, so the same tree always gives
-the same bytes. Content types, relationships and document properties keep
-their namespace as the default, as producers write them. A tree with a namespace outside that table fails with
-`XmlUnwritable` naming it.
+`XmlTree.render` writes a tree back as a part. It does not reuse the
+declarations the tree was read with: the root declares every namespace the
+tree uses, once, so the same tree always gives the same bytes. A namespace in
+`XmlTree.prefixes` is written with its prefix there, and those come first, in
+table order. Any other namespace, such as a newer Word extension, keeps the
+prefix it was first read with, unless the table or an earlier namespace
+already has that prefix, it was read unprefixed, or it begins with `xml`;
+then it is written as `ns1`, `ns2` and so on, the first that is free. These
+are declared after the table's, in the order the tree first uses them.
+Content types, relationships and document properties keep their namespace
+as the default, as producers write them.
+
+Some attribute values name namespaces by prefix: `mc:Ignorable`,
+`mc:MustUnderstand` and the `Requires` of an alternative list prefixes, and
+`mc:ProcessContent`, `mc:PreserveElements`, `mc:PreserveAttributes` and
+`xsi:type` list qualified names. `XmlTree.render` resolves each prefix in
+them with the declarations in scope where it was read and writes the prefix
+its namespace is written with, and declares a namespace that only such a
+value names, so a reader that skips ignorable content still skips exactly
+what the producer marked. The items are written separated by one space. A
+prefix that had no declaration is written as it was.
+
+`XmlTree.unprefixed` gives the same tree without prefixes or declarations,
+with the namespaces those values name written out in braces, so two trees
+that spell their namespaces differently compare equal.
 
 == Extensions and alternative content
 
@@ -198,3 +217,50 @@ in document order, counting the root as 1. Content in such an extension
 namespace is removed from the interpreted tree as if it had been marked
 ignorable. Extension lists, which DrawingML parts such as the theme use for
 application-defined content, are kept in the interpreted tree as written.
+
+== Pass a whole document through
+
+`Docx.parse` reads the bytes of a `.docx` as a `Document`, within the default
+limits, and `Docx.to_bytes` writes a document back:
+
+[source,roc]
+----
+{ document, diagnostics } = Docx.parse(bytes)?
+written = Docx.to_bytes(document)?
+----
+
+Until the package models WordprocessingML, a document is its package and the
+tree of each XML part, which is every part whose content type is
+`application/xml`, `text/xml` or ends in `+xml`. Writing renders each tree
+with `XmlTree.render` and copies every other part, such as an image, exactly
+as the archive stored it; the parts, their content types and their
+relationships are those of the original, in the order `Opc.writer` fixes.
+The same document always gives the same bytes. A document holds the
+archive's bytes and the trees of its XML parts; reading and writing it hold
+one part's bytes beyond them. `Document.from_package` reads a package you
+opened yourself, with limits of your choosing.
+
+Reading drops editor state that the producing application regenerates and
+that carries no document meaning, and reports what it dropped, as
+`Dropped({ part, content, count })` diagnostics, one for each part and kind:
+
+* `RevisionSaveIds`: revision save identifiers, every WordprocessingML
+  attribute whose name begins with `rsid`;
+* `RenderedPageBreaks`: `w:lastRenderedPageBreak`, where the producer last
+  laid out a page break;
+* `ProofingMarks`: `w:proofErr`, spelling and grammar markers;
+* `GoBackBookmark`: the `_GoBack` bookmark, which marks the last edit, with
+  its end.
+
+Everything else is kept. A part that is not well-formed XML, breaks a
+namespace rule or exceeds a limit fails the parse with
+`XmlPartUnreadable({ part, problem })`.
+
+`Document.equivalent` says whether two documents are the same in the sense a
+document keeps when it is written and read again: the same parts with the same
+content types and relationships, every part that is not XML byte for byte the
+same, and the trees of the XML parts equal by `Document.equivalent_xml`. Two
+trees are equivalent when they are equal after namespace prefixes and
+declarations, the order of attributes and whitespace-only text between
+elements are set aside and the dropped content is removed; text, including
+text whose whitespace `xml:space="preserve"` keeps, compares exactly.
