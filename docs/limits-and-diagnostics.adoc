@@ -1,0 +1,174 @@
+= Read untrusted and imperfect documents
+
+This chapter is about the documents an application did not write. Some are
+hostile: a small archive that inflates to gigabytes, or a part nested
+thousands of elements deep. Many more are imperfect: real producers write
+values the standard does not allow, or leave out ones it requires. roc-docx
+bounds what a document may consume, reads what real producers write, and
+says what it did with everything that was not as the standard has it. It
+never crashes on a document and never drops content without saying so.
+
+== Limits
+
+A `Limits` value is a props record of six bounds, each with a default that
+is generous for business documents. `{}` keeps every default, and naming a
+field lowers that one:
+
+[cols="2,2,4,3",options="header"]
+|===
+|Field |Default |What it bounds |Error when exceeded
+|`max_entries` |4,096 |The entries, parts and folders, in the archive |`TooManyEntries(count)`
+|`max_part_bytes` |64 MiB |The size of one part once decompressed |`PartTooLarge({ name, bytes })`
+|`max_total_bytes` |256 MiB |The archive's own size, and the size of all its parts decompressed together |`PackageTooLarge(bytes)`
+|`max_xml_depth` |1,024 |How deeply the elements of one part nest |`XmlTooDeep({ max, line, column })`
+|`max_xml_elements` |4,194,304 |The elements of one part |`TooManyXmlElements({ max, line, column })`
+|`max_xml_attributes` |1,024 |The attributes of one element, namespace declarations included |`TooManyXmlAttributes({ max, line, column })`
+|===
+
+`Docx.parse` reads a document within the defaults. To read one within
+other bounds, open its package with `Opc.open` and read the document from
+it with `Document.from_package`, giving both the same record:
+
+[source,roc]
+----
+include::../tests/manual.roc[tag=limits,indent=0]
+----
+
+A document read this way holds its main document as a tree and reads the
+body from it each time it is asked, so every query of the other chapters
+works on it; `Docx.parse` reads the body one block at a time instead, and
+holds less.
+
+The size bounds are checked against the sizes the archive declares, before
+anything is decompressed, so a small archive that would inflate to
+gigabytes is refused without inflating it. `Opc.open` checks, in order:
+
+. the archive's own size against the total bound;
+. the archive's directory of entries, which is read without decompressing
+  anything;
+. the number of entries;
+. each entry's declared size against the part bound, and their running
+  total against the total bound;
+. that no two part names differ only in case;
+. the content types, which are decompressed and read;
+. a content type for every part, and each part's relationships,
+  decompressed.
+
+A part is decompressed into a buffer of the size its entry declares and no
+further, so an archive that lies about a size fails with
+`PartSizeMismatch({ name, declared })` at the declared size rather than
+running on. The XML bounds apply to every part as it is read, and a part
+that exceeds one fails before its tree is built, with the line and column
+where the bound was crossed.
+
+== What fails
+
+A document that cannot be read fails with an error that says why, as a tag
+whose payload carries the facts. `Docx.ParseError` names them all:
+
+* the archive is not one, or is damaged: `InvalidSignature`,
+  `TruncatedArchive`, `InvalidFilename`, `CompressionNotSupported(method)`,
+  `CrcMismatch({ path, expected, actual })` or
+  `InvalidCompressedData(problem)`;
+* the archive is over a limit, or lies about a size, as above;
+* two parts have the same name, `DuplicatePart(name)`;
+* the content types are missing or unreadable, or a part has none:
+  `MissingContentTypes`, `ContentTypesNotXml(problem)`,
+  `ContentTypesRootIsNotTypes`, `NoContentType(name)`;
+* a relationship is malformed or names a part that is not there:
+  `MissingAttribute(location)`, `MissingPart(name)` or
+  `RelationshipsNotXml({ part, problem })`;
+* a part is not well-formed XML, breaks a namespace rule or exceeds an XML
+  bound: `XmlPartUnreadable({ part, problem })`, where `problem` is
+  `MalformedXml({ message, line, column })`,
+  `NamespaceError({ problem, line, column })`, `XmlNotUtf8` or one of the
+  XML bounds.
+
+Everything else is read. A part the package does not understand, such as
+custom XML or an image, is kept as it is and written back unchanged.
+
+== What reading reports
+
+Reading never prints. What it did with a document that was not exactly as
+the standard has it comes back as diagnostics, values beside what was read,
+for the application to log, show or ignore:
+
+[source,roc]
+----
+include::../tests/manual.roc[tag=diagnostics,indent=0]
+----
+
+`Docx.parse` gives a `Document.Diagnostic` for each kind of content it
+dropped from a part and each value it repaired, in document order:
+
+* `Dropped({ part, content, count })`: editor state that the producing
+  application regenerates and that carries no meaning in the document,
+  removed by a rule of the xref:architecture.adoc#fidelity-and-preservation[architecture]:
+  `RevisionSaveIds`, the identifiers Word stamps on content for each editing
+  session; `RenderedPageBreaks`, where the producer last laid out a page
+  break; `ProofingMarks`, its spelling and grammar markers; and
+  `GoBackBookmark`, the bookmark Word keeps at the last edit.
+* `Rounded({ part, element, attribute, value })`: a whole-number measure
+  written with a fraction, read as the nearest whole number, as
+  <<repair>> describes; `value` is the value as the document wrote it.
+* `Defaulted({ part, element, attribute, value })`: a value the standard
+  requires and the document left out, supplied as `value`.
+
+The queries that interpret a part report what they could not take as
+written beside what they read:
+
+[source,roc]
+----
+include::../tests/manual.roc[tag=query-diagnostics,indent=0]
+----
+
+[cols="2,5",options="header"]
+|===
+|Query |What it reports
+|`Docx.read_body` |`Rounded` for a table width given as a percentage finer than the fiftieths of a per cent the model holds
+|`Docx.comments` |`Defaulted` for a comment without an author, which is read with the empty author; `NotApplied({ element, key })` for an entry of the reply, resolution, durable identifier or date parts that names no comment, repeats one or holds what the model does not, which is kept and written back as it was read
+|`Docx.people` |`NotApplied` for an author's identity without both its provider and its identifier
+|`Docx.styles` |A style that cannot be read or repeats an identifier, which is skipped; a style based on one that does not exist, on a style of another kind, or on a cycle of styles, which is read without its base
+|`Docx.numbering` |A list definition or instance that cannot be read or repeats an identifier, which is skipped; an instance whose definition does not exist
+|`Mce.process` |Content in an extension's namespace that the producer did not mark as safe to ignore, an extension the producer says must be understood, a prefix without a declaration, and compatibility markup where the rules do not allow it, each with the element it is on
+|===
+
+What a model cannot hold is never a diagnostic, because nothing is lost: a
+construct the package does not model is kept as it was read, in its place,
+and written back. The chapters on
+xref:reading-text.adoc#the-blocks[reading a document's text] and
+xref:comments.adoc#threads[comment threads] say where.
+
+[#repair]
+== Repair
+
+Real producers write a few values the standard does not allow. A Google
+Docs export writes a table's width as `10470.0` and a page margin as
+`863.9999999999999`, where the standard wants whole numbers, and leaves
+out the gutter of a page's margins, which the standard requires. Reading
+repairs such values as it reads each element, so that what a document
+holds, and therefore what it writes, is valid, and says so with a
+`Rounded` or `Defaulted` diagnostic:
+
+* A measure the standard types as a whole number and the document wrote
+  with a fraction is rounded to the nearest whole number, halves away from
+  zero. The measures repaired are a page's size and margins, a paragraph's
+  indentation and spacing, a tab stop's position, a run's character
+  spacing, the widths of tables, cells, cell margins and grid columns, and a
+  row's height.
+* Only a plain decimal number is rounded. A percentage, such as `50%`, or a
+  measure with a unit, such as `1.5in`, which the standard also allows
+  there, is kept as written.
+* A page's margins without a gutter are given a gutter of zero, as Word and
+  LibreOffice assume.
+
+Other whole-number values written with a fraction, such as a border's
+width or a font size, are not repaired: the model keeps the property as it
+was read, and writes it back as it was. `Lenient.repair` makes these
+repairs to one element's attributes, for an application that reads parts
+as trees itself, and `Lenient.whole_attributes` names the attributes it
+rounds for each element.
+
+Two documents that differ only in what reading repairs or drops are the
+same document: `Docx.equivalent` compares them repaired, without the
+dropped content.

@@ -16,9 +16,7 @@ and `Docx.original_text` with every change rejected:
 
 [source,roc]
 ----
-{ document, diagnostics: _ } = Docx.parse(bytes)?
-before = Docx.original_text(document)
-after = Docx.final_text(document)
+include::../tests/manual.roc[tag=review-texts,indent=0]
 ----
 
 Both read the body the way `Docx.text` does, every paragraph's text followed
@@ -51,16 +49,7 @@ including those in tables, content controls, hyperlinks and fields:
 
 [source,roc]
 ----
-summaries = Docx.revisions(document).map(
-    |change|
-        match (change.kind, change.of) {
-            (Insertion, Content) => "${change.author} inserted ${change.text}"
-            (Deletion, Content) => "${change.author} deleted ${change.text}"
-            (Insertion, Row) => "${change.author} inserted a row"
-            (Formatting, Run) => "${change.author} formatted ${change.text}"
-            _ => "${change.author} changed the document"
-        },
-)
+include::../tests/manual.roc[tag=revisions,indent=0]
 ----
 
 Each entry is a `Revisions.Listed` record:
@@ -154,9 +143,7 @@ each giving a new document:
 
 [source,roc]
 ----
-{ document, diagnostics: _ } = Docx.parse(bytes)?
-accepted = Docx.accept_all(document)?
-rejected = Docx.reject_all(document)?
+include::../tests/manual.roc[tag=accept-all,indent=0]
 ----
 
 The accepted document's text is the original's final text and the rejected
@@ -166,9 +153,7 @@ the others as they are:
 
 [source,roc]
 ----
-settled = Docx.accept(document, By("Ada Reviewer"))?
-earlier = Docx.reject(settled, Between({ from: "2026-05-07T00:00:00Z", until: "2026-05-08T00:00:00Z" }))?
-first = Docx.accept(earlier, Ids([0]))?
+include::../tests/manual.roc[tag=select,indent=0]
 ----
 
 * `All` selects every change.
@@ -227,12 +212,7 @@ gives, since the package reads no clock. The same edit is never both.
 
 [source,roc]
 ----
-morgan = Tracked({ author: "Morgan Reviewer", date: Date("2026-11-10T10:00:00Z") })
-text = Docx.text(document)
-{ before, after: _ } = text.split_first("thirty days") ? |_| NotFound
-start = before.to_utf8().len()
-span = { start, end: start + "thirty days".to_utf8().len() }
-edited = Docx.replace_text(document, span, "fourteen days", morgan)?
+include::../tests/manual.roc[tag=replace-text,indent=0]
 ----
 
 Tracked, the replaced text stays in the document as a deletion and the new
@@ -245,8 +225,7 @@ begin another:
 
 [source,roc]
 ----
-joined = Docx.delete_text(document, { start: end_of_first, end: start_of_second }, morgan)?
-split = Docx.insert_text(document, end_of_first, " (as agreed)\nBoth parties confirm this amendment.", morgan)?
+include::../tests/manual.roc[tag=across-lines,indent=0]
 ----
 
 * A paragraph whose line feed is in the span joins the next paragraph, which
@@ -299,13 +278,12 @@ adding a paragraph, and writes the document with tracking on.
 begins, at a byte offset of `Docx.text` that starts a line, or at the end of
 the text, and `Docx.delete_blocks` deletes the paragraphs and tables from
 where one begins to where one ends, with its line feed. Both take a
-`Revisions.Context`:
+`Revisions.Context`. The new paragraph here is made as
+<<build-the-content>> describes:
 
 [source,roc]
 ----
-clause = Paragraph({ properties: Document.no_paragraph_properties, content: [Run({ properties: Document.no_run_properties, content: [Text("Either party may end this agreement.")] })] })
-added = Docx.insert_blocks(document, Docx.text(document).to_utf8().len(), [clause], morgan)?
-removed = Docx.delete_blocks(added, { start: heading_start, end: table_end }, morgan)?
+include::../tests/manual.roc[tag=block-edits,indent=0]
 ----
 
 Where a table begins, new blocks go before the table, not into its first
@@ -362,12 +340,11 @@ changes it is written with. A change built in the model, such as a
 
 [source,roc]
 ----
-added = Revision({ kind: Insertion, author: "Ada", date: Date(stamp), content: [run], preserved: [] })
+include::../tests/manual.roc[tag=model-revision,indent=0]
 ----
 
-where `stamp` is a `Document.Timestamp`, for instance from
-`WmlRead.date_time("2026-05-07T09:00:00Z")`, since dates and authors come
-from the application, never from the clock.
+`stamp` is a `Document.Timestamp`, here from `WmlRead.date_time`; the date
+and the author come from the application, never from the clock.
 
 * A content change is written as an insertion, deletion or move element
   around its content, with its author, its date as the timestamp's
@@ -402,11 +379,7 @@ edits as tracked changes, as Word's Track Changes setting does:
 
 [source,roc]
 ----
-if Docx.tracks_revisions(document) {
-    "Edits to this document are tracked"
-} else {
-    "Edits to this document are not tracked"
-}
+include::../tests/manual.roc[tag=tracks,indent=0]
 ----
 
 A document without settings does not track changes.
@@ -416,7 +389,7 @@ handed to a reviewer records their edits, or stops recording them:
 
 [source,roc]
 ----
-for_review = Docx.set_tracking(document, On)?
+include::../tests/manual.roc[tag=set-tracking,indent=0]
 ----
 
 The setting is written where the schema orders it among the document's

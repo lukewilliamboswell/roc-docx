@@ -13,8 +13,7 @@ gives, not from the markup it was read as:
 
 [source,roc]
 ----
-{ document, diagnostics: _ } = Docx.parse(bytes)?
-written = Docx.to_bytes(document)?
+include::../tests/manual.roc[tag=pass-through,indent=0]
 ----
 
 Everything the body holds is in the model: what the model represents as
@@ -35,13 +34,13 @@ written from the trees they were read as, as
 
 `WmlWrite.document` is the writer on its own. It takes the main document
 part's tree as it was read, the blocks to write into its body and a
-`WmlWrite.Context` with the part's relationships and its notes'
-identifiers, and gives the part's tree and its relationships with any it
+`WmlWrite.Context` with the part's relationships and the identifiers of
+the document's footnotes, endnotes and comments, and gives the part's tree and its relationships with any it
 needed added:
 
 [source,roc]
 ----
-{ tree, relationships } = WmlWrite.document(shell, blocks, { relationships: [], footnotes: [], endnotes: [] })?
+include::../tests/manual.roc[tag=write-body,indent=0]
 ----
 
 A tree whose root is not a WordprocessingML document is not a main document
@@ -49,8 +48,10 @@ part, and comes back as it is. `WmlWrite.notes` writes a footnotes or
 endnotes part from its tree as read and a list of notes, and
 `WmlWrite.header_footer` a header or footer part from its tree and its
 blocks, in the same way. A note reference names its note by its place
-among the document's footnotes or endnotes; one whose place the context does
-not have cannot be written, and fails with `MissingNote({ kind, note })`.
+among the document's footnotes or endnotes, and a comment's range or
+reference its comment by its place among the comments; one whose place the
+context does not have cannot be written, and fails with
+`MissingNote({ kind, note })` or `MissingComment(id)`.
 
 == The canonical form
 

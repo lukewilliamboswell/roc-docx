@@ -35,11 +35,9 @@ dependencies, it never crashes on any input, it bounds the resources a
 document may consume, and the same document always serializes to the same
 bytes.
 
-The package is under development and claims no document capability yet. What
-it can do so far is open a package, list its parts, read their XML, and
-write a document back with its parts and XML trees kept, which
-xref:getting-started.adoc#read-and-write-the-parts-of-a-document[the next chapter]
-shows, read the text of its body as paragraphs and runs, which
-xref:reading-text.adoc#read-a-documents-text[the chapter after it] shows, and
-write the body back from that model, which
-xref:writing.adoc#write-a-document[the chapter after that] shows.
+The package is not yet released. Reading a document, keeping what it does
+not model, writing it back valid, its comments and its tracked changes are
+established on the whole fixture corpus by that evidence. New documents
+work as their chapter and its examples show and are checked by the same
+oracles; generating documents is claimed once the builders' allocation
+ceilings are in place.

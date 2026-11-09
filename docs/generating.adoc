@@ -11,8 +11,7 @@ which says how a document is written.
 
 [source,roc]
 ----
-document = Docx.new_document({ title: Text("Lease"), creator: Text("Ada Reviewer"), created: Date("2026-11-10T09:00:00Z") })?
-bytes = Docx.to_bytes(document)?
+include::../tests/manual.roc[tag=new-document,indent=0]
 ----
 
 Its argument names the document's title, its author (`creator`), and when it
@@ -41,20 +40,7 @@ takes its content and a record of options, every option with a default, so
 
 [source,roc]
 ----
-created = Docx.new_document({ title: Text("Tenancy notice"), creator: Text("Ada Reviewer") })?
-noted = Build.footnote(created, [Build.text("As agreed on signing.", {})])?
-cell = |text, options| Build.cell(options, [Build.paragraph({}, [Build.text(text, {})])])
-document = Build.append(
-    noted.document,
-    [
-        Build.paragraph({ style: Heading(1) }, [Build.text("Tenancy notice", {})]),
-        Build.paragraph({}, [Build.text("The rent is ", {}), Build.text("due monthly", { bold: On }), noted.reference, Build.text(". See ", {}), Build.link("https://example.org/tenancy", [Build.text("the terms", {})]), Build.text(".", {})]),
-        Build.list_item({}, [Build.text("Rent", {})]),
-        Build.list_item({ list: Numbered, level: 1 }, [Build.text("Give notice", {})]),
-        Build.table({ widths: [3000, 6026], header_rows: 1 }, [[cell("Item", {}), cell("Due", {})], [cell("Rent", {}), cell("Monthly", {})]]),
-    ],
-)
-bytes = Docx.to_bytes(document)?
+include::../tests/manual.roc[tag=build,indent=0]
 ----
 
 `Build.append` adds blocks at the end of the body, before the end of its
@@ -108,7 +94,7 @@ the document out:
 
 [source,roc]
 ----
-footed = Build.footer(document, [Build.paragraph({ alignment: Center }, [Build.text("Page ", {}), Build.page_number, Build.text(" of ", {}), Build.page_count])])?
+include::../tests/manual.roc[tag=footer,indent=0]
 ----
 
 Until a word processor calculates them, the package reads each field's
@@ -132,7 +118,7 @@ it is given its own:
 
 [source,roc]
 ----
-annex = Build.append(Build.new_section(document, { orientation: Landscape }), [Build.paragraph({ style: Heading(1) }, [Build.text("Schedule", {})])])
+include::../tests/manual.roc[tag=section,indent=0]
 ----
 
 == Properties
@@ -213,7 +199,7 @@ The document has two lists, each of nine levels, the levels indented half an
 inch apiece with the bullet or number hanging a quarter inch before the
 text:
 
-* numbering instance 1 is bulleted, with `•`, `◦` and `▪` in turn from the
+* numbering instance 1 is bulleted, with a bullet, a circle and a square in turn from the
   first level down;
 * numbering instance 2 is numbered `1.`, `a.`, `i.` in turn from the first
   level down, each level counting from 1.
@@ -238,7 +224,7 @@ own and gives the part's tree:
 
 [source,roc]
 ----
-tree = WmlWrite.styles({ defaults, styles })
+include::../tests/manual.roc[tag=styles-writer,indent=0]
 ----
 
 A style keeps the elements the model does not hold, such as its place in

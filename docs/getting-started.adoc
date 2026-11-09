@@ -46,37 +46,13 @@ footnotes and comments parts.
 == Limits
 
 Documents are untrusted input. `Opc.open` takes a props record of limits
-beside the bytes; `{}` keeps every default, and naming one field lowers it:
-
-[source,roc]
-----
-Opc.open(bytes, { max_entries: 64 })
-----
-
-The defaults allow 4096 entries, 64 MiB per part and 256 MiB in total. A
-document over a limit fails with the limit's own error, such as
-`TooManyEntries(count)`, `PartTooLarge({ name, bytes })` or
-`PackageTooLarge(bytes)`. The limits are checked against the sizes the
-archive declares, before anything is decompressed, so a small archive that
-would inflate to gigabytes is refused without inflating it. `Opc.open` checks,
-in order:
-
-. the archive's own size against the total limit;
-. the archive's directory of entries, which is read without decompressing
-  anything;
-. the number of entries;
-. each entry's declared size against the part limit, and their running total
-  against the total limit;
-. that no two part names differ only in case;
-. `[Content_Types].xml`, which is decompressed and read;
-. a content type for every part, and each relationship part, decompressed.
-
-A part is decompressed into a buffer of the size its entry declares and no
-further, so an archive that lies about a size fails with
-`PartSizeMismatch({ name, declared })` at the declared size rather than
-running on. The other errors say what is wrong with the archive, such as
-`DuplicatePart(name)` for two parts with the same name, or with
-`[Content_Types].xml`; none of them is a crash. `Opc.part_bytes` reports the
+beside the bytes, and `{}` keeps every default. The limits are checked
+against the sizes the archive declares before anything is decompressed, and
+a document over one fails with that limit's own error, such as
+`TooManyEntries(count)`; <<read-untrusted-and-imperfect-documents>> lists the
+limits, their defaults and the order of the checks. The other errors say
+what is wrong with the archive, such as `DuplicatePart(name)` for two parts
+with the same name; none of them is a crash. `Opc.part_bytes` reports the
 same kinds of damage for the part it decompresses.
 
 `[Content_Types].xml` and the relationship parts are read with
@@ -150,7 +126,7 @@ per element:
 
 [source,roc]
 ----
-tree = XmlTree.parse(bytes, { max_xml_depth: 64 })?
+include::../tests/manual.roc[tag=xml-parse,indent=0]
 ----
 
 A part that is not well-formed XML, breaks a namespace rule or exceeds a bound
@@ -203,8 +179,7 @@ unchanged and still holds every extension, so it is what a writer keeps:
 
 [source,roc]
 ----
-tree = XmlTree.parse(bytes, {})?
-{ interpreted, diagnostics } = Mce.process(tree)
+include::../tests/manual.roc[tag=mce,indent=0]
 ----
 
 A part that breaks a compatibility rule is still read, with a diagnostic for
@@ -235,8 +210,7 @@ limits, and `Docx.to_bytes` writes a document back:
 
 [source,roc]
 ----
-{ document, diagnostics } = Docx.parse(bytes)?
-written = Docx.to_bytes(document)?
+include::../tests/manual.roc[tag=pass-through,indent=0]
 ----
 
 A document is its package, the model of its main document's body and the
@@ -262,35 +236,13 @@ as a tree; `Document.from_package_with_body` reads it as `Docx.parse` does,
 the body with the reader you give it.
 
 Reading drops editor state that the producing application regenerates and
-that carries no document meaning, and reports what it dropped, as
-`Dropped({ part, content, count })` diagnostics, one for each part and kind:
-
-* `RevisionSaveIds`: revision save identifiers, every WordprocessingML
-  attribute whose name begins with `rsid`;
-* `RenderedPageBreaks`: `w:lastRenderedPageBreak`, where the producer last
-  laid out a page break;
-* `ProofingMarks`: `w:proofErr`, spelling and grammar markers;
-* `GoBackBookmark`: the `_GoBack` bookmark, which marks the last edit, with
-  its end.
-
-Reading also repairs the few attribute values that real producers write and
-the schema does not allow, so that what a document holds, and therefore what
-it writes, is schema-valid, and reports each repair where it is made:
-
-* `Rounded({ part, element, attribute, value })`: a page, paragraph or table
-  measure written with a fraction where the schema wants a whole number, as
-  Google Docs exports write `w:w="10470.0"` for a table's width and
-  `w:left="863.9999999999999"` for a page margin, is read as the nearest
-  whole number, halves away from zero; `value` is the value as written.
-  A percentage such as `50%` or a measure with a unit such as `1.5in` is
-  kept as written.
-* `Defaulted({ part, element, attribute, value })`: a required attribute the
-  element leaves out is added with `value`; a page's margins without a
-  gutter, as Google Docs exports write them, get `w:gutter="0"`.
-
-Everything else is kept. A part that is not well-formed XML, breaks a
-namespace rule or exceeds a limit fails the parse with
-`XmlPartUnreadable({ part, problem })`.
+that carries no document meaning, such as the identifiers Word stamps on
+each editing session's content, and repairs the few values real producers
+write that the standard does not allow, such as a Google Docs export's
+table widths with a fraction. Each is reported in `diagnostics`, as
+<<what-reading-reports>> describes. Everything else is kept. A part that is
+not well-formed XML, breaks a namespace rule or exceeds a limit fails the
+parse with `XmlPartUnreadable({ part, problem })`.
 
 `Docx.equivalent` says whether two documents are the same in the sense a
 document keeps when it is written and read again: the main document, notes,

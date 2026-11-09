@@ -34,6 +34,7 @@ Lint :: [].{
 			per_source,
 			Lint.consistent_urls(sources),
 			Lint.chapters_included(sources),
+			Lint.manual_snippets(sources),
 			Lint.docx_identity(binaries),
 		].fold([], |acc, more| List.concat(acc, more))
 	}
@@ -189,6 +190,40 @@ Lint :: [].{
 		)
 	}
 
+	## Every Roc listing in a manual chapter is included from a program that
+	## `check` compiles and runs: a tagged region of `tests/manual.roc`, or an
+	## example. The region must exist. Release notes are exempt, because the
+	## release fills in their package URL.
+	manual_snippets : List(Source) -> List(Violation)
+	manual_snippets = |sources|
+		sources.fold(
+			[],
+			|found, source|
+				if source.path.starts_with("docs/") and source.path.ends_with(".adoc") and !source.path.starts_with("docs/releases/") {
+					lines = source.text.split_on("\n")
+					lines.fold_with_index(
+						found,
+						|acc, line, index|
+							if line.trim() == "[source,roc]" {
+								at = |offset| lines.get(index + offset) ?? ""
+								problem = if at(1) != "----" or at(3) != "----" {
+									Err("a Roc listing is one include between ---- lines")
+								} else {
+									included_region(sources, at(2))
+								}
+								match problem {
+									Ok({}) => acc
+									Err(message) => List.append(acc, { path: source.path, line: index + 1, message })
+								}
+							} else {
+								acc
+							},
+					)
+				} else {
+					found
+				},
+		)
+
 	## A .docx outside the fixture corpus is a fixture's bytes, so it has that
 	## fixture's provenance.
 	docx_identity : List(Binary) -> List(Violation)
@@ -203,6 +238,30 @@ Lint :: [].{
 					List.append(found, { path: binary.path, line: 1, message: "a .docx outside tests/fixtures is byte-identical to a fixture" })
 				},
 		)
+	}
+}
+
+# Whether an include line names a compiled program and, with a tag, a region
+# that program has.
+included_region : List(Lint.Source), Str -> Try({}, Str)
+included_region = |sources, line| {
+	{ before: _, after } = line.split_first("include::../") ? |_| "a Roc listing includes a region of tests/manual.roc or an example, so that check compiles it"
+	{ before: path, after: attributes } = after.split_first("[") ? |_| "an include names its attributes in brackets"
+	if path != "tests/manual.roc" and !path.starts_with("examples/") {
+		return Err("a Roc listing includes a region of tests/manual.roc or an example, so that check compiles it")
+	}
+	text = (sources.find_first(|source| source.path == path) ? |_| "${path} does not exist").text
+	match attributes.split_first("tag=") {
+		Ok({ before: _, after: rest }) => {
+			tag = (rest.split_first(",") ?? (rest.split_first("]") ?? { before: rest, after: "" })).before
+			if text.contains("# tag::${tag}[]") and text.contains("# end::${tag}[]") {
+				Ok({})
+			} else {
+				Err("${path} has no region tagged ${tag}")
+			}
+		}
+
+		Err(_) => Ok({})
 	}
 }
 
@@ -324,6 +383,26 @@ expect {
 		"docs/orphan.adoc: a chapter opens with a single = Title",
 		"docs/orphan.adoc: docs/index.adoc includes every chapter",
 		"docs/releases/0.2.0.adoc: docs/releases.adoc includes every chapter",
+	]
+}
+
+## Roc listings in chapters include a region of the snippet program or an example; release notes may write theirs out.
+expect {
+	listing = |body| "= Chapter\n\n[source,roc]\n----\n${body}\n----\n"
+	sources = [
+		{ path: "tests/manual.roc", text: "f = |x| {\n\t# tag::text[]\n\ty = x\n\t# end::text[]\n\ty\n}\n" },
+		{ path: "examples/inspect/main.roc", text: "app [main!] {}\n" },
+		{ path: "docs/included.adoc", text: listing("include::../tests/manual.roc[tag=text,indent=0]") },
+		{ path: "docs/example.adoc", text: listing("include::../examples/inspect/main.roc[]") },
+		{ path: "docs/inline.adoc", text: listing("x = 1") },
+		{ path: "docs/untagged.adoc", text: listing("include::../tests/manual.roc[tag=missing,indent=0]") },
+		{ path: "docs/elsewhere.adoc", text: listing("include::../package/Docx.roc[]") },
+		{ path: "docs/releases/0.1.0.adoc", text: listing("app [main!] { docx: \"{package-url}\" }") },
+	]
+	Lint.manual_snippets(sources).map(|violation| "${violation.path}:${violation.line.to_str()}: ${violation.message}") == [
+		"docs/inline.adoc:3: a Roc listing includes a region of tests/manual.roc or an example, so that check compiles it",
+		"docs/untagged.adoc:3: tests/manual.roc has no region tagged missing",
+		"docs/elsewhere.adoc:3: a Roc listing includes a region of tests/manual.roc or an example, so that check compiles it",
 	]
 }
 

@@ -1,7 +1,7 @@
 = roc-docx 0.1.0
 
-The first release. These notes grow with the slices that land before it and
-are completed when the release is cut.
+The first release. These notes are completed, with the compiler the release
+was tested with, when it is cut.
 
 == Use this release
 
@@ -14,6 +14,20 @@ app [main!] {
 
 == What it does
 
-Opens a `.docx` package within explicit resource limits and reports its
-parts, their content types and their relationships: `Opc.open`,
-`Opc.part`, `Opc.relationships` and `Opc.main_document`.
+* Reads a `.docx` from Word, LibreOffice, Google Docs or pandoc within
+  resource limits, and writes it back with everything it did not change
+  kept: xref:getting-started.adoc#read-and-write-the-parts-of-a-document[Read and write the parts of a document]
+  and xref:limits-and-diagnostics.adoc#read-untrusted-and-imperfect-documents[Read untrusted and imperfect documents].
+* Reads a document's text, paragraphs, runs, formatting, styles, lists,
+  tables, links, notes, fields, pictures, sections, headers, footers and
+  properties: xref:reading-text.adoc#read-a-documents-text[Read a document's text].
+* Reads, adds, replies to, resolves and removes comments, with their
+  threads: xref:comments.adoc#read-a-documents-comments[Read a document's comments].
+* Reads, accepts and rejects tracked changes, and edits text, paragraphs
+  and tables silently or as tracked changes:
+  xref:tracked-changes.adoc#read-a-documents-tracked-changes[Read a document's tracked changes].
+* Writes every part it models in one canonical, schema-valid form:
+  xref:writing.adoc#write-a-document[Write a document].
+* Builds new documents with headings, lists, tables, links, footnotes,
+  headers, footers and sections:
+  xref:generating.adoc#generate-a-document[Generate a document].

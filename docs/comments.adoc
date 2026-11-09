@@ -14,15 +14,7 @@ anchors them:
 
 [source,roc]
 ----
-{ document, diagnostics: _ } = Docx.parse(bytes)?
-summaries = Docx.comments(document).comments.map(
-    |entry|
-        match entry.anchor {
-            Range(text) => "${entry.comment.author} on: ${text}"
-            Point => entry.comment.author
-            Unanchored => entry.comment.author
-        },
-)
+include::../tests/manual.roc[tag=comments,indent=0]
 ----
 
 Each entry is a `Comments.Anchored` record with three fields:
@@ -111,11 +103,7 @@ document gives it:
 
 [source,roc]
 ----
-entries = Docx.comments(document).comments
-open_threads = entries.keep_if(
-    |entry| entry.comment.parent == Unset and !entry.comment.resolved,
-)
-replies_to = |id| entries.keep_if(|entry| entry.comment.parent == Parent(id))
+include::../tests/manual.roc[tag=threads,indent=0]
 ----
 
 The comments part does not say any of this. Word keeps it in four parts
@@ -202,18 +190,7 @@ document's text:
 
 [source,roc]
 ----
-{ document, diagnostics: _ } = Docx.parse(bytes)?
-text = Docx.text(document)
-{ before, after: _ } = text.split_first("thirty days") ? |_| NotFound
-start = before.to_utf8().len()
-added = Docx.add_comment(
-    document,
-    { start, end: start + "thirty days".to_utf8().len() },
-    { author: "Morgan Reviewer", date: Date("2026-11-10T09:00:00Z"), content: Text("Our terms are fourteen days.") },
-)?
-replied = Docx.reply(added.document, added.id, { author: "Lin Editor", content: Text("Agreed.") })?
-resolved = Docx.resolve(replied.document, added.id)?
-written = Docx.to_bytes(resolved)?
+include::../tests/manual.roc[tag=edit-comments,indent=0]
 ----
 
 * `Docx.add_comment(document, span, new)` adds a comment around a
@@ -289,8 +266,11 @@ not added to it.
 
 An edit fails with `NoSuchComment(id)` for an `id` the document has no
 comment at, `NotADate(text)` for a date that is not a date and time,
-`NoMainDocument` for a package without a main document, and as
-`Docx.to_bytes` fails for a document that cannot be written.
+`NoMainDocument` for a package without a main document, and, for a
+document whose body, notes, headers or footers cannot be written, with
+`MissingNote`, `MissingComment` or `CommentWithoutParagraph` as
+`Docx.to_bytes` reports them. These are tags of `Docx.EditError`, which
+every edit of the document's comments, changes and text shares.
 
 The `review_contract` example makes each edit on a contract and writes the
 result.

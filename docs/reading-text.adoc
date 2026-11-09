@@ -13,8 +13,7 @@ content controls.
 
 [source,roc]
 ----
-{ document, diagnostics: _ } = Docx.parse(bytes)?
-text = Docx.text(document)
+include::../tests/manual.roc[tag=text,indent=0]
 ----
 
 The text is the current text, the document with its tracked changes as
@@ -48,13 +47,7 @@ says and <<write-a-document>> can write it back from the model:
 
 [source,roc]
 ----
-paragraphs = Docx.body(document).keep_oks(
-    |block|
-        match block {
-            Paragraph(paragraph) => Ok(Document.paragraph_text(paragraph))
-            _ => Err(NotAParagraph)
-        },
-)
+include::../tests/manual.roc[tag=paragraphs,indent=0]
 ----
 
 That lists the text of the paragraphs directly in the body; the paragraphs in
@@ -66,7 +59,10 @@ values. A `Run` inline has `properties` and `content`, a list of
 with `kind` one of `Line`, `Page` and `Column` and `clear` saying which
 floating objects a line break clears, `Symbol({ font, code })`, `SoftHyphen`
 and `NonBreakingHyphen`. `Document.paragraph_text` gives one paragraph's
-text as `Docx.text` does.
+text as `Docx.text` does, and `Document.inline_text` one inline's.
+`Document.append_inline_text` appends an inline's text to a list of bytes
+instead, so that a text built from many inlines takes no allocation for
+each.
 
 The model grows a construct at a time, and what it does not represent yet is
 never dropped. Every element it does not model is kept as the XML node it
@@ -138,11 +134,7 @@ gives:
 
 [source,roc]
 ----
-note_of = |reference|
-    match reference.kind {
-        Footnote => Docx.footnotes(document).get(reference.note)
-        Endnote => Docx.endnotes(document).get(reference.note)
-    }
+include::../tests/manual.roc[tag=notes,indent=0]
 ----
 
 Inside a note, the mark that numbers it is `NoteMark(kind)`. Neither the
@@ -169,7 +161,7 @@ for any list of blocks, such as a note's content:
 
 [source,roc]
 ----
-pages = Docx.fields(document).keep_if(|field| field.code.contains("PAGE"))
+include::../tests/manual.roc[tag=fields,indent=0]
 ----
 
 A field nested in another's result, as page numbers are inside the links of
@@ -216,19 +208,7 @@ into account:
 
 [source,roc]
 ----
-{ styles, diagnostics: _ } = Docx.styles(document)
-headings = Docx.body(document).keep_oks(
-    |block|
-        match block {
-            Paragraph(paragraph) =>
-                match Styles.effective_paragraph(styles, paragraph.properties, {}).outline_level {
-                    Level(level) if level < 9 => Ok({ level, text: Document.paragraph_text(paragraph) })
-                    _ => Err(NotAHeading)
-                }
-
-            _ => Err(NotAHeading)
-        },
-)
+include::../tests/manual.roc[tag=headings,indent=0]
 ----
 
 Resolution follows the order the standard gives: the document defaults,
@@ -268,20 +248,7 @@ at:
 
 [source,roc]
 ----
-{ styles, diagnostics: _ } = Docx.styles(document)
-{ numbering, diagnostics: _ } = Docx.numbering(document)
-items = Docx.body(document).keep_oks(
-    |block|
-        match block {
-            Paragraph(paragraph) => {
-                reference = Styles.effective_paragraph(styles, paragraph.properties, {}).numbering
-                level = Numbering.level(numbering, styles, reference)?
-                Ok({ depth: level.level, bullet: level.format == Bullet, text: Document.paragraph_text(paragraph) })
-            }
-
-            _ => Err(NotAListItem)
-        },
-)
+include::../tests/manual.roc[tag=lists,indent=0]
 ----
 
 A list is described twice over. A `Numbering.Definition` holds the levels,
@@ -338,9 +305,7 @@ nested table is a `Table` block inside a cell:
 
 [source,roc]
 ----
-grid = Document.table_rows(table).map(
-    |row| Document.row_cells(row).map(|cell| cell.content.len()),
-)
+include::../tests/manual.roc[tag=tables,indent=0]
 ----
 
 The properties are those the document states on the table, row or cell
@@ -398,13 +363,7 @@ section ends the body. `Docx.sections` lists them in order, and
 
 [source,roc]
 ----
-landscape = Docx.sections(document).any(
-    |section|
-        match section.page_size {
-            Size({ width: _, height: _, orientation }) => orientation == Landscape
-            Unset => Bool.False
-        },
-)
+include::../tests/manual.roc[tag=sections,indent=0]
 ----
 
 A `Document.Section` holds what the section states, each `Unset` when it
@@ -448,10 +407,7 @@ read, so the fields that number a document's pages are found in them:
 
 [source,roc]
 ----
-page_numbers = Docx.sections(document).map(
-    |section|
-        section.footers.map(|footer| Document.fields(Docx.header_footer(document, footer.part))),
-)
+include::../tests/manual.roc[tag=headers-footers,indent=0]
 ----
 
 A section without a header or footer of a kind has the previous section's.

@@ -1,6 +1,10 @@
-## Read and write WordprocessingML documents in pure Roc.
+## Read and write Word documents (`.docx`) in pure Roc: their text,
+## structure, formatting, comments and tracked changes.
 ##
-## Further modules arrive with the kernel slices of implementation-plan.md.
+## [Docx] is where an application starts: it parses a document, answers
+## queries about it, edits its comments, tracked changes and text, and writes
+## it back. [Build] and [Kit] make new documents, [Document] is the model the
+## queries give, and [Limits] bounds what an untrusted document may consume.
 package
 	[Build, Comments, Document, Docx, Kit, Lenient, Limits, Mce, Numbering, Opc, Revisions, Snapshot, Styles, WmlRead, WmlWrite, XmlTree]
 	{

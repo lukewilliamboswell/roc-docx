@@ -28,7 +28,8 @@ config = [
 	Environment("libreoffice", [Programs([Fetch("pandoc", pandoc)]), Expect(["python3", "roc", "sh"])]),
 	# Everything the check driver runs: the scripts' compiler, the oracle programs and the release utility.
 	Environment("dev", [Extend("tools"), Programs([Fetch("pandoc", pandoc), Fetch("release-package", release_package)]), Expect(["python3", "xmllint"])]),
-	Environment("docs", [Programs([Fetch("roc-docs", Recipes.file("https://github.com/lukewilliamboswell/roc-automation/releases/download/tools-0.10.0/roc-docs-{system}"))]), Expect(["realpath", "sh"])]),
+	# The manual and its API reference, which `roc docs` generates with the host's latest nightly.
+	Environment("docs", [Extend("package"), Programs([Fetch("roc-docs", Recipes.file("https://github.com/lukewilliamboswell/roc-automation/releases/download/tools-0.10.0/roc-docs-{system}"))]), Expect(["realpath", "sh"])]),
 	Environment("release", [Programs([Fetch("release-package", release_package)]), Expect(["roc", "git", "gh", "tar", "unzip", "zip", "chmod", "touch", "env"])]),
 	Environment("release-test", [Programs([Fetch("release-package", release_package)]), Expect(["roc"])]),
 	Shell("default", [Use("dev")]),
@@ -40,6 +41,7 @@ config = [
 	Task("scripts-test", [Use("tools"), Run(["roc-stable", "test", "scripts/src/Lint.roc"])]),
 	Task("test", [Use("package"), Run(["roc", "test", "package/main.roc"])]),
 	Task("cases", [Use("package"), Run(["roc", "tests/main.roc"])]),
+	Task("manual", [Use("package"), Run(["roc", "tests/manual.roc"])]),
 	Task("cases-update", [Use("package"), Run(["roc", "tests/main.roc", "--update"])]),
 	Task("examples", [Use("release-test"), Run(["release-package", "test-examples"])]),
 	Task("fuzz-smoke", [Use("tools"), Run(["scripts/fuzz_smoke.roc"])]),
@@ -53,7 +55,7 @@ config = [
 	Task("libreoffice", [Use("libreoffice"), Run(["sh", "-c", libreoffice_lane])]),
 	Task("fixtures", [Use("oracle"), Run(["python3", "-I", "oracle/make_fixtures.py"])]),
 	Task("fixtures-check", [Use("oracle"), Run(["python3", "-I", "oracle/make_fixtures.py", "--check"])]),
-	Task("docs", [Use("docs"), Run(["roc-docs", "build", "--workspace", ".", "--pdf-filename", "roc-docx.pdf"])]),
+	Task("docs", [Use("docs"), Run(["roc-docs", "build", "--workspace", ".", "--pdf-filename", "roc-docx.pdf", "--api-entrypoint", "package/main.roc"])]),
 	Task("docs-path", [Use("docs"), Run(["sh", "-c", "realpath \"$(command -v roc-docs)\""])]),
 	Task("release-package", [Use("release"), Run(["release-package"])]),
 	Task("release-test", [Use("release-test"), Run(["release-package"])]),

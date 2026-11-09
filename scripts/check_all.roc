@@ -32,6 +32,8 @@ checks = [
 	{ name: "test", argv: ["roc", "test", "package/main.roc"] },
 	# The data-driven cases under tests/: every fixture passes through as its expectation records.
 	{ name: "cases", argv: ["roc", "tests/main.roc"] },
+	# Every Roc snippet the manual includes compiles and runs.
+	{ name: "manual", argv: ["roc", "tests/manual.roc"] },
 	# Every example against its recorded output in tests/spec.json.
 	{ name: "examples", argv: ["release-package", "test-examples"] },
 	# Every fuzz target: build, declared examples, a one-second bounded exploration.
