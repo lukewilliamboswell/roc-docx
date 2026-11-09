@@ -1,5 +1,5 @@
 ## Read a Word document from its bytes, read its body and text, edit its
-## comments, and write it back.
+## text, comments and tracked changes, and write it back.
 ##
 ## `Docx.parse` opens the package within the default `Limits` and reads it as
 ## a [Document]; `Docx.body` and `Docx.text` read what its body says,
@@ -8,7 +8,11 @@
 ## its comments, `Docx.people` their authors, `Docx.fields` its fields and
 ## `Docx.tracks_revisions` whether it tracks changes;
 ## `Docx.add_comment`, `Docx.reply`, `Docx.resolve` and
-## `Docx.remove_comment` edit its comments;
+## `Docx.remove_comment` edit its comments; `Docx.accept`, `Docx.reject`,
+## `Docx.accept_all` and `Docx.reject_all` its tracked changes;
+## `Docx.replace_text`, `Docx.insert_text` and `Docx.delete_text` its text,
+## silently or as tracked changes; `Docx.set_tracking` whether it tracks
+## changes;
 ## `Docx.to_bytes` writes a document as a package, its body written from the
 ## model, and `Docx.equivalent` says whether two documents write the same.
 ## What reading drops comes back as diagnostics beside the document, never
@@ -267,16 +271,19 @@ Docx :: [].{
 	tracks_revisions : Document -> Bool
 	tracks_revisions = |document| WmlRead.tracks_revisions(main_related_tree(document, settings_relationship))
 
-	## Why a comment cannot be added, replied to, resolved or removed: the
-	## document has no main document part; the span is not within the text,
-	## ends before it starts, or starts or ends inside a character, as
-	## [Comments.mark] says; no comment has the place; the date is not a date
-	## and time; or the document cannot be written, as [Docx.WriteError]
-	## says.
+	## Why a document cannot be edited: it has no main document part; the
+	## span is not within the text, ends before it starts, or starts or ends
+	## inside a character, as [Comments.mark] and [Revisions.replace] say;
+	## a text edit's span or new text holds a line feed, as
+	## [Revisions.replace] says; no comment has the place; a date is not a
+	## date and time; or the document cannot be written, as
+	## [Docx.WriteError] says.
 	EditError : [
 		NoMainDocument,
 		OutsideText({ start : U64, end : U64 }),
 		NotACharacterBoundary(U64),
+		LineFeedInSpan({ start : U64, end : U64 }),
+		LineFeedInText(Str),
 		NoSuchComment(U64),
 		NotADate(Str),
 		MissingNote({ kind : Document.NoteKind, note : U64 }),
@@ -385,6 +392,82 @@ Docx :: [].{
 			$place = $place + 1
 		}
 		written_with(document, { body: Comments.relabel(Docx.body(document), $places), comments: $comments, kept: read.kept, places: $places })
+	}
+
+	## The document with the selected tracked changes of its body accepted,
+	## as [Revisions.accept] accepts them in [Docx.body], and written as
+	## [Docx.to_bytes] writes it. The changes in its notes, headers, footers
+	## and comments are not the body's and stay. Changes are named by their
+	## ids in [Docx.revisions], so once changes go the others' ids change:
+	## [Docx.revisions] gives them again.
+	accept : Document, Revisions.Selection -> Try(Document, EditError)
+	accept = |document, selection| {
+		_ = main_part(document)?
+		read = threads(document)
+		written_with(document, { body: Revisions.accept(Docx.body(document), selection)?, comments: read.comments, kept: read.kept, places: [] })
+	}
+
+	## The document with the selected tracked changes of its body rejected,
+	## as [Revisions.reject] rejects them, as [Docx.accept] accepts them.
+	reject : Document, Revisions.Selection -> Try(Document, EditError)
+	reject = |document, selection| {
+		_ = main_part(document)?
+		read = threads(document)
+		written_with(document, { body: Revisions.reject(Docx.body(document), selection)?, comments: read.comments, kept: read.kept, places: [] })
+	}
+
+	## The document with every tracked change of its body accepted: its
+	## text is the final text, [Docx.final_text], of the document it came
+	## from.
+	accept_all : Document -> Try(Document, EditError)
+	accept_all = |document| Docx.accept(document, All)
+
+	## The document with every tracked change of its body rejected: its
+	## text is the original text, [Docx.original_text], of the document it
+	## came from.
+	reject_all : Document -> Try(Document, EditError)
+	reject_all = |document| Docx.reject(document, All)
+
+	## The document with `span` of its current text, byte offsets into
+	## [Docx.text], replaced by `replacement`, as [Revisions.replace] replaces it in
+	## the body: silently, or as tracked changes by the author the context
+	## names, at its date. The document is written as [Docx.to_bytes]
+	## writes it. Positions after the span move by the difference in length
+	## between `replacement` and the span's text; positions before it stay.
+	replace_text : Document, Comments.Span, Str, Revisions.Context -> Try(Document, EditError)
+	replace_text = |document, span, replacement, context| {
+		_ = main_part(document)?
+		read = threads(document)
+		written_with(document, { body: Revisions.replace(Docx.body(document), span, replacement, context)?, comments: read.comments, kept: read.kept, places: [] })
+	}
+
+	## The document with `inserted` at byte `at` of its current text,
+	## as [Docx.replace_text] replaces an empty span there.
+	insert_text : Document, U64, Str, Revisions.Context -> Try(Document, EditError)
+	insert_text = |document, at, inserted, context| Docx.replace_text(document, { start: at, end: at }, inserted, context)
+
+	## The document without `span` of its current text, as
+	## [Docx.replace_text] replaces it with nothing.
+	delete_text : Document, Comments.Span, Revisions.Context -> Try(Document, EditError)
+	delete_text = |document, span, context| Docx.replace_text(document, span, "", context)
+
+	## The document with tracking `On`, so that its editor records edits as
+	## tracked changes, or `Off`, as [WmlWrite.tracking] sets it in the
+	## settings part of its main document; a document without settings that
+	## is to track changes is given a settings part. Tracking is the
+	## editor's setting: it changes no content, and the package's own edits
+	## are tracked or not by their context.
+	set_tracking : Document, [On, Off] -> Try(Document, EditError)
+	set_tracking = |document, state| {
+		main = main_part(document)?
+		match Document.related(document, main.name, settings_relationship) {
+			Ok(part) => Ok(Document.with_part(document, part.name, WmlWrite.tracking(part.tree, state), part.relationships))
+			Err(NotFound) =>
+				match state {
+					On => Ok(new_part(document, settings_relationship, WmlWrite.tracking(Text(""), On)).document)
+					Off => Ok(document)
+				}
+		}
 	}
 }
 
@@ -529,16 +612,19 @@ with_comments = |document, comments, kept, ids| {
 	Ok(rewrite(with_ids, comments_extensible_relationship, split.extensible, dated))
 }
 
-# The document with a new part of a kind the comments need, related from the
-# main document: the comments part, `comments.xml`, or the extended comments,
-# comment identifiers or extensible comments part, `commentsExtended.xml`,
-# `commentsIds.xml` or `commentsExtensible.xml`, beside the main document,
+# The document with a new part of a kind the comments or the tracking state
+# need, related from the main document: the comments part, `comments.xml`,
+# the extended comments, comment identifiers or extensible comments part,
+# `commentsExtended.xml`, `commentsIds.xml` or `commentsExtensible.xml`, or
+# the settings part, `settings.xml`, beside the main document,
 # with the content type Word gives it, a number after the name when the
 # document already has a part by that name; and the part's name.
 new_part : Document, Str, XmlTree.Node -> { document : Document, name : Str }
 new_part = |document, kind, tree| {
 	local = if kind == comments_relationship {
 		"comments"
+	} else if kind == settings_relationship {
+		"settings"
 	} else if kind == comments_extended_relationship {
 		"commentsExtended"
 	} else if kind == comments_ids_relationship {
@@ -1235,4 +1321,183 @@ expect {
 		and Docx.add_comment(parsed.document, { start: 3, end: 30 }, new).map_ok(|_| {}) == Err(OutsideText({ start: 3, end: 30 }))
 		and Docx.add_comment(parsed.document, { start: 14, end: 15 }, new).map_ok(|_| {}) == Err(NotACharacterBoundary(14))
 		and Docx.add_comment(parsed.document, { start: 4, end: 2 }, new).map_ok(|_| {}) == Err(OutsideText({ start: 4, end: 2 }))
+}
+
+# A body with a change of every kind the algebra resolves: text inserted
+# and deleted, a move with its ranges, a deleted and an inserted paragraph
+# mark, run and paragraph formatting, and a table with an inserted row, a
+# deleted row, an inserted cell, a deleted cell and a merged cell.
+every_change : Str
+every_change = {
+	by = |author, date| "w:author='${author}' w:date='${date}'"
+	ada = by("Ada", "2026-05-07T09:00:00Z")
+	grace = by("Grace", "2026-05-08T09:00:00Z")
+	run = |text| "<w:r><w:t xml:space='preserve'>${text}</w:t></w:r>"
+	gone = |text| "<w:r><w:delText xml:space='preserve'>${text}</w:delText></w:r>"
+	cell = |properties, text| "<w:tc><w:tcPr>${properties}</w:tcPr><w:p>${run(text)}</w:p></w:tc>"
+	content = "<w:p>${run("Rent is ")}<w:del ${ada}>${gone("two")}</w:del><w:ins ${ada}>${run("three")}</w:ins>${run(" years.")}</w:p>"
+	moved = "<w:p><w:moveFromRangeStart w:id='1' w:name='m' ${grace}/><w:moveFrom ${grace}>${run("Moved.")}</w:moveFrom><w:moveFromRangeEnd w:id='1'/>${run("Stays.")}</w:p>"
+	joined = "<w:p><w:pPr><w:rPr><w:del ${ada}/></w:rPr></w:pPr>${run("Joined ")}</w:p><w:p><w:pPr><w:jc w:val='center'/><w:pPrChange ${grace}><w:pPr/></w:pPrChange></w:pPr>${run("here.")}<w:moveToRangeStart w:id='2' w:name='m' ${grace}/><w:moveTo ${grace}>${run("Moved.")}</w:moveTo><w:moveToRangeEnd w:id='2'/></w:p>"
+	inserted = "<w:p><w:pPr><w:rPr><w:ins ${grace}/></w:rPr></w:pPr><w:r><w:rPr><w:b/><w:rPrChange ${ada}><w:rPr/></w:rPrChange></w:rPr><w:t>Bold</w:t></w:r></w:p>"
+	row = |properties, cells| "<w:tr><w:trPr>${properties}</w:trPr>${cells}</w:tr>"
+	table = "<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w='1000'/><w:gridCol w:w='1000'/></w:tblGrid>${row("", "${cell("", "a")}${cell("<w:cellIns ${ada}/>", "b")}")}${row("<w:ins ${grace}/>", cell("", "c"))}${row("<w:del ${ada}/>", cell("", "d"))}${row("", "${cell("<w:cellDel ${grace}/>", "e")}${cell("<w:vMerge/><w:cellMerge ${ada} w:vMerge='cont' w:vMergeOrig='rest'/>", "f")}")}</w:tbl>"
+	"${content}${moved}${joined}${inserted}${table}<w:p/><w:sectPr/>"
+}
+
+## Accepting every change gives a document whose text is the final text and
+## that has no changes left; rejecting every change gives the original text.
+## A deleted mark accepted joins its paragraph to the next, which keeps its
+## own properties; an inserted mark rejected joins likewise; a move's ranges
+## go with it; a row or cell deleted and accepted, or inserted and rejected,
+## goes; a rejected merge restores the merge before it; rejected formatting
+## restores the properties before it.
+expect {
+	parsed = Docx.parse(package_of(every_change)?)?
+	accepted = Docx.accept_all(parsed.document)?
+	rejected = Docx.reject_all(parsed.document)?
+	cells = |document|
+		Docx.body(document).keep_oks(
+			|block|
+				match block {
+					Table(table) => Ok(Document.table_rows(table).map(|row| Document.row_cells(row).map(|cell| cell.properties.merge)))
+					_ => Err(NotATable)
+				},
+		)
+	has_ranges = |document|
+		Docx.body(document).any(
+			|block|
+				match block {
+					Paragraph(paragraph) =>
+						paragraph.content.any(
+							|inline|
+								match inline {
+									MoveStart(_) | MoveEnd(_) => Bool.True
+									_ => Bool.False
+								},
+						)
+
+					_ => Bool.False
+				},
+		)
+	centred = |document|
+		Docx.body(document).any(
+			|block|
+				match block {
+					Paragraph(paragraph) => paragraph.properties.alignment == Aligned(Center)
+					_ => Bool.False
+				},
+		)
+	Docx.text(accepted) == Docx.final_text(parsed.document)
+		and Docx.text(rejected) == Docx.original_text(parsed.document)
+		and Docx.final_text(parsed.document) == "Rent is three years.\nStays.\nJoined here.Moved.\nBold\na\nb\nc\nf\n\n"
+		and Docx.revisions(accepted).is_empty()
+		and Docx.revisions(rejected).is_empty()
+		and !has_ranges(accepted)
+		and !has_ranges(rejected)
+		and centred(accepted)
+		and !centred(rejected)
+		and cells(accepted) == [[[Unset, Unset], [Unset], [Continue]]]
+		and cells(rejected) == [[[Unset], [Unset], [Unset, Restart]]]
+}
+
+## Filtered forms resolve only the changes they select: by author, by a
+## date range from its start up to its end, or by id, the others staying.
+expect {
+	parsed = Docx.parse(package_of(every_change)?)?
+	authors = |document| Docx.revisions(document).map(|change| change.author)
+	graces = Docx.revisions(parsed.document).keep_if(|change| change.author == "Grace").len()
+	by_author = Docx.accept(parsed.document, By("Ada"))?
+	dated = Docx.reject(parsed.document, Between({ from: "2026-05-08T00:00:00Z", until: "2026-05-09T00:00:00Z" }))?
+	first_two = Docx.reject(parsed.document, Ids([0, 1]))?
+	authors(by_author).len() == graces
+		and authors(by_author).all(|author| author == "Grace")
+		and authors(dated).all(|author| author == "Ada")
+		and Docx.text(first_two).starts_with("Rent is two years.\n")
+		and Docx.revisions(first_two).len() + 2 == Docx.revisions(parsed.document).len()
+		and Docx.accept(parsed.document, Between({ from: "yesterday", until: "2026-05-09T00:00:00Z" })).map_ok(|_| {}) == Err(NotADate("yesterday"))
+}
+
+## A tracked replacement deletes the span's text and inserts the new text
+## after it, by the context's author at its date: the final text is the
+## untracked replacement's text and the original text the text before.
+## Inserting at a paragraph's start takes the first run's properties.
+expect {
+	run = |text| "<w:r><w:t xml:space='preserve'>${text}</w:t></w:r>"
+	parsed = Docx.parse(package_of("<w:p>${run("Rent is ")}${run("two")}${run(" years.")}</w:p><w:p><w:r><w:rPr><w:b/></w:rPr><w:t>Due</w:t></w:r></w:p>")?)?
+	before = Docx.text(parsed.document)
+	morgan = Tracked({ author: "Morgan", date: Date("2026-11-10T09:00:00Z") })
+	tracked = Docx.replace_text(parsed.document, { start: 8, end: 11 }, "three", morgan)?
+	silent = Docx.replace_text(parsed.document, { start: 8, end: 11 }, "three", Untracked)?
+	listed = Docx.revisions(tracked).map(|change| (change.kind, change.author, change.text))
+	prefixed = Docx.insert_text(parsed.document, 19, "Rent ", Untracked)?
+	bold = match Docx.body(prefixed) {
+		[_, Paragraph({ properties: _, content: [Run(added), ..] })] => added.properties.bold == On and added.content == [Text("Rent ")]
+		_ => Bool.False
+	}
+	deleted = Docx.delete_text(parsed.document, { start: 5, end: 11 }, morgan)?
+	Docx.text(silent) == "Rent is three years.\nDue\n"
+		and Docx.text(tracked) == Docx.text(silent)
+		and Docx.final_text(tracked) == Docx.text(silent)
+		and Docx.original_text(tracked) == before
+		and listed == [(Deletion, "Morgan", "two"), (Insertion, "Morgan", "three")]
+		and Docx.revisions(silent).is_empty()
+		and Docx.text(prefixed) == "Rent is two years.\nRent Due\n"
+		and bold
+		and Docx.text(deleted) == "Rent  years.\nDue\n"
+		and Docx.original_text(deleted) == before
+		and Docx.revisions(deleted).map(|change| change.text) == ["is ", "two"]
+}
+
+## Inserted text goes after the character before its position, inside the
+## hyperlink that character is in unless it ends it; deleting inserted text
+## by a tracked edit puts a deletion inside the insertion, and silently
+## removes it, an emptied insertion going too.
+expect {
+	link = "<w:hyperlink w:anchor='x'><w:r><w:t>link</w:t></w:r></w:hyperlink>"
+	parsed = Docx.parse(package_of("<w:p>${link}<w:ins w:author='A'><w:r><w:t>new</w:t></w:r></w:ins></w:p>")?)?
+	inside = Docx.insert_text(parsed.document, 2, "-", Untracked)?
+	after = Docx.insert_text(parsed.document, 4, "!", Untracked)?
+	linked = |document|
+		match Docx.body(document) {
+			[Paragraph({ properties: _, content: [Hyperlink({ target: _, preserved: _, content }), ..] })] => Document.paragraph_text({ properties: Document.no_paragraph_properties, content })
+			_ => ""
+		}
+	tracked = Docx.delete_text(parsed.document, { start: 4, end: 7 }, Tracked({ author: "B", date: Unset }))?
+	silent = Docx.delete_text(parsed.document, { start: 4, end: 7 }, Untracked)?
+	Docx.text(inside) == "li-nknew\n"
+		and linked(inside) == "li-nk"
+		and Docx.text(after) == "link!new\n"
+		and linked(after) == "link"
+		and Docx.revisions(tracked).map(|change| (change.kind, change.author)) == [(Insertion, "A"), (Deletion, "B")]
+		and Docx.final_text(tracked) == "link\n"
+		and Docx.original_text(tracked) == "link\n"
+		and Docx.revisions(silent).is_empty()
+		and Docx.text(silent) == "link\n"
+}
+
+## An edit's span must lie within the text, hold no line feed and start and
+## end between characters, and its text must hold no line feed.
+expect {
+	parsed = Docx.parse(package_of("<w:p><w:r><w:t>caf\u(e9)</w:t></w:r></w:p><w:p><w:r><w:t>b</w:t></w:r></w:p>")?)?
+	failed = |result| result.map_ok(|_| {})
+	failed(Docx.delete_text(parsed.document, { start: 2, end: 7 }, Untracked)) == Err(LineFeedInSpan({ start: 2, end: 7 }))
+		and failed(Docx.delete_text(parsed.document, { start: 3, end: 4 }, Untracked)) == Err(NotACharacterBoundary(4))
+		and failed(Docx.insert_text(parsed.document, 9, "x", Untracked)) == Err(OutsideText({ start: 9, end: 9 }))
+		and failed(Docx.insert_text(parsed.document, 8, "x", Untracked)) == Err(OutsideText({ start: 8, end: 8 }))
+		and failed(Docx.insert_text(parsed.document, 0, "a\nb", Untracked)) == Err(LineFeedInText("a\nb"))
+		and failed(Docx.insert_text(parsed.document, 0, "x", Tracked({ author: "A", date: Date("soon") }))) == Err(NotADate("soon"))
+		and Docx.text(Docx.insert_text(parsed.document, 6, "x", Untracked)?) == "caf\u(e9)\nxb\n"
+}
+
+## Setting tracking on gives a document without settings a settings part
+## that tracks changes, and setting it off again stops it.
+expect {
+	parsed = Docx.parse(package_of("<w:p/>")?)?
+	on = Docx.set_tracking(parsed.document, On)?
+	written = Docx.parse(Docx.to_bytes(on)?)?
+	off = Docx.set_tracking(written.document, Off)?
+	!Docx.tracks_revisions(parsed.document)
+		and Docx.tracks_revisions(written.document)
+		and !Docx.tracks_revisions(off)
+		and Docx.set_tracking(parsed.document, Off).map_ok(|document| Docx.tracks_revisions(document)) == Ok(Bool.False)
 }

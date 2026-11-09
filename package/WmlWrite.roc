@@ -309,7 +309,42 @@ WmlWrite :: [].{
 		tree = Element({ name: root.name, bindings: root.bindings, attributes: root.attributes, children: List.concat(root.children.drop_if(|child| is_element_named(child, "comment")), $written) })
 		Ok({ tree, relationships: $state.relationships, paragraphs: $paragraphs })
 	}
+
+	## A settings part's tree with revision tracking on or off, the
+	## inverse of [WmlRead.tracks_revisions]: without its
+	## `w:trackRevisions`, and for `On` with one where the schema's sequence
+	## puts it, after the settings that come before it; every other child
+	## as it was. A tree whose root is not WordprocessingML settings gives
+	## a new settings part's.
+	tracking : XmlTree.Node, [On, Off] -> XmlTree.Node
+	tracking = |shell, state| {
+		root = match shell {
+			Element(found) if is_w(found.name, "settings") => found
+			_ => { name: { namespace: Uri(wordprocessingml), local: "settings", prefix: Prefix("w") }, bindings: [], attributes: [], children: [] }
+		}
+		children = root.children.drop_if(|child| is_element_named(child, "trackRevisions"))
+		tree : XmlTree.Node
+		tree = match state {
+			Off => Element({ ..root, children })
+			On => {
+				var $at = 0.U64
+				var $index = 0.U64
+				for child in children {
+					$index = $index + 1
+					if settings_before_tracking.any(|local| is_element_named(child, local)) {
+						$at = $index
+					}
+				}
+				Element({ ..root, children: List.join([children.sublist({ start: 0, len: $at }), [element("trackRevisions", [], [])], children.drop_first($at)]) })
+			}
+		}
+		tree
+	}
 }
+
+# The settings the schema's sequence puts before `w:trackRevisions`.
+settings_before_tracking : List(Str)
+settings_before_tracking = ["writeProtection", "view", "zoom", "removePersonalInformation", "removeDateAndTime", "doNotDisplayPageBoundaries", "displayBackgroundShape", "printPostScriptOverText", "printFractionalCharacterWidth", "printFormsData", "embedTrueTypeFonts", "embedSystemFonts", "saveSubsetFonts", "saveFormsData", "mirrorMargins", "alignBordersAndEdges", "bordersDoNotSurroundHeader", "bordersDoNotSurroundFooter", "gutterAtTop", "hideSpellingErrors", "hideGrammaticalErrors", "activeWritingStyle", "proofState", "formsDesign", "attachedTemplate", "linkStyles", "stylePaneFormatFilter", "stylePaneSortMethod", "documentType", "mailMerge", "revisionView"]
 
 # A note's attributes with its kind: `w:type` in its place, or last where
 # there was none, and none for a `Note`, which is the schema's default.
@@ -2135,4 +2170,17 @@ expect {
 		and part.paragraphs == ["00000002", "00000003", ""]
 		and comments == "${first}${second}${third}</w:comments>"
 		and WmlWrite.comments(Text(""), [comment([paragraph([])]), { ..comment([]), parent: Parent(0) }], { ..no_context, comments: ["0", "1"] }, WmlWrite.taken([])).map_ok(|_| {}) == Err(CommentWithoutParagraph(1))
+}
+
+## Turning tracking on puts `w:trackRevisions` after the settings the schema
+## puts before it and before the rest, replacing one there was; turning it
+## off removes it; a document without settings gets settings that track.
+expect {
+	settings = |inner| XmlTree.parse("<w:settings xmlns:w='${wordprocessingml}'>${inner}</w:settings>".to_utf8(), {}) ?? Text("")
+	rendered = |tree| Str.from_utf8(XmlTree.render(tree) ?? []) ?? ""
+	open = "<w:settings xmlns:w=\"${wordprocessingml}\">"
+	rendered(WmlWrite.tracking(settings("<w:zoom w:percent='100'/><w:trackRevisions w:val='false'/><w:defaultTabStop w:val='720'/>"), On)).ends_with("${open}<w:zoom w:percent=\"100\"/><w:trackRevisions/><w:defaultTabStop w:val=\"720\"/></w:settings>")
+		and rendered(WmlWrite.tracking(settings("<w:defaultTabStop w:val='720'/>"), On)).ends_with("${open}<w:trackRevisions/><w:defaultTabStop w:val=\"720\"/></w:settings>")
+		and rendered(WmlWrite.tracking(settings("<w:trackRevisions/><w:defaultTabStop w:val='720'/>"), Off)).ends_with("${open}<w:defaultTabStop w:val=\"720\"/></w:settings>")
+		and rendered(WmlWrite.tracking(Text(""), On)).ends_with("${open}<w:trackRevisions/></w:settings>")
 }

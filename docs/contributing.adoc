@@ -162,6 +162,19 @@ the edited document's snapshot. The documents and their snapshots go to
 `.roc-docx/review/`, where `oracle-schema-written` validates them and the
 LibreOffice lane compares LibreOffice's reading with the package's.
 
+The redline cases edit every fixture as the `redline` example edits its
+amendment: tracking turned on, one reviewer's changes accepted and another's
+rejected, then the first word of the first line of text replaced, text added
+to the end of that line and the last word of the next line deleted, as
+tracked changes. The edited document's text must be what the same edits
+give made silently, rejecting the new changes must give the text before
+them and accepting them the silent edits' text, and the edited document must
+write twice to the same bytes and read back with the same changes and
+tracking on. Each expectation under `tests/redline/` is the edited
+document's snapshot; the documents and snapshots go to `.roc-docx/redline/`,
+which `oracle-schema-written` and the LibreOffice lane read as they read the
+review cases'.
+
 == Performance ratchets
 
 There are no speed targets. Each fuzz target wraps every public entry point it

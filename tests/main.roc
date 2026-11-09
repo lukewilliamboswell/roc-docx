@@ -12,6 +12,7 @@ import docx.Comments
 import docx.Docx
 import docx.Document
 import docx.Opc
+import docx.Revisions
 import docx.Snapshot
 import docx.WmlWrite
 import docx.XmlTree
@@ -54,6 +55,16 @@ import docx.XmlTree
 ## write twice to the same bytes and read back as the same comments. The
 ## written document and its snapshot, the expectation, are what the schema
 ## and LibreOffice oracles read.
+##
+## Redline: the fixture edited by the session of `examples/redline`, which
+## turns tracking on, accepts one reviewer's changes and rejects another's,
+## then replaces, inserts and deletes text as tracked changes. The edited
+## document's current text must be the same edits made silently; rejecting
+## the new changes must give the text before them and accepting them the
+## silent edits' text; it must write twice to the same bytes and read back
+## with the same changes, tracking on. The written document and its
+## snapshot, the expectation, are what the schema and LibreOffice oracles
+## read.
 main! : List([Utf8(Str), UnixBytes(List(U8)), WindowsU16s(List(U16))]) => Try({}, _)
 main! = |args| {
 	update = args.any(|arg| is_update(arg))
@@ -83,6 +94,7 @@ families = [
 	{ name: "passthrough", extension: ".txt", run: |_, bytes| pass_through(bytes).map_ok(|{ written, report }| { outputs: [{ extension: "", bytes: written }], report }) },
 	{ name: "snapshots", extension: ".json", run: |fixture, bytes| snapshot(fixture, bytes).map_ok(|json| { outputs: [{ extension: ".json", bytes: json.to_utf8() }], report: json }) },
 	{ name: "review", extension: ".json", run: |fixture, bytes| reviewed(fixture, bytes).map_ok(|{ written, json }| { outputs: [{ extension: "", bytes: written }, { extension: ".json", bytes: json.to_utf8() }], report: json }) },
+	{ name: "redline", extension: ".json", run: |fixture, bytes| redlined(fixture, bytes).map_ok(|{ written, json }| { outputs: [{ extension: "", bytes: written }, { extension: ".json", bytes: json.to_utf8() }], report: json }) },
 ]
 
 # Run a family's case for every fixture and report each; the number that failed.
@@ -183,6 +195,103 @@ review = |document| {
 	} else {
 		Ok(resolved)
 	}
+}
+
+# A fixture edited by the redline session, written, with its snapshot naming
+# it where the case writes it; or what went wrong.
+redlined : Str, List(U8) -> Try({ written : List(U8), json : Str }, Str)
+redlined = |fixture, bytes| {
+	parsed = Docx.parse(bytes) ? |problem| "the fixture does not parse: ${Str.inspect(problem)}"
+	settled = settle(parsed.document) ? |problem| "settling the changes failed: ${Str.inspect(problem)}"
+	edited = redline(settled, morgan) ? |problem| "the redline's edits failed: ${Str.inspect(problem)}"
+	silent = redline(settled, Untracked) ? |problem| "the silent edits failed: ${Str.inspect(problem)}"
+	if Docx.text(edited) != Docx.text(silent) {
+		return Err("the tracked edits' text differs from the silent edits'")
+	}
+	rejected = Docx.reject(edited, By("Morgan Reviewer")) ? |problem| "rejecting the redline failed: ${Str.inspect(problem)}"
+	accepted = Docx.accept(edited, By("Morgan Reviewer")) ? |problem| "accepting the redline failed: ${Str.inspect(problem)}"
+	if Docx.text(rejected) != Docx.text(settled) or Docx.text(accepted) != Docx.text(silent) {
+		return Err("rejecting or accepting the redline does not give the text before or after it")
+	}
+	written = Docx.to_bytes(edited) ? |problem| "the redlined document does not write: ${Str.inspect(problem)}"
+	if Docx.to_bytes(edited) != Ok(written) {
+		return Err("writing the redlined document twice gave different bytes")
+	}
+	again = Docx.parse(written) ? |problem| "the redlined document does not parse: ${Str.inspect(problem)}"
+	if Docx.revisions(again.document) != Docx.revisions(edited) or !Docx.tracks_revisions(again.document) {
+		return Err("the redlined document reads back as different changes or does not track them")
+	}
+	path = ".roc-docx/redline/${Str.drop_prefix(fixture, "tests/fixtures/")}"
+	Ok({ written, json: Snapshot.json(again.document, { path, version: "working tree" }) })
+}
+
+# The redline session of `examples/redline`, step for step: tracking on, Ada
+# Reviewer's changes accepted and Grace Author's rejected.
+settle : Document -> Try(Document, Docx.EditError)
+settle = |document| {
+	tracking = Docx.set_tracking(document, On)?
+	accepted = Docx.accept(tracking, By("Ada Reviewer"))?
+	Docx.reject(accepted, By("Grace Author"))
+}
+
+morgan : Revisions.Context
+morgan = Tracked({ author: "Morgan Reviewer", date: Date("2026-11-10T10:00:00Z") })
+
+# Then the first word of the first line of text replaced, text added to the
+# end of that line and the last word of the next line deleted, last first.
+redline : Document, Revisions.Context -> Try(Document, Docx.EditError)
+redline = |document, context| {
+	text = Docx.text(document)
+	lines = lines_of(text)
+	trimmed = match lines.get(1) {
+		Ok(line) => Docx.delete_text(document, last_word(text, line), context)?
+		Err(_) => document
+	}
+	match lines.first() {
+		Ok(line) => {
+			extended = Docx.insert_text(trimmed, line.end, " (as agreed)", context)?
+			Docx.replace_text(extended, first_word(text, line), "Revised", context)
+		}
+
+		Err(_) => Ok(trimmed)
+	}
+}
+
+# The spans of the lines of text that are not empty.
+lines_of : Str -> List(Comments.Span)
+lines_of = |text| {
+	var $lines = List.with_capacity(8)
+	var $start = 0.U64
+	for line in text.split_on("\n") {
+		size = line.to_utf8().len()
+		if size > 0 {
+			$lines = List.append($lines, { start: $start, end: $start + size })
+		}
+		$start = $start + size + 1
+	}
+	$lines
+}
+
+# The span of a line's first word, up to its first space, or the whole line.
+first_word : Str, Comments.Span -> Comments.Span
+first_word = |text, line| {
+	bytes = text.to_utf8()
+	var $at = line.start
+	while $at < line.end and bytes.get($at) != Ok(' ') {
+		$at = $at + 1
+	}
+	{ start: line.start, end: $at }
+}
+
+# The span of a line's last word with the space before it, or the whole line.
+last_word : Str, Comments.Span -> Comments.Span
+last_word = |text, line| {
+	bytes = text.to_utf8()
+	var $at = line.end
+	while $at > line.start and bytes.get($at - 1) != Ok(' ') {
+		$at = $at - 1
+	}
+	{ start: if ($at > line.start) $at - 1 else line.start, end: line.end }
 }
 
 # The span of the first line of text that is not empty.

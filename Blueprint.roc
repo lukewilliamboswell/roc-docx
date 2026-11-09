@@ -45,10 +45,10 @@ config = [
 	Task("fuzz-smoke", [Use("tools"), Run(["scripts/fuzz_smoke.roc"])]),
 	Task("oracle-provision", [Use("oracle"), Run(["python3", "-I", "oracle/provision.py"])]),
 	Task("oracle-schema", [Use("oracle"), Run(["python3", "-I", "oracle/validate_schema.py", "tests/fixtures"])]),
-	Task("oracle-schema-written", [Use("oracle"), Run(["python3", "-I", "oracle/validate_schema.py", ".roc-docx/passthrough", ".roc-docx/generated", ".roc-docx/review"])]),
+	Task("oracle-schema-written", [Use("oracle"), Run(["python3", "-I", "oracle/validate_schema.py", ".roc-docx/passthrough", ".roc-docx/generated", ".roc-docx/review", ".roc-docx/redline"])]),
 	Task("oracle-snapshot", [Use("oracle"), Run(["python3", "-I", "oracle/compare_snapshots.py", "--lane", "pandoc,package", "tests/fixtures"])]),
 	# pandoc, LibreOffice and the package agree on every fixture, LibreOffice reads every passed-through fixture as it reads the
-	# original, and LibreOffice and the package agree on every generated document and every reviewed fixture: a CI job of its
+	# original, and LibreOffice and the package agree on every generated document and every reviewed and redlined fixture: a CI job of its
 	# own, because check does not need LibreOffice.
 	Task("libreoffice", [Use("libreoffice"), Run(["sh", "-c", libreoffice_lane])]),
 	Task("fixtures", [Use("oracle"), Run(["python3", "-I", "oracle/make_fixtures.py"])]),
@@ -60,7 +60,7 @@ config = [
 ]
 
 libreoffice_lane : Str
-libreoffice_lane = "roc tests/main.roc && python3 -I oracle/compare_snapshots.py --lane pandoc,libreoffice,package tests/fixtures && python3 -I oracle/compare_snapshots.py --written libreoffice tests/fixtures .roc-docx/passthrough && python3 -I oracle/compare_snapshots.py --lane libreoffice,package .roc-docx/generated && python3 -I oracle/compare_snapshots.py --lane libreoffice,package .roc-docx/review"
+libreoffice_lane = "roc tests/main.roc && python3 -I oracle/compare_snapshots.py --lane pandoc,libreoffice,package tests/fixtures && python3 -I oracle/compare_snapshots.py --written libreoffice tests/fixtures .roc-docx/passthrough && python3 -I oracle/compare_snapshots.py --lane libreoffice,package .roc-docx/generated && python3 -I oracle/compare_snapshots.py --lane libreoffice,package .roc-docx/review && python3 -I oracle/compare_snapshots.py --lane libreoffice,package .roc-docx/redline"
 
 release_package : System -> Config.Download
 release_package = Recipes.file("https://github.com/lukewilliamboswell/roc-automation/releases/download/tools-0.10.0/release-package-{system}")

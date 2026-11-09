@@ -6,7 +6,8 @@
 The package is the subject of the comparison, not an oracle: its snapshots
 are written by the test driver (`roc tests/main.roc`), the fixtures' by the
 snapshot cases under .roc-docx/snapshots/ and the edited documents' by the
-review cases beside them under .roc-docx/review/. This adapter only finds
+review and redline cases beside them under .roc-docx/review/ and
+.roc-docx/redline/. This adapter only finds
 the one whose `document` names each requested .docx and copies it
 unchanged. It reads no .docx and runs no package code, so the comparison
 sees exactly what the package wrote. A document without a snapshot fails
@@ -18,7 +19,7 @@ import pathlib
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-SNAPSHOTS = [ROOT / ".roc-docx" / "snapshots", ROOT / ".roc-docx" / "review"]
+SNAPSHOTS = [ROOT / ".roc-docx" / "snapshots", ROOT / ".roc-docx" / "review", ROOT / ".roc-docx" / "redline"]
 
 
 def label(document):

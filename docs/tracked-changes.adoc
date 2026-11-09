@@ -4,9 +4,10 @@ This chapter reads the changes a document records under tracking: what was
 inserted, deleted or moved, which paragraph marks, table rows and cells were
 added or removed, which properties changed, by whom and when; the
 document's text with every change accepted or every change rejected; and
-whether the document tracks changes at all; and how the changes are
-written. It continues from <<read-a-documents-text>>, whose blocks and
-current text it builds on.
+whether the document tracks changes at all. It accepts and rejects changes,
+edits a document's text silently or as tracked changes, turns tracking on
+and off, and says how the changes are written. It continues from
+<<read-a-documents-text>>, whose blocks and current text it builds on.
 
 == The text before and after review
 
@@ -145,6 +146,130 @@ A table's grid as it was before a change, which names no author, and a
 row's table property exceptions with their changes are kept as they were
 read, in the grid and the row, and written back unchanged.
 
+== Accept and reject changes
+
+`Docx.accept_all` accepts every tracked change of the body and
+`Docx.reject_all` rejects every one, each giving a new document:
+
+[source,roc]
+----
+{ document, diagnostics: _ } = Docx.parse(bytes)?
+accepted = Docx.accept_all(document)?
+rejected = Docx.reject_all(document)?
+----
+
+The accepted document's text is the original's final text and the rejected
+document's its original text, and neither has a change left. `Docx.accept`
+and `Docx.reject` take the changes a `Revisions.Selection` selects, leaving
+the others as they are:
+
+[source,roc]
+----
+settled = Docx.accept(document, By("Ada Reviewer"))?
+earlier = Docx.reject(settled, Between({ from: "2026-05-07T00:00:00Z", until: "2026-05-08T00:00:00Z" }))?
+first = Docx.accept(earlier, Ids([0]))?
+----
+
+* `All` selects every change.
+* `By(author)` selects the changes one author made.
+* `Between({ from, until })` selects the changes made from `from` up to but
+  not including `until`, both XML Schema dates and times compared as
+  instants, so a change without a date is in no range.
+* `Ids(ids)` selects the changes with these `id`s from `Docx.revisions`.
+  Accepting or rejecting changes takes them out of the list, so the `id`s of
+  the changes after them change: read `Docx.revisions` again before selecting
+  by `id` once more.
+
+What accepting and rejecting do, change by change:
+
+[cols="2,3,3",options="header"]
+|===
+|Change |Accepted |Rejected
+|Inserted content, or content moved here |The content stays, without the change |The content goes
+|Deleted content, or content moved away |The content goes |The content stays, without the change
+|Changed properties |The properties stay; those before go |The properties before come back
+|Inserted paragraph mark, or one moved here |The mark stays |The paragraph joins the next
+|Deleted paragraph mark, or one moved away |The paragraph joins the next |The mark stays
+|Inserted row or cell |It stays |It goes, with its content
+|Deleted row or cell |It goes, with its content |It stays
+|Merged cell |The merge stays |The cell's vertical merge before it comes back
+|===
+
+Content that goes leaves behind the comment and bookmark boundaries and the
+comment references it held, so a comment on it keeps its place. A table left
+without rows goes too. A move's ranges go once every change in them is
+accepted or rejected.
+
+A paragraph that joins the next gives that paragraph its content, at its
+start, and the joined paragraph keeps the next paragraph's properties, since
+the mark that held its own is gone. If the mark also ended a section, the
+section's end goes with it and its text joins the next section, as in Word,
+unless the section ends the body. A paragraph with no paragraph after it to
+join before a table, the end of its cell or the end of the body stays as it
+is. These are the rules `Revisions.text` follows, so the text of an accepted
+document is always the final text, and of a rejected one the original text.
+
+Only the body's changes are accepted or rejected, those `Docx.revisions`
+lists; changes in notes, headers, footers and comments stay. Each edit gives
+the document as `Docx.to_bytes` writes it. `Revisions.accept` and
+`Revisions.reject` do the same to any blocks.
+
+== Edit text as tracked changes
+
+`Docx.replace_text`, `Docx.insert_text` and `Docx.delete_text` change a
+document's text. Each takes a `Revisions.Context` that says how: `Untracked`
+changes the text as it stands, and `Tracked({ author, date })` records the
+edit as tracked changes by that author at that date, which the application
+gives, since the package reads no clock. The same edit is never both.
+
+[source,roc]
+----
+morgan = Tracked({ author: "Morgan Reviewer", date: Date("2026-11-10T10:00:00Z") })
+text = Docx.text(document)
+{ before, after: _ } = text.split_first("thirty days") ? |_| NotFound
+start = before.to_utf8().len()
+span = { start, end: start + "thirty days".to_utf8().len() }
+edited = Docx.replace_text(document, span, "fourteen days", morgan)?
+----
+
+Tracked, the replaced text stays in the document as a deletion and the new
+text follows it as an insertion, so accepting both gives the text edited
+silently and rejecting both gives the text before the edit. Deleting text
+that was inserted earlier puts a deletion inside that insertion.
+
+=== Where a text edit applies
+
+A span, a `Comments.Span` as comments use, is `{ start, end }`: byte offsets
+into the current text `Docx.text` gives. Deleted text is not current text,
+so it has no width: offsets count inserted text and skip deleted text, and
+an edit leaves text already deleted as it is. `Docx.insert_text` takes one
+offset, the empty span at it, and `Docx.delete_text` replaces the span with
+nothing.
+
+* The span's characters go, and so does content with no text strictly
+  inside it, such as a picture, a note reference or a field's marks;
+  comment and bookmark boundaries and comment references stay.
+* The new text goes just after the character before the span's end, inside
+  the hyperlink, field or change that character is in unless the character
+  ends it, and with that character's run properties; where the span ends at
+  the start of a line, at the start of that paragraph, with its first run's
+  properties. A tab in the new text is a tab.
+* An edit changes no other text, so offsets before the span stay and those
+  after it move by the difference in length. Making several edits from the
+  last to the first keeps every offset taken from one text valid.
+
+A span must lie within one line: one that holds a line feed, which ends a
+paragraph or a table's row or cell, fails with `LineFeedInSpan(span)`, and
+new text holding a line feed with `LineFeedInText(text)`. A span that is not
+within the text, ends before it starts, or inserts after the last line fails
+with `OutsideText(span)`, one that starts or ends inside a character with
+`NotACharacterBoundary(offset)`, and a context whose date is not a date and
+time with `NotADate(text)`.
+
+The `redline` example accepts one reviewer's changes and rejects another's,
+then replaces, inserts and deletes text as tracked changes and writes the
+document with tracking on.
+
 == Write tracked changes
 
 `Docx.to_bytes` writes every change the model holds, as <<write-a-document>>
@@ -184,7 +309,8 @@ from the application, never from the clock.
 
 Each change takes an identifier from the space the document's comments and
 bookmarks share, the lowest left, in the order it is written. The tracking
-setting is written as the document's settings hold it.
+setting is written as the document's settings hold it, or as
+`Docx.set_tracking` set it.
 
 == Whether a document tracks changes
 
@@ -201,3 +327,16 @@ if Docx.tracks_revisions(document) {
 ----
 
 A document without settings does not track changes.
+
+`Docx.set_tracking` turns the setting `On` or `Off`, so that the document
+handed to a reviewer records their edits, or stops recording them:
+
+[source,roc]
+----
+for_review = Docx.set_tracking(document, On)?
+----
+
+The setting is written where the schema orders it among the document's
+settings, and a document without settings that is to track changes is given
+a settings part. The setting is Word's: it changes no content, and the
+package's own edits are tracked or not by the context each one takes.

@@ -11,8 +11,10 @@ import docx.Revisions
 import docx.WmlWrite
 import docx.XmlTree
 
-## The final and original text of a document with tracked changes agree with
-## the text of the untracked documents those changes lead to and come from.
+## Accepting and rejecting tracked changes, and the final and original text
+## of a document with them, agree with the untracked documents those changes
+## lead to and come from; a tracked edit accepted is the same edit made
+## silently, and rejected restores the document.
 ##
 ## A program of bytes describes three bodies at once: one with tracked
 ## changes, the untracked body every change accepted gives, built directly
@@ -23,10 +25,20 @@ import docx.XmlTree
 ## paragraph marks inserted, deleted, moved away and moved here, and tables
 ## with rows and cells inserted and deleted. `Revisions.text` of the tracked
 ## body in the final and original views must equal the current text of the
-## accepted and rejected bodies. The tracked body is then written by
-## `WmlWrite.document` into a package that `Docx.parse` must read back as the
-## same body, whose `Docx.final_text` and `Docx.original_text` are those
-## texts again.
+## accepted and rejected bodies, and `Revisions.accept` and
+## `Revisions.reject` of every change must give exactly those bodies. The
+## tracked body is then written by `WmlWrite.document` into a package that
+## `Docx.parse` must read back as the same body, whose `Docx.final_text` and
+## `Docx.original_text` are those texts again.
+##
+## The program also chooses a span of one line of the rejected body's text,
+## or of the accepted body's for a program of odd length, and a replacement.
+## `Revisions.replace` made silently must splice the replacement into the
+## text; made as tracked changes, its final text must be that text and its
+## original text the text before, accepting its changes, all of them or the
+## editor's, must give the silent edit and rejecting them the body before,
+## each the same up to how text is split into runs, and it must write and
+## read back with the same final and original text.
 ##
 ## Allocation ratchets, which only ever move down: the final and original
 ## text of the tracked body take at most linearly many allocations and bytes
@@ -92,14 +104,23 @@ texts! = |program| {
 	if Docx.final_text(parsed.document) != final or Docx.original_text(parsed.document) != original {
 		crash "a written document's final or original text differs"
 	}
+	if Revisions.accept(built.tracked, All) != Ok(built.final) {
+		crash "accepting every change differs from the accepted body"
+	}
+	if Revisions.reject(built.tracked, All) != Ok(built.original) {
+		crash "rejecting every change differs from the rejected body"
+	}
+	edited(program, if (program.len() % 2 == 0) built.original else built.final)
 	{ allocations: stats.allocs + stats.reallocs, requested_bytes: stats.requested_bytes, held_bytes: stats.peak_live_bytes - stats.entry_live_bytes }
 }
 
 # Measured on nightly-2026-11-07: the declared programs, of 68 and 1,088
 # bytes, take 3.3 and 3.1 allocations a byte and hold 1,289 and 4,593 bytes
-# live.
+# live. A program of tables alone costs most: 15.2 allocations a byte for
+# tables of a deleted row (394 for 26 bytes) and 16.1 for tables of three
+# cells (676 for 42), so the allocation ceiling allows 20 a byte.
 linear_allocation_ceiling : U64 -> U64
-linear_allocation_ceiling = |length| 64 + 8 * length
+linear_allocation_ceiling = |length| 64 + 20 * length
 
 linear_memory_ceiling : U64 -> U64
 linear_memory_ceiling = |length| 16_384 + 64 * length
@@ -132,6 +153,101 @@ large_program = List.join(List.repeat(program_unit, 64))
 # table, a hyperlink, a deleted field and marks moved away and here.
 program_unit : List(U8)
 program_unit = [1, 2, 3, 6, 4, 7, 8, 5, 0, 9, 10, 11, 12, 13, 1, 14, 0]
+
+# A tracked edit of an untracked body against the same edit made silently.
+edited : List(U8), List(Document.Block) -> {}
+edited = |program, body| {
+	text = Revisions.text(body, Current).to_utf8()
+	first = (program.first() ?? 0).to_u64() % text.len()
+	last = first + (program.last() ?? 0).to_u64() % 8
+	line_end = text.drop_first(first).find_first_index(|byte| byte == 10) ?? 0
+	span = { start: first, end: if (last < first + line_end) last else first + line_end }
+	replacement = match program.len() % 3 {
+		0 => "new"
+		1 => ""
+		_ => "t\tx"
+	}
+	silent = Revisions.replace(body, span, replacement, Untracked) ?? crash "a silent edit failed"
+	tracked = Revisions.replace(body, span, replacement, Tracked({ author: "Morgan", date: Date("2026-11-10T09:00:00Z") })) ?? crash "a tracked edit failed"
+	spliced = List.join([text.sublist({ start: 0, len: span.start }), replacement.to_utf8(), text.drop_first(span.end)])
+	if Revisions.text(silent, Current).to_utf8() != spliced {
+		crash "a silent edit's text is not the replacement spliced in"
+	}
+	if Revisions.text(tracked, Final) != Revisions.text(silent, Current) or Revisions.text(tracked, Original) != Revisions.text(body, Current) {
+		crash "a tracked edit's final or original text differs"
+	}
+	if (Revisions.accept(tracked, All) ?? []).map(joined) != silent.map(joined) or (Revisions.accept(tracked, By("Morgan")) ?? []).map(joined) != silent.map(joined) {
+		crash "accepting a tracked edit differs from the silent edit"
+	}
+	if (Revisions.reject(tracked, All) ?? []).map(joined) != body.map(joined) {
+		crash "rejecting a tracked edit does not restore the body"
+	}
+	written = WmlWrite.document(shell, tracked, context) ?? crash "a tracked edit did not write"
+	main = XmlTree.render(written.tree) ?? crash "a tracked edit did not render"
+	graph = {
+		relationships: [{ id: "rId1", kind: Opc.officedocument_relationship, target: "/word/document.xml", mode: Internal }],
+		parts: [{ name: "/word/document.xml", content_type: main_type, relationships: written.relationships }],
+	}
+	parsed = Docx.parse(Opc.to_bytes(graph, |_| Bytes(main)) ?? crash "a tracked edit did not package") ?? crash "a tracked edit did not parse"
+	if Docx.final_text(parsed.document) != Revisions.text(silent, Current) or Docx.original_text(parsed.document) != Revisions.text(body, Current) {
+		crash "a written tracked edit's final or original text differs"
+	}
+	{}
+}
+
+# A block with every two neighbouring runs of the same properties joined into
+# one and neighbouring text joined, through tables, hyperlinks, fields and
+# changes, so that blocks compare whatever runs their text is split into.
+joined : Document.Block -> Document.Block
+joined = |block|
+	match block {
+		Paragraph(paragraph) => Paragraph({ ..paragraph, content: joined_inlines(paragraph.content) })
+		Table(table) => Table({ ..table, content: table.content.map(joined_table) })
+		_ => block
+	}
+
+joined_table : Document.TableContent -> Document.TableContent
+joined_table = |item|
+	match item {
+		Row(row) => Row({ ..row, content: row.content.map(joined_cell) })
+		_ => item
+	}
+
+joined_cell : Document.RowContent -> Document.RowContent
+joined_cell = |item|
+	match item {
+		Cell(cell) => Cell({ ..cell, content: cell.content.map(joined) })
+		_ => item
+	}
+
+joined_inlines : List(Document.Inline) -> List(Document.Inline)
+joined_inlines = |inlines|
+	inlines.fold(
+		[],
+		|out, inline| {
+			next = match inline {
+				Hyperlink({ target, preserved, content }) => Hyperlink({ target, preserved, content: joined_inlines(content) })
+				SimpleField({ code, preserved, content }) => SimpleField({ code, preserved, content: joined_inlines(content) })
+				Revision(revision) => Revision({ ..revision, content: joined_inlines(revision.content) })
+				_ => inline
+			}
+			match (out.last(), next) {
+				(Ok(Run(before)), Run(run)) if before.properties == run.properties => List.append(out.drop_last(1), Run({ ..run, content: joined_text(List.concat(before.content, run.content)) }))
+				_ => List.append(out, next)
+			}
+		},
+	)
+
+joined_text : List(Document.RunContent) -> List(Document.RunContent)
+joined_text = |content|
+	content.fold(
+		[],
+		|out, item|
+			match (out.last(), item) {
+				(Ok(Text(before)), Text(more)) => List.append(out.drop_last(1), Text(Str.concat(before, more)))
+				_ => List.append(out, item)
+			},
+	)
 
 main_type : Str
 main_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"
@@ -224,8 +340,9 @@ step = |state, kind, variant|
 		7 => end(state, [Insertion])
 		8 => adding(state, [change(Deletion, [run("x"), change(Insertion, [run("y")])])], [], [run("x")])
 		9 => {
-			formatted = Run({ properties: { ..Document.no_run_properties, bold: On, change: [{ author: "Ada", date: Date(stamp), preserved: [], previous: Document.run_properties_with(Unset) }] }, content: [Text("f")] })
-			adding(state, [formatted], [run("f")], [run("f")])
+			bold = { ..Document.no_run_properties, bold: On }
+			formatted = Run({ properties: { ..bold, change: [{ author: "Ada", date: Date(stamp), preserved: [], previous: Document.run_properties_with(Unset) }] }, content: [Text("f")] })
+			adding(state, [formatted], [Run({ properties: bold, content: [Text("f")] })], [run("f")])
 		}
 
 		10 => tabled(end(state, []), variant)

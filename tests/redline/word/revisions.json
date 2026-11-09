@@ -1,0 +1,35 @@
+{
+  "schema": "roc-docx-snapshot/1",
+  "producer": {"name": "roc-docx", "version": "working tree"},
+  "document": ".roc-docx/redline/word/revisions.docx",
+  "keys": ["blocks.kind", "blocks.level", "blocks.list", "blocks.text", "blocks.rows", "blocks.runs.bold", "blocks.runs.italic", "blocks.runs.underline", "blocks.runs.strike", "blocks.runs.superscript", "blocks.runs.subscript", "blocks.runs.link", "notes.kind", "notes.text", "comments.author", "comments.date", "comments.text", "comments.anchor", "comments.thread", "comments.resolved", "revisions.kind", "revisions.author", "revisions.date", "revisions.text", "sections.page_width", "sections.page_height", "sections.orientation", "sections.margin_top", "sections.margin_bottom", "sections.margin_left", "sections.margin_right", "sections.header", "sections.footer", "properties.title", "properties.subject", "properties.creator", "properties.keywords", "properties.description", "properties.last_modified_by", "properties.created", "properties.modified"],
+  "blocks": [
+    {"kind": "heading", "level": 1, "list": "", "text": "Revised Agreement Amendment (as agreed)", "runs": [{"text": "Revised Agreement Amendment (as agreed)", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "The Supplier shall deliver the Goods within five working days of each", "runs": [{"text": "The Supplier shall deliver the Goods within five working days of each", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Payment is due monthly. Late payments bear interest.", "runs": [{"text": "Payment is due monthly. Late payments bear interest.", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Interest accrues daily.", "runs": [{"text": "Interest accrues daily.", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "This paragraph was inserted in full.", "runs": [{"text": "This paragraph was inserted in full.", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "This paragraph's mark was deleted, joining it to the next.The joined paragraph continues here.", "runs": [{"text": "This paragraph's mark was deleted, joining it to the next.The joined paragraph continues here.", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "The parties agree in writing to any variation.", "runs": [{"text": "The parties agree in writing to any variation.", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "This paragraph was centred under tracking.", "runs": [{"text": "This paragraph was centred under tracking.", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "This agreement was signed on .", "runs": [{"text": "This agreement was signed on .", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "table", "level": 0, "list": "", "text": "", "runs": [], "rows": [["Milestone", "Due"], ["Design", "June"], ["Launch", "September"]]},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Responsibilities:", "runs": [{"text": "Responsibilities:", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "table", "level": 0, "list": "", "text": "", "runs": [], "rows": [["Owner", "Lin"], ["Review", "October"], ["Sign-off", "Board"], ["", "Legal"]]},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "End of amendment.", "runs": [{"text": "End of amendment.", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []}
+  ],
+  "notes": [],
+  "comments": [],
+  "revisions": [
+    {"kind": "deletion", "author": "Morgan Reviewer", "date": "2026-11-10T10:00:00Z", "text": "Supply"},
+    {"kind": "insertion", "author": "Morgan Reviewer", "date": "2026-11-10T10:00:00Z", "text": "Revised"},
+    {"kind": "insertion", "author": "Morgan Reviewer", "date": "2026-11-10T10:00:00Z", "text": " (as agreed)"},
+    {"kind": "deletion", "author": "Morgan Reviewer", "date": "2026-11-10T10:00:00Z", "text": " order."},
+    {"kind": "insertion", "author": "Lin Editor", "date": "2026-05-08T16:45:00Z", "text": "This paragraph was inserted in full.\n"},
+    {"kind": "format", "author": "Lin Editor", "date": "2026-05-08T16:45:00Z", "text": "This paragraph was centred under tracking."}
+  ],
+  "sections": [
+    {"page_width": 11906, "page_height": 16838, "orientation": "portrait", "margin_top": 1440, "margin_bottom": 1440, "margin_left": 1440, "margin_right": 1440, "header": "", "footer": ""}
+  ],
+  "properties": {"title": "Supply Agreement Amendment", "subject": "", "creator": "Ada Reviewer", "keywords": "", "description": "", "last_modified_by": "Grace Author", "created": "2026-11-09T11:03:00Z", "modified": "2026-11-09T11:03:00Z"}
+}

@@ -21,6 +21,19 @@
           "name": "default",
           "stderr": "",
           "stdin": "",
+          "stdout": "Tracked changes in redlined.docx, tracking on:\n  [0] Morgan Reviewer deleted text: \"Supply\"\n  [1] Morgan Reviewer inserted text: \"Revised\"\n  [2] Morgan Reviewer inserted text: \" (as agreed)\"\n  [3] Morgan Reviewer deleted text: \" order.\"\n  [4] Lin Editor inserted text: \"This paragraph was inserted in full.\"\n  [5] Lin Editor inserted a paragraph mark\n  [6] Lin Editor changed the formatting of a paragraph: \"This paragraph was centred under tracking.\"\n  [7] Lin Editor changed the formatting of a row\n  [8] Lin Editor changed the formatting of a cell\n  [9] Lin Editor changed the formatting of a cell\n  [10] Lin Editor inserted a cell\n  [11] Lin Editor deleted a cell\nFinal text:\nRevised Agreement Amendment (as agreed)\nThe Supplier shall deliver the Goods within five working days of each\nPayment is due monthly. Late payments bear interest.\nInterest accrues daily.\nThis paragraph was inserted in full.\nThis paragraph's mark was deleted, joining it to the next.The joined paragraph continues here.\nThe parties agree in writing to any variation.\nThis paragraph was centred under tracking.\nThis agreement was signed on .\nMilestone\nDue\nDesign\nJune\nLaunch\nSeptember\nResponsibilities:\nOwner\nLin\nReview\nSign-off\nBoard\n\nLegal\nEnd of amendment.\n\n"
+        }
+      ],
+      "path": "examples/redline/main.roc"
+    },
+    {
+      "cases": [
+        {
+          "args": [],
+          "exit_code": 0,
+          "name": "default",
+          "stderr": "",
+          "stdin": "",
           "stdout": "Wrote repackaged.docx:\n  /_rels/.rels  (generated)\n  /word/document.xml  (copied)\n  /word/_rels/document.xml.rels  (generated)\n  /docProps/app.xml  (copied)\n  /docProps/core.xml  (copied)\n  /docProps/custom.xml  (copied)\n  /word/numbering.xml  (copied)\n  /word/styles.xml  (copied)\n  /word/settings.xml  (copied)\n  /word/webSettings.xml  (copied)\n  /word/fontTable.xml  (copied)\n  /word/theme/theme1.xml  (copied)\n  /word/footnotes.xml  (copied)\n  /word/comments.xml  (copied)\n  /word/_rels/footnotes.xml.rels  (copied)\n"
         }
       ],
