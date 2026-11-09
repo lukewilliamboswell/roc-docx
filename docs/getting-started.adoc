@@ -12,9 +12,14 @@ binary parts. `[Content_Types].xml` labels every part, and relationship parts
 link a source part to its targets, so the body is found by following the
 package's `officeDocument` relationship rather than by its file name.
 
-`Opc.open` reads the archive within resource limits and labels every part.
+`Opc.open` reads the archive within resource limits and labels every part
+with its content type and size. It keeps the archive as it is and inflates a
+part only when you ask for it with `Opc.part_bytes`, so opening a document
+costs memory in proportion to its archive rather than to its content.
 `Opc.main_document` follows the relationship to the body, and
-`Opc.relationships` lists what a part links to.
+`Opc.relationships` lists what a part links to. Part names compare without
+regard to ASCII case, as the conventions require, so `/word/document.xml`
+and `/Word/Document.xml` name the same part.
 
 == The example
 
@@ -49,8 +54,26 @@ Opc.open(bytes, { max_entries: 64 })
 
 The defaults allow 4096 entries, 64 MiB per part and 256 MiB in total. A
 document over a limit fails with the limit's own error, such as
-`TooManyEntries(count)` or `PartTooLarge({ name, bytes })`, before anything
-is decompressed beyond it. The other errors say what is wrong with the archive,
-such as `DuplicatePart(name)` for two parts with the same name or
-`PartSizeMismatch({ name, declared })` for a part whose content is not the size
-its entry declares, or with `[Content_Types].xml`; none of them is a crash.
+`TooManyEntries(count)`, `PartTooLarge({ name, bytes })` or
+`PackageTooLarge(bytes)`. The limits are checked against the sizes the
+archive declares, before anything is decompressed, so a small archive that
+would inflate to gigabytes is refused without inflating it. `Opc.open` checks,
+in order:
+
+. the archive's own size against the total limit;
+. the archive's directory of entries, which is read without decompressing
+  anything;
+. the number of entries;
+. each entry's declared size against the part limit, and their running total
+  against the total limit;
+. that no two part names differ only in case;
+. `[Content_Types].xml`, which is decompressed and read;
+. a content type for every part, and each relationship part, decompressed.
+
+A part is decompressed into a buffer of the size its entry declares and no
+further, so an archive that lies about a size fails with
+`PartSizeMismatch({ name, declared })` at the declared size rather than
+running on. The other errors say what is wrong with the archive, such as
+`DuplicatePart(name)` for two parts with the same name, or with
+`[Content_Types].xml`; none of them is a crash. `Opc.part_bytes` reports the
+same kinds of damage for the part it decompresses.

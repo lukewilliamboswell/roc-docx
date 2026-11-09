@@ -10,9 +10,10 @@ import docx.Opc
 # List the parts of a Word document, then the relationships of its main part.
 #
 # A .docx is a ZIP package of XML parts. `Opc.open` reads the package within
-# the default resource limits and labels every part with its content type;
-# `Opc.main_document` follows the package's officeDocument relationship to the
-# WordprocessingML body, wherever the producer put it.
+# the default resource limits and labels every part with its content type and
+# size without inflating it; `Opc.main_document` follows the package's
+# officeDocument relationship to the WordprocessingML body, wherever the
+# producer put it.
 #
 #     cd examples/inspect && roc main.roc            # inspects review.docx beside this file
 #     cd examples/inspect && roc main.roc other.docx
@@ -26,8 +27,8 @@ main! = |args| {
 	pkg = Opc.open(bytes, {})?
 
 	Stdout.line!("Parts of ${file}:")?
-	for part in pkg.parts {
-		Stdout.line!("  ${part.name}  (${part.content_type}, ${part.bytes.len().to_str()} bytes)")?
+	for part in Opc.parts(pkg) {
+		Stdout.line!("  ${part.name}  (${part.content_type}, ${part.size.to_str()} bytes)")?
 	}
 
 	document = Opc.main_document(pkg)?

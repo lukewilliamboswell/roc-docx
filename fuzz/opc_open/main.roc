@@ -5,71 +5,218 @@ app [target] {
 }
 
 import fuzz.Fuzz
+import docx.Limits
 import docx.Opc
 import zip.Zip
 
 ## Any bytes open to `Ok` or a structured `Err`, never a crash; opening the
 ## same bytes twice gives the same result; an opened package labels every
-## part with a name and a content type.
+## part with a name and a content type, and every part reads back as the size
+## it declares or as an error.
 ##
-## Allocation ratchets, which only ever move down: opening allocates at most
-## linearly in the input, and the declared minimal package allocates no more
-## than it did when the ceiling was set. Raising a ceiling needs a cause
-## recorded in the pull request.
+## Opening runs under lowered limits so that the declared bombs are bombs. It
+## holds at most a constant plus multiples of the archive and of the parts it
+## inflates, `[Content_Types].xml` and the relationship parts; reading a part
+## holds at most a constant plus the part's declared size beyond what was live
+## before. Allocation counts are linear in the input.
+##
+## Allocation ratchets, which only ever move down: the declared examples
+## allocate no more than they did when their ceilings were set. Raising a
+## ceiling needs a cause recorded in the pull request.
 test! : List(U8) => Fuzz.Outcome
 test! = |bytes| {
-	{ value: first, stats } = Fuzz.measure!("opc-open", || Opc.open(bytes, {}))
+	example = declared_example(bytes)
+	{ value: first, stats } = Fuzz.measure!("opc-open", || Opc.open(bytes, limits))
 	allocations = stats.allocs + stats.reallocs
-	if allocations > linear_allocation_ceiling(bytes.len()) {
-		crash "Opc.open allocated more than linearly in its input"
+	if allocations > allocation_ceiling(example, bytes.len()) {
+		crash "Opc.open allocated more than its ceiling"
 	}
-	if stats.peak_live_bytes > linear_memory_ceiling(bytes.len()) {
-		crash "Opc.open held more than linearly many bytes live"
+	if stats.peak_live_bytes > open_memory_ceiling(bytes.len(), inflated_at_open(bytes)) {
+		crash "Opc.open held more than its archive and the parts it inflates allow"
 	}
-	if bytes == minimal_package() and allocations > minimal_package_allocation_ceiling {
-		crash "Opc.open allocated more on the minimal package than its ceiling"
-	}
-	if first != Opc.open(bytes, {}) {
+	opened = first.map_ok(Opc.parts)
+	if opened != Opc.open(bytes, limits).map_ok(Opc.parts) {
 		crash "opening the same bytes twice disagreed"
+	}
+	match example {
+		TruthfulBomb =>
+			if opened != Err(PartTooLarge({ name: "word/document.xml", bytes: bomb_bytes })) or stats.peak_live_bytes > bytes.len() + limits.max_part_bytes {
+				crash "the truthful bomb was not refused by its declared size within the archive and the part limit"
+			}
+		_ => {}
 	}
 	match first {
 		Ok(pkg) => {
-			if pkg.parts.any(|part| !part.name.starts_with("/") or part.content_type.is_empty()) {
-				crash "an opened part lacks an absolute name or a content type"
+			for part in Opc.parts(pkg) {
+				if !part.name.starts_with("/") or part.content_type.is_empty() {
+					crash "an opened part lacks an absolute name or a content type"
+				}
+				{ value: read, stats: read_stats } = Fuzz.measure!("opc-part-bytes", || Opc.part_bytes(pkg, part.name))
+				if read_stats.peak_live_bytes - read_stats.entry_live_bytes > read_memory_ceiling(part.size) {
+					crash "Opc.part_bytes held more than the part's declared size"
+				}
+				match read {
+					Ok(content) =>
+						if content.len() != part.size {
+							crash "a part read back at a size other than it declares"
+						}
+					Err(_) =>
+						if example == MinimalPackage or example == CompressiblePackage {
+							crash "a part of a declared package did not read"
+						}
+				}
+				if example == LyingBomb and part.name == "/word/document.xml" {
+					if read != Err(PartSizeMismatch({ name: part.name, declared: lying_size })) or read_stats.peak_live_bytes > bytes.len() + limits.max_part_bytes {
+						crash "the lying bomb was not stopped at its declared size within the archive and the part limit"
+					}
+				}
 			}
 			Fuzz.keep
 		}
-		Err(_) => Fuzz.keep
+		Err(_) =>
+			if example == LyingBomb or example == CompressiblePackage or example == MinimalPackage {
+				crash "a declared package failed to open"
+			} else {
+				Fuzz.keep
+			}
 	}
 }
 
-# Measured 52 allocations and 5 reallocations on nightly-2026-11-07 with
-# roc-zip 0.3.0-rc1; the fixed part is the ZIP layer's decode tables.
-minimal_package_allocation_ceiling : U64
-minimal_package_allocation_ceiling = 57
+limits : Limits
+limits = { max_entries: 64, max_part_bytes: 65_536, max_total_bytes: 1_048_576 }
 
-linear_allocation_ceiling : U64 -> U64
-linear_allocation_ceiling = |input_bytes| 16 + input_bytes
+# The declared sizes of the parts opening inflates; nothing when the central
+# directory does not read.
+inflated_at_open : List(U8) -> U64
+inflated_at_open = |bytes|
+	match Zip.entries(bytes) {
+		Ok(entries) =>
+			entries
+				.keep_if(|entry| entry.path == "[Content_Types].xml" or entry.path.ends_with(".rels"))
+				.fold(0, |total, entry| total.plus_saturated(entry.uncompressed_size))
+		Err(_) => 0
+	}
 
-linear_memory_ceiling : U64 -> U64
-linear_memory_ceiling = |input_bytes| 16_384 + 32 * input_bytes
+open_memory_ceiling : U64, U64 -> U64
+open_memory_ceiling = |input_bytes, inflated_bytes| 16_384 + 32 * input_bytes + 32 * inflated_bytes
 
-# The smallest package `Opc.main_document` resolves: content types, the
-# package relationships and a main document part.
-minimal_package : () -> List(U8)
-minimal_package = || {
-	content_types = "<Types xmlns='http://schemas.openxmlformats.org/package/2006/content-types'><Default Extension='rels' ContentType='application/vnd.openxmlformats-package.relationships+xml'/><Default Extension='xml' ContentType='application/xml'/><Override PartName='/word/document.xml' ContentType='application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml'/></Types>"
-	rels = "<Relationships xmlns='http://schemas.openxmlformats.org/package/2006/relationships'><Relationship Id='rId1' Type='http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument' Target='word/document.xml'/></Relationships>"
-	document = "<w:document xmlns:w='http://schemas.openxmlformats.org/wordprocessingml/2006/main'><w:body><w:p/></w:body></w:document>"
+read_memory_ceiling : U64 -> U64
+read_memory_ceiling = |part_bytes| 16_384 + part_bytes
+
+# Exact ceilings for the declared examples, as allocations plus
+# reallocations measured on nightly-2026-11-07 with roc-zip 0.3.0-rc1, and a
+# linear one for every other input. The packages that open take 51 and 5,
+# mostly the ZIP layer's decode tables and the content types; the truthful
+# bomb takes 3 and is refused before anything is inflated.
+allocation_ceiling : [MinimalPackage, TruthfulBomb, LyingBomb, CompressiblePackage, Generated], U64 -> U64
+allocation_ceiling = |example, input_bytes|
+	match example {
+		MinimalPackage => 56
+		TruthfulBomb => 3
+		LyingBomb => 56
+		CompressiblePackage => 56
+		Generated => 16 + input_bytes
+	}
+
+declared_example : List(U8) -> [MinimalPackage, TruthfulBomb, LyingBomb, CompressiblePackage, Generated]
+declared_example = |bytes|
+	if bytes == minimal_package() {
+		MinimalPackage
+	} else if bytes == truthful_bomb() {
+		TruthfulBomb
+	} else if bytes == lying_bomb() {
+		LyingBomb
+	} else if bytes == compressible_package() {
+		CompressiblePackage
+	} else {
+		Generated
+	}
+
+content_types : Str
+content_types = "<Types xmlns='http://schemas.openxmlformats.org/package/2006/content-types'><Default Extension='rels' ContentType='application/vnd.openxmlformats-package.relationships+xml'/><Default Extension='xml' ContentType='application/xml'/><Override PartName='/word/document.xml' ContentType='application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml'/></Types>"
+
+package_rels : Str
+package_rels = "<Relationships xmlns='http://schemas.openxmlformats.org/package/2006/relationships'><Relationship Id='rId1' Type='http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument' Target='word/document.xml'/></Relationships>"
+
+# A package of content types, the package relationships and this main
+# document part.
+package_with : List(U8) -> List(U8)
+package_with = |document|
 	Zip.create(
 		[
 			{ path: "[Content_Types].xml", content: content_types.to_utf8() },
-			{ path: "_rels/.rels", content: rels.to_utf8() },
-			{ path: "word/document.xml", content: document.to_utf8() },
+			{ path: "_rels/.rels", content: package_rels.to_utf8() },
+			{ path: "word/document.xml", content: document },
 		],
 		Fastest,
-	) ?? crash "minimal_package: the paths are valid"
+	) ?? crash "package_with: the paths are valid"
+
+# The smallest package `Opc.main_document` resolves.
+minimal_package : () -> List(U8)
+minimal_package = || package_with("<w:document xmlns:w='http://schemas.openxmlformats.org/wordprocessingml/2006/main'><w:body><w:p/></w:body></w:document>".to_utf8())
+
+# A main document of a mebibyte of zeros, which compresses to a 1,900-byte
+# archive, declaring its true size: over the part limit.
+truthful_bomb : () -> List(U8)
+truthful_bomb = || package_with(List.repeat(0, bomb_bytes))
+
+bomb_bytes : U64
+bomb_bytes = 1_048_576
+
+# The same bomb with its central directory declaring a size within the part
+# limit, so that only inflating it can find the lie.
+lying_bomb : () -> List(U8)
+lying_bomb = || declare_size(truthful_bomb(), "word/document.xml", lying_size)
+
+lying_size : U64
+lying_size = 4_096
+
+# A legitimate package whose main document is 58 KB of repeated paragraphs,
+# within the part limit, in a 1,033-byte archive.
+compressible_package : () -> List(U8)
+compressible_package = || {
+	paragraph = "<w:p><w:r><w:t>The same sentence, again.</w:t></w:r></w:p>"
+	package_with("<w:document xmlns:w='http://schemas.openxmlformats.org/wordprocessingml/2006/main'><w:body>${Str.repeat(paragraph, 1_000)}</w:body></w:document>".to_utf8())
 }
+
+# Rewrite the uncompressed size that the central directory declares for one
+# entry. The archive has no comment and no ZIP64 records, as `Zip.create`
+# writes it for these sizes.
+declare_size : List(U8), Str, U64 -> List(U8)
+declare_size = |archive, path, size| {
+	directory_offset = read_u32(archive, archive.len() - 22 + 16)
+	var $offset = directory_offset
+	var $patched = archive
+	while $offset + 46 <= archive.len() and read_u32(archive, $offset) == 0x02014B50 {
+		name_len = read_u16(archive, $offset + 28)
+		extra_len = read_u16(archive, $offset + 30)
+		comment_len = read_u16(archive, $offset + 32)
+		name = archive.sublist({ start: $offset + 46, len: name_len })
+		if name == path.to_utf8() {
+			$patched = write_u32($patched, $offset + 24, size)
+		}
+		$offset = $offset + 46 + name_len + extra_len + comment_len
+	}
+	$patched
+}
+
+read_u16 : List(U8), U64 -> U64
+read_u16 = |bytes, at|
+	byte_at(bytes, at) + 256 * byte_at(bytes, at + 1)
+
+read_u32 : List(U8), U64 -> U64
+read_u32 = |bytes, at|
+	read_u16(bytes, at) + 65_536 * read_u16(bytes, at + 2)
+
+byte_at : List(U8), U64 -> U64
+byte_at = |bytes, at| bytes.get(at).map_ok(|byte| byte.to_u64()) ?? 0
+
+write_u32 : List(U8), U64, U64 -> List(U8)
+write_u32 = |bytes, at, value|
+	bytes
+		.sublist({ start: 0, len: at })
+		.concat([1, 256, 65_536, 16_777_216].map(|unit| ((value // unit) % 256).to_u8_wrap()))
+		.concat(bytes.drop_first(at + 4))
 
 target = Fuzz.target_with!({
 	name: "opc-open-never-crashes",
@@ -77,6 +224,9 @@ target = Fuzz.target_with!({
 		Fuzz.example({ name: "empty", revision: "1", make: || [] }),
 		Fuzz.example({ name: "zip-signature-only", revision: "1", make: || [0x50, 0x4B, 0x03, 0x04] }),
 		Fuzz.example({ name: "minimal-package", revision: "1", make: minimal_package }),
+		Fuzz.example({ name: "truthful-bomb", revision: "1", make: truthful_bomb }),
+		Fuzz.example({ name: "lying-bomb", revision: "1", make: lying_bomb }),
+		Fuzz.example({ name: "compressible-package", revision: "1", make: compressible_package }),
 	],
 	generator: Fuzz.bytes,
 	test!,
