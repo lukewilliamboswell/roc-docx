@@ -21,14 +21,16 @@ import XmlTree
 
 Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.Node) }.{
 
-	## A block of the body, in reading order: a paragraph; a table; an
-	## element the model does not represent whose content is still read as
-	## blocks, kept without its children in `element` (a content control and
-	## its content, custom XML); or any other element, kept whole as it was
-	## read.
+	## A block of the body, in reading order: a paragraph; a table; the end
+	## of a section, with the section's properties, after the paragraph whose
+	## mark ends it or at the end of the body; an element the model does not
+	## represent whose content is still read as blocks, kept without its
+	## children in `element` (a content control and its content, custom XML);
+	## or any other element, kept whole as it was read.
 	Block := [
 		Paragraph(Paragraph),
 		Table(Table),
+		Section(Section),
 		Container({ element : XmlTree.Node, content : List(Block) }),
 		Preserved(XmlTree.Node),
 	].{
@@ -404,6 +406,87 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 	## as last calculated, as text. Fields are never evaluated.
 	Field : { code : Str, result : Str }
 
+	## A section's properties as the section states them: where it starts
+	## (on the next page, continuing the page, on the next even or odd page,
+	## or in the next column); its page's size in twips and orientation; its
+	## margins in twips, from the page's edges to the body, from the top and
+	## bottom edges to the header and footer, and the gutter kept for
+	## binding, the top and bottom negative when the body may run into the
+	## header or footer; its columns of text, of equal width with the space
+	## between them or each with its own width and the space after it, with
+	## or without a line between them; its page numbers' format, by its name
+	## in the schema (`decimal`, `lowerRoman` and so on), and the number its
+	## first page starts from; whether its first page has its own header and
+	## footer; and its headers and footers. Every other property element is
+	## kept as it was read, in order, and so is a property element whose
+	## attributes the model cannot hold.
+	Section : {
+		start : [Unset, NextPage, Continuous, EvenPage, OddPage, NextColumn],
+		page_size : [Unset, Size({ width : U64, height : U64, orientation : [Portrait, Landscape] })],
+		margins : [Unset, Margins({ top : I64, right : U64, bottom : I64, left : U64, header : U64, footer : U64, gutter : U64 })],
+		columns : [Unset, Equal({ count : U64, space : U64, separator : [NoLine, Line] }), Unequal({ widths : List({ width : U64, space : U64 }), separator : [NoLine, Line] })],
+		page_numbers : [Unset, PageNumbers({ format : [Unset, Format(Str)], start : [Unset, Start(U64)] })],
+		title_page : [Unset, On, Off],
+		headers : List(HeaderFooter),
+		footers : List(HeaderFooter),
+		preserved : List(XmlTree.Node),
+	}
+
+	## A section's header or footer: which pages it is for, every page, the
+	## section's first page or even pages, and the part holding its content,
+	## which [Docx.header_footer] reads. A section without one of a kind has
+	## the previous section's.
+	HeaderFooter : { kind : [Default, First, Even], part : Str }
+
+	## A document's core properties: its title, subject, author (`creator`),
+	## keywords, description, who last modified it, its revision number and
+	## when it was created and last modified, each date as the document
+	## writes it in the W3C date and time format, such as
+	## `2026-11-09T11:03:00Z`. A property the document does not give is
+	## `Unset`. Every other property, such as its category or language, is
+	## kept as it was read, in order, and so is one the model cannot hold.
+	CoreProperties : {
+		title : [Unset, Text(Str)],
+		subject : [Unset, Text(Str)],
+		creator : [Unset, Text(Str)],
+		keywords : [Unset, Text(Str)],
+		description : [Unset, Text(Str)],
+		last_modified_by : [Unset, Text(Str)],
+		revision : [Unset, Number(U64)],
+		created : [Unset, Date(Str)],
+		modified : [Unset, Date(Str)],
+		preserved : List(XmlTree.Node),
+	}
+
+	## A document's extended properties, which the application that saved it
+	## writes: the application and its version, the company and manager, the
+	## template it was based on, and the statistics the application counted
+	## when it saved it, with the total editing time in minutes. A property
+	## the document does not give is `Unset`; every other property, such as
+	## the titles of its parts, is kept as it was read, in order, and so is
+	## one the model cannot hold.
+	ExtendedProperties : {
+		application : [Unset, Text(Str)],
+		app_version : [Unset, Text(Str)],
+		company : [Unset, Text(Str)],
+		manager : [Unset, Text(Str)],
+		template : [Unset, Text(Str)],
+		pages : [Unset, Count(U64)],
+		words : [Unset, Count(U64)],
+		characters : [Unset, Count(U64)],
+		characters_with_spaces : [Unset, Count(U64)],
+		lines : [Unset, Count(U64)],
+		paragraphs : [Unset, Count(U64)],
+		total_time : [Unset, Count(U64)],
+		preserved : List(XmlTree.Node),
+	}
+
+	## A custom property, which an application or person adds to a document:
+	## its name and its value, which is text, a whole number, true or false,
+	## or a date in the W3C date and time format. A property whose value is
+	## of another type, or that links to content, is kept as it was read.
+	CustomProperty : [Property({ name : Str, value : [Text(Str), Integer(I64), Boolean(Bool), Date(Str)] }), Preserved(XmlTree.Node)]
+
 	## The target a `HYPERLINK` field code names, as Word and LibreOffice
 	## write links in fields: its first argument is the address, and its `\l`
 	## switch a location in it, or a bookmark of the document when there is
@@ -470,6 +553,10 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 			.map(|field| { code: Str.from_utf8(field.code) ?? "", result: Str.from_utf8(field.result) ?? "" })
 	}
 
+	## The sections that end in blocks, in order, through containers.
+	sections : List(Block) -> List(Section)
+	sections = |blocks| blocks.fold(List.with_capacity(2), sections_of)
+
 	## A paragraph's current text, its tracked changes as they stand: every
 	## run's text, inserted and moved-in text included, deleted and moved-away
 	## text not, and nothing from the content the model keeps without
@@ -531,7 +618,14 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 			(document.graph.parts.find_first(|candidate| candidate.name == source) ? |_| NotFound).relationships
 		}
 		relationship = relationships.find_first(|rel| rel.kind == kind and rel.mode == Internal) ? |_| NotFound
-		part = Opc.part(document.pkg, relationship.target) ? |_| NotFound
+		Document.xml_part(document, relationship.target)
+	}
+
+	## The XML part named `name`, the target of a relationship as the package
+	## resolved it.
+	xml_part : Document, Str -> Try(XmlPart, [NotFound])
+	xml_part = |document, name| {
+		part = Opc.part(document.pkg, name) ? |_| NotFound
 		tree = document.trees.get(part.name) ? |_| NotFound
 		target = document.graph.parts.find_first(|candidate| candidate.name == part.name) ? |_| NotFound
 		Ok({ name: part.name, tree, relationships: target.relationships })
@@ -699,6 +793,14 @@ inline_text_bytes = |text, inline|
 		Preserved(_) => text
 	}
 
+sections_of : List(Document.Section), Document.Block -> List(Document.Section)
+sections_of = |sections, block|
+	match block {
+		Section(section) => List.append(sections, section)
+		Container({ element: _, content }) => content.fold(sections, sections_of)
+		_ => sections
+	}
+
 rows_of : List(Document.Row), Document.TableContent -> List(Document.Row)
 rows_of = |rows, content|
 	match content {
@@ -787,6 +889,7 @@ block_fields = |state, block|
 		Paragraph(paragraph) => to_results(paragraph.content.fold(state, inline_fields), [10])
 		Table(table) => Document.table_rows(table).fold(state, |by_row, row| Document.row_cells(row).fold(by_row, |by_cell, cell| cell.content.fold(by_cell, block_fields)))
 		Container({ element: _, content }) => content.fold(state, block_fields)
+		Section(_) => state
 		Preserved(_) => state
 	}
 

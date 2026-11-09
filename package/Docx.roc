@@ -83,7 +83,9 @@ Docx :: [].{
 	endnotes = |document| notes(document, endnotes_relationship)
 
 	## The fields of a document's body, as [Document.fields] gathers them:
-	## each field's code and its result as last calculated.
+	## each field's code and its result as last calculated. The fields of a
+	## header or footer, such as its page numbers, are those of its blocks,
+	## as [Docx.header_footer] reads them.
 	fields : Document -> List(Document.Field)
 	fields = |document| Document.fields(Docx.body(document))
 
@@ -101,6 +103,43 @@ Docx :: [].{
 			Err(NotFound) => { styles: Styles.empty, diagnostics: [] }
 		}
 	}
+
+	## The sections of a document's body in order, as [Document.sections]
+	## finds them in [Docx.body]. Content after the last section's end, which
+	## a document should not have, is in no section.
+	sections : Document -> List(Document.Section)
+	sections = |document| Document.sections(Docx.body(document))
+
+	## The blocks of the header or footer part named `part`, as a section's
+	## [Document.HeaderFooter] names it, read by [WmlRead.header_footer] with
+	## the part's own relationships. A part that is not in the document, or
+	## is not a header or footer, has no blocks.
+	header_footer : Document, Str -> List(Document.Block)
+	header_footer = |document, part|
+		match Document.xml_part(document, part) {
+			Ok(found) => WmlRead.header_footer(found.tree, { relationships: found.relationships, footnotes: [], endnotes: [] })
+			Err(NotFound) => []
+		}
+
+	## A document's core properties, as [WmlRead.core_properties] reads them
+	## from the part the package's core properties relationship targets. A
+	## document without the part has every property `Unset`.
+	core_properties : Document -> Document.CoreProperties
+	core_properties = |document| WmlRead.core_properties(properties_tree(document, core_properties_relationship))
+
+	## A document's extended properties, as [WmlRead.extended_properties]
+	## reads them from the part the package's extended properties
+	## relationship targets. A document without the part has every property
+	## `Unset`.
+	extended_properties : Document -> Document.ExtendedProperties
+	extended_properties = |document| WmlRead.extended_properties(properties_tree(document, extended_properties_relationship))
+
+	## A document's custom properties in order, as
+	## [WmlRead.custom_properties] reads them from the part the package's
+	## custom properties relationship targets. A document without the part
+	## has none.
+	custom_properties : Document -> List(Document.CustomProperty)
+	custom_properties = |document| WmlRead.custom_properties(properties_tree(document, custom_properties_relationship))
 
 	## The current text of a document's body, its tracked changes as they
 	## stand: every paragraph's text, as [Document.paragraph_text] gives it,
@@ -124,6 +163,24 @@ footnotes_relationship = "http://schemas.openxmlformats.org/officeDocument/2006/
 
 endnotes_relationship : Str
 endnotes_relationship = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/endnotes"
+
+core_properties_relationship : Str
+core_properties_relationship = "http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties"
+
+extended_properties_relationship : Str
+extended_properties_relationship = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties"
+
+custom_properties_relationship : Str
+custom_properties_relationship = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/custom-properties"
+
+# The tree of the part a package relationship of `kind` targets, or an empty
+# one, which holds no properties.
+properties_tree : Document, Str -> XmlTree.Node
+properties_tree = |document, kind|
+	match Document.related(document, "/", kind) {
+		Ok(part) => part.tree
+		Err(NotFound) => Text("")
+	}
 
 # The notes of the part the main document's relationship of `kind` targets.
 notes : Document, Str -> List(Document.Note)
@@ -164,6 +221,7 @@ block_text = |state, block|
 			)
 
 		Container({ element: _, content }) => content.fold(state, block_text)
+		Section(_) => state
 		Preserved(_) => state
 	}
 
@@ -319,4 +377,94 @@ expect {
 	image = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0xFF, 0xFE, 0x3C, 0x26]
 	written = Docx.to_bytes(Docx.parse(illustrated(image)?)?.document)?
 	Opc.part_bytes(Opc.open(written, {})?, "/word/media/image1.png") == Ok(image)
+}
+
+# A package of two sections, the first with a header and a footer holding a
+# page number, the second inheriting them, with core, extended and custom
+# properties.
+sectioned : {} -> Try(List(U8), Opc.WriteError)
+sectioned = |{}| {
+	relationships = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+	declarations = "xmlns:w='http://schemas.openxmlformats.org/wordprocessingml/2006/main' xmlns:r='${relationships}'"
+	part = |name, kind| { name, content_type: "application/vnd.openxmlformats-officedocument.${kind}+xml", relationships: [] }
+	graph = {
+		relationships: [
+			{ id: "rId1", kind: Opc.officedocument_relationship, target: "/word/document.xml", mode: Internal },
+			{ id: "rId2", kind: core_properties_relationship, target: "/docProps/core.xml", mode: Internal },
+			{ id: "rId3", kind: extended_properties_relationship, target: "/docProps/app.xml", mode: Internal },
+			{ id: "rId4", kind: custom_properties_relationship, target: "/docProps/custom.xml", mode: Internal },
+		],
+		parts: [
+			{
+				name: "/word/document.xml",
+				content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml",
+				relationships: [
+					{ id: "rId7", kind: "${relationships}/header", target: "/word/header1.xml", mode: Internal },
+					{ id: "rId8", kind: "${relationships}/footer", target: "/word/footer1.xml", mode: Internal },
+				],
+			},
+			part("/word/header1.xml", "wordprocessingml.header"),
+			part("/word/footer1.xml", "wordprocessingml.footer"),
+			{ name: "/docProps/core.xml", content_type: "application/vnd.openxmlformats-package.core-properties+xml", relationships: [] },
+			part("/docProps/app.xml", "extended-properties"),
+			part("/docProps/custom.xml", "custom-properties"),
+		],
+	}
+	references = "<w:headerReference w:type='default' r:id='rId7'/><w:footerReference w:type='default' r:id='rId8'/>"
+	body = "<w:p><w:pPr><w:sectPr>${references}<w:pgSz w:w='11906' w:h='16838'/></w:sectPr></w:pPr><w:r><w:t>One</w:t></w:r></w:p><w:p><w:r><w:t>Two</w:t></w:r></w:p><w:sectPr><w:pgSz w:w='16838' w:h='11906' w:orient='landscape'/></w:sectPr>"
+	page = "<w:r><w:fldChar w:fldCharType='begin'/></w:r><w:r><w:instrText xml:space='preserve'> PAGE </w:instrText></w:r><w:r><w:fldChar w:fldCharType='separate'/></w:r><w:r><w:t>1</w:t></w:r><w:r><w:fldChar w:fldCharType='end'/></w:r>"
+	core = "<cp:coreProperties xmlns:cp='http://schemas.openxmlformats.org/package/2006/metadata/core-properties' xmlns:dc='http://purl.org/dc/elements/1.1/' xmlns:dcterms='http://purl.org/dc/terms/' xmlns:xsi='http://www.w3.org/2001/XMLSchema-instance'><dc:title>Lease</dc:title><dc:creator>Ada Reviewer</dc:creator><cp:revision>3</cp:revision><dcterms:created xsi:type='dcterms:W3CDTF'>2026-11-09T11:03:00Z</dcterms:created></cp:coreProperties>"
+	extended = "<Properties xmlns='http://schemas.openxmlformats.org/officeDocument/2006/extended-properties'><Application>Example</Application><Pages>2</Pages></Properties>"
+	custom = "<Properties xmlns='http://schemas.openxmlformats.org/officeDocument/2006/custom-properties' xmlns:vt='http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes'><property fmtid='{D5CDD505-2E9C-101B-9397-08002B2CF9AE}' pid='2' name='Matter'><vt:i4>41</vt:i4></property></Properties>"
+	Opc.to_bytes(
+		graph,
+		|name|
+			Bytes(
+				(
+					if name == "/word/document.xml" {
+						"<w:document ${declarations}><w:body>${body}</w:body></w:document>"
+					} else if name == "/word/header1.xml" {
+						"<w:hdr ${declarations}><w:p><w:r><w:t>Draft</w:t></w:r></w:p></w:hdr>"
+					} else if name == "/word/footer1.xml" {
+						"<w:ftr ${declarations}><w:p><w:r><w:t xml:space='preserve'>Page </w:t></w:r>${page}</w:p></w:ftr>"
+					} else if name == "/docProps/core.xml" {
+						core
+					} else if name == "/docProps/app.xml" {
+						extended
+					} else {
+						custom
+					}
+				).to_utf8(),
+			),
+	)
+}
+
+## Sections, their headers and footers and the fields in them, and the core,
+## extended and custom properties are read through relationships, and are
+## read the same from the document as written.
+expect {
+	parsed = Docx.parse(sectioned({})?)?
+	again = Docx.parse(Docx.to_bytes(parsed.document)?)?
+	read = |document| {
+		sections = Docx.sections(document)
+		footer = sections.first().map_ok(|section| section.footers.map(|reference| Document.fields(Docx.header_footer(document, reference.part))))
+		{ sections, footer, core: Docx.core_properties(document), extended: Docx.extended_properties(document), custom: Docx.custom_properties(document) }
+	}
+	first = read(parsed.document)
+	match first.sections {
+		[opening, closing] =>
+			opening.headers == [{ kind: Default, part: "/word/header1.xml" }]
+				and closing.headers == []
+				and closing.page_size == Size({ width: 16838, height: 11906, orientation: Landscape })
+				and first.footer == Ok([[{ code: " PAGE ", result: "1" }]])
+				and first.core.title == Text("Lease")
+				and first.core.revision == Number(3)
+				and first.core.created == Date("2026-11-09T11:03:00Z")
+				and first.extended.pages == Count(2)
+				and first.custom == [Property({ name: "Matter", value: Integer(41) })]
+				and read(again.document) == first
+				and Docx.text(parsed.document) == "One\nTwo\n"
+
+		_ => Bool.False
+	}
 }

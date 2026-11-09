@@ -28,6 +28,11 @@ Rules this adapter applies, each because of how LibreOffice represents a documen
 - A list's kind is the kind of its list style at the item's level.
 - A section is a run of body content on one page style; its header and footer
   are that page style's default header and footer.
+- A page style with a header or footer holds it inside the page margin: the
+  page's top margin is the header's distance from the edge, and the header's
+  height, its spacing included, reaches down to the body. The snapshot's top
+  and bottom margins are the distance to the body, so the shown header's and
+  footer's heights are added to them.
 - Comment threads and the properties other than title, creator, created and
   modified are written but not declared: their mapping is not yet verified
   against a second reader.
@@ -123,11 +128,15 @@ def version(soffice):
     return subprocess.run([soffice, "--version"], capture_output=True, text=True, check=True).stdout.strip()
 
 
-def twips(length):
-    match = re.fullmatch(r"(-?[0-9.]+)(in|cm|mm|pt|pc)", length or "")
-    if not match:
-        raise Unsupported(f"length {length!r}")
-    return round(float(match.group(1)) * TWIPS_PER[match.group(2)])
+def twips(length, *more):
+    """The sum of a length and further lengths, an absent further one counting nothing, in whole twips."""
+    total = 0.0
+    for part in [length] + [extra for extra in more if extra is not None]:
+        match = re.fullmatch(r"(-?[0-9.]+)(in|cm|mm|pt|pc)", part or "")
+        if not match:
+            raise Unsupported(f"length {part!r}")
+        total += float(match.group(1)) * TWIPS_PER[match.group(2)]
+    return round(total)
 
 
 def instant(value):
@@ -417,14 +426,24 @@ class Document:
         properties = self.page_layouts[master.get(q("style:page-layout-name"))].find(q("style:page-layout-properties"))
         get = lambda name: properties.get(q(name))
         width, height = twips(get("fo:page-width")), twips(get("fo:page-height"))
+        layout = self.page_layouts[master.get(q("style:page-layout-name"))]
         return {
             "page_width": width, "page_height": height,
             "orientation": get("style:print-orientation") or ("landscape" if width > height else "portrait"),
-            "margin_top": twips(get("fo:margin-top")), "margin_bottom": twips(get("fo:margin-bottom")),
+            "margin_top": twips(get("fo:margin-top"), self.region_height(master, layout, "header")),
+            "margin_bottom": twips(get("fo:margin-bottom"), self.region_height(master, layout, "footer")),
             "margin_left": twips(get("fo:margin-left")), "margin_right": twips(get("fo:margin-right")),
             "header": self.region_text(master.find(q("style:header"))),
             "footer": self.region_text(master.find(q("style:footer"))),
         }
+
+    def region_height(self, master, layout, region):
+        """The height a page style's header or footer takes inside the page margin, spacing included, or none."""
+        shown = master.find(q(f"style:{region}"))
+        properties = layout.find(f"{q(f'style:{region}-style')}/{q('style:header-footer-properties')}")
+        if shown is None or shown.get(q("style:display")) == "false" or properties is None:
+            return None
+        return properties.get(q("fo:min-height")) or properties.get(q("svg:height"))
 
     def region_text(self, region):
         return "" if region is None else "\n".join(self.detached_paragraphs(region))

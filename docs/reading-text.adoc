@@ -52,6 +52,7 @@ paragraphs = Docx.body(document).keep_oks(
         match block {
             Paragraph(paragraph) => Ok(Document.paragraph_text(paragraph))
             Table(_) => Err(NotAParagraph)
+            Section(_) => Err(NotAParagraph)
             Container(_) => Err(NotAParagraph)
             Preserved(_) => Err(NotAParagraph)
         },
@@ -299,3 +300,92 @@ the same way. `Docx.body` gives the same blocks without the diagnostics.
 Reading the body is a query: it reads the main document's tree each time it
 is asked, and a document still writes the trees it was read with, so
 `Docx.to_bytes` writes what `Docx.parse` read whatever the body says.
+
+== Sections
+
+A document is divided into sections, each with its own page setup and its
+own headers and footers. In the body, a `Section` block ends a section: it
+follows the paragraph whose mark ends the section, and the body's last
+section ends the body. `Docx.sections` lists them in order, and
+`Document.sections` does the same for any list of blocks:
+
+[source,roc]
+----
+landscape = Docx.sections(document).any(
+    |section|
+        match section.page_size {
+            Size({ width: _, height: _, orientation }) => orientation == Landscape
+            Unset => Bool.False
+        },
+)
+----
+
+A `Document.Section` holds what the section states, each `Unset` when it
+states nothing:
+
+* `start`, where the section begins: `NextPage`, `Continuous` on the same
+  page, `EvenPage`, `OddPage` or `NextColumn`;
+* `page_size`, its `width` and `height` in twips (1,440 to the inch) and its
+  `orientation`, `Portrait` or `Landscape`;
+* `margins`, in twips: `top`, `right`, `bottom` and `left` from the page's
+  edges to the body, `header` and `footer` from the top and bottom edges to
+  the header and footer, and the `gutter` kept for binding;
+* `columns`, `Equal({ count, space, separator })` for columns of one width
+  with `space` twips between them, or `Unequal({ widths, separator })` with
+  each column's `width` and the `space` after it; `separator` is `Line` when
+  a line is drawn between them;
+* `page_numbers`, their `format` by its name in the schema (`decimal`,
+  `lowerRoman` and so on) and the number the section's first page `start`s
+  from;
+* `title_page`, `On` when the first page has its own header and footer;
+* `headers` and `footers`, described below.
+
+Every other section property, such as line numbering or page borders, stays
+in `preserved` as it was read, and so does one the model cannot hold, such
+as a page size naming a paper by its printer code. Google Docs exports write
+margins with fractions, such as `w:left="863.9999999999999"`, and leave out
+the gutter: the reader rounds the one and reads the other as zero, and
+`Docx.read_body` returns a `Rounded` or `Defaulted({ element, attribute })`
+diagnostic for each.
+
+== Headers and footers
+
+A section's `headers` and `footers` are lists of `Document.HeaderFooter`
+values: the `kind` of pages each is for, `Default` for every page, `First`
+for the section's first page or `Even` for even pages, and the `part`
+holding it. `Docx.header_footer` reads a part's blocks as the body's are
+read, so the fields that number a document's pages are found in them:
+
+[source,roc]
+----
+page_numbers = Docx.sections(document).map(
+    |section|
+        section.footers.map(|footer| Document.fields(Docx.header_footer(document, footer.part))),
+)
+----
+
+A section without a header or footer of a kind has the previous section's.
+A reference to a part the package does not have stays in `preserved`.
+
+== Document properties
+
+`Docx.core_properties` gives what a document says about itself, read from
+the part its package's core properties relationship leads to: its `title`,
+`subject`, `creator` (the author), `keywords`, `description`, who it was
+`last_modified_by`, as `Text(text)`, its `revision` as `Number(n)`, and when
+it was `created` and `modified` as `Date(text)`, in the W3C date format the
+document writes, such as `2026-11-09T11:03:00Z`. A property the document
+does not give is `Unset`; the others, such as its category or language, are
+kept in `preserved`.
+
+`Docx.extended_properties` gives what the application that saved the
+document recorded: its `application` and `app_version`, the `company`,
+`manager` and `template`, and the statistics it counted, such as `pages`,
+`words` and the `total_time` spent editing in minutes, as `Count(n)`.
+`Docx.custom_properties` lists the properties an application or person
+added, each `Property({ name, value })` with a value that is `Text`,
+`Integer`, `Boolean` or `Date`; one of any other type is kept as
+`Preserved`.
+
+Properties are read, like the body, from the trees a document writes back,
+so they pass through `Docx.parse` and `Docx.to_bytes` unchanged.

@@ -54,6 +54,11 @@ WmlRead :: [].{
 	## `w:tcPr` theirs. Each property the model holds is read from the first
 	## element that gives it in a form the model can hold; every other
 	## property element stays in `preserved`, in order.
+	##
+	## A `w:sectPr` in the body, or in a paragraph's `w:pPr`, ends a section:
+	## it is a section block, after the paragraph whose mark ends the
+	## section, and a `w:headerReference` or `w:footerReference` names the
+	## part its relationship targets.
 	body : XmlTree.Node, Context -> List(Document.Block)
 	body = |tree, context| WmlRead.read_body(tree, context).blocks
 
@@ -100,14 +105,104 @@ WmlRead :: [].{
 	note_ids : XmlTree.Node -> List(Str)
 	note_ids = |tree| note_elements(Mce.process(tree).interpreted).map(|element| value_of(element, "id") ?? "")
 
+	## The blocks of a header or footer part, from the part's tree as
+	## [Docx.parse] read it, interpreted by [Mce.process] first and read as a
+	## body's blocks are. A tree whose root is not a WordprocessingML header
+	## or footer has no blocks.
+	header_footer : XmlTree.Node, Context -> List(Document.Block)
+	header_footer = |tree, context| {
+		interpreted = Mce.process(tree).interpreted
+		match interpreted {
+			Element(root) if is_w(root.name, "hdr") or is_w(root.name, "ftr") => blocks(root.children, reading(interpreted, context), []).blocks
+			_ => []
+		}
+	}
+
+	## The core properties of a core properties part, from the part's tree,
+	## interpreted by [Mce.process] first. A property is read from the first
+	## element that gives it in a form the model can hold: text without
+	## markup or attributes, a revision number of decimal digits, or a date
+	## in the W3C date and time format with no attribute but its `xsi:type`.
+	## A tree whose root is not core properties has none.
+	core_properties : XmlTree.Node -> Document.CoreProperties
+	core_properties = |tree| {
+		var $properties = { title: Unset, subject: Unset, creator: Unset, keywords: Unset, description: Unset, last_modified_by: Unset, revision: Unset, created: Unset, modified: Unset, preserved: List.with_capacity(4) }
+		for child in property_elements(tree, core_namespace, "coreProperties") {
+			$properties = match child {
+				Element(element) =>
+					match core_property(element, $properties) {
+						Ok(properties) => properties
+						Err(CannotHold) => { ..$properties, preserved: List.append($properties.preserved, child) }
+					}
+
+				Text(_) => $properties
+			}
+		}
+		$properties
+	}
+
+	## The extended properties of an extended properties part, read as
+	## [WmlRead.core_properties] reads core properties: text without markup
+	## or attributes, and counts of decimal digits. A tree whose root is not
+	## extended properties has none.
+	extended_properties : XmlTree.Node -> Document.ExtendedProperties
+	extended_properties = |tree| {
+		var $properties = {
+			application: Unset,
+			app_version: Unset,
+			company: Unset,
+			manager: Unset,
+			template: Unset,
+			pages: Unset,
+			words: Unset,
+			characters: Unset,
+			characters_with_spaces: Unset,
+			lines: Unset,
+			paragraphs: Unset,
+			total_time: Unset,
+			preserved: List.with_capacity(8),
+		}
+		for child in property_elements(tree, extended_namespace, "Properties") {
+			$properties = match child {
+				Element(element) =>
+					match extended_property(element, $properties) {
+						Ok(properties) => properties
+						Err(CannotHold) => { ..$properties, preserved: List.append($properties.preserved, child) }
+					}
+
+				Text(_) => $properties
+			}
+		}
+		$properties
+	}
+
+	## The custom properties of a custom properties part, in order. A
+	## property with a name and one value, text (`vt:lpwstr`, `vt:lpstr`,
+	## `vt:bstr`), a whole number (`vt:i1` to `vt:i8`, `vt:int`, `vt:ui1` to
+	## `vt:ui8`, `vt:uint`), a truth value (`vt:bool`) or a date (`vt:filetime`,
+	## `vt:date`), is read; any other is kept as it was read. The property's
+	## format and identifier attributes are how the part numbers it, not part
+	## of the property. A tree whose root is not custom properties has none.
+	custom_properties : XmlTree.Node -> List(Document.CustomProperty)
+	custom_properties = |tree|
+		property_elements(tree, custom_namespace, "Properties").map(
+			|child|
+				match custom_property(child) {
+					Ok(property) => property
+					Err(CannotHold) => Preserved(child)
+				},
+		)
+
 	## Something the reader accepted that the schema does not allow: a number
 	## the schema wants whole written with a fraction, such as the width
 	## `w:w="10470.0"` that Google Docs exports write, or a percentage finer
 	## than the fiftieths of a per cent the model holds, read rounded to the
-	## nearest, halves away from zero. `element` and `attribute` are the local
-	## names of the WordprocessingML element and attribute, and `value` is the
-	## value as the document wrote it.
-	Diagnostic : [Rounded({ element : Str, attribute : Str, value : Str })]
+	## nearest, halves away from zero; or a required attribute that is
+	## missing, such as the gutter Google Docs exports leave out of a
+	## section's margins, read as zero. `element` and `attribute` are the
+	## local names of the WordprocessingML element and attribute, and `value`
+	## is the value as the document wrote it.
+	Diagnostic : [Rounded({ element : Str, attribute : Str, value : Str }), Defaulted({ element : Str, attribute : Str })]
 
 	## A paragraph's properties from the children of its `w:pPr`, or of a
 	## style's or the document defaults' `w:pPr`. Each modelled property is
@@ -601,11 +696,472 @@ blocks = |nodes, within, diagnostics| {
 	for node in nodes {
 		if is_content(node) {
 			read = block(node, within, $diagnostics)
-			$out = List.append($out, read.block)
-			$diagnostics = read.diagnostics
+			match read.block {
+				Paragraph(read_paragraph) if read_paragraph.properties.preserved.any(|property| is_element(property, "sectPr")) => {
+					ended = section_end(read_paragraph, within, read.diagnostics)
+					$out = List.append(List.append($out, Paragraph(ended.paragraph)), Section(ended.section))
+					$diagnostics = ended.diagnostics
+				}
+
+				_ => {
+					$out = List.append($out, read.block)
+					$diagnostics = read.diagnostics
+				}
+			}
 		}
 	}
 	{ blocks: $out, diagnostics: $diagnostics }
+}
+
+# A paragraph whose mark ends a section holds the section's properties in its
+# own; they are read as the section that ends after it.
+section_end : Document.Paragraph, Reading, List(WmlRead.Diagnostic) -> { paragraph : Document.Paragraph, section : Document.Section, diagnostics : List(WmlRead.Diagnostic) }
+section_end = |paragraph, within, diagnostics| {
+	var $preserved = List.with_capacity(paragraph.properties.preserved.len())
+	var $properties = Err(Missing)
+	for property in paragraph.properties.preserved {
+		match ($properties, property) {
+			(Err(Missing), Element(element)) if is_w(element.name, "sectPr") => {
+				$properties = Ok(element.children)
+			}
+
+			_ => {
+				$preserved = List.append($preserved, property)
+			}
+		}
+	}
+	read = section($properties ?? [], within, diagnostics)
+	{ paragraph: { ..paragraph, properties: { ..paragraph.properties, preserved: $preserved } }, section: read.section, diagnostics: read.diagnostics }
+}
+
+# A section's properties: each the model holds is read from the first
+# element that gives it in a form the model can hold, a header or footer
+# from the first reference of its kind to a header or footer part of the
+# package.
+section : List(XmlTree.Node), Reading, List(WmlRead.Diagnostic) -> { section : Document.Section, diagnostics : List(WmlRead.Diagnostic) }
+section = |children, within, diagnostics| {
+	var $section = { start: Unset, page_size: Unset, margins: Unset, columns: Unset, page_numbers: Unset, title_page: Unset, headers: List.with_capacity(3), footers: List.with_capacity(3), preserved: List.with_capacity(children.len()) }
+	var $diagnostics = diagnostics
+	for child in kept(children) {
+		read = match child {
+			Element(element) if is_w(element.name, "headerReference") =>
+				header_footer_reference(element, within, header_relationship, $section.headers).map_ok(|reference| { value: { ..$section, headers: List.append($section.headers, reference) }, noticed: [] })
+
+			Element(element) if is_w(element.name, "footerReference") =>
+				header_footer_reference(element, within, footer_relationship, $section.footers).map_ok(|reference| { value: { ..$section, footers: List.append($section.footers, reference) }, noticed: [] })
+
+			Element(element) if is_w(element.name, "type") and $section.start == Unset =>
+				section_start(element).map_ok(|start| { value: { ..$section, start }, noticed: [] })
+
+			Element(element) if is_w(element.name, "pgSz") and $section.page_size == Unset =>
+				page_size(element).map_ok(|size| { value: { ..$section, page_size: size.value }, noticed: size.noticed })
+
+			Element(element) if is_w(element.name, "pgMar") and $section.margins == Unset =>
+				margins(element).map_ok(|margins_read| { value: { ..$section, margins: margins_read.value }, noticed: margins_read.noticed })
+
+			Element(element) if is_w(element.name, "cols") and $section.columns == Unset =>
+				section_columns(element).map_ok(|columns_read| { value: { ..$section, columns: columns_read.value }, noticed: columns_read.noticed })
+
+			Element(element) if is_w(element.name, "pgNumType") and $section.page_numbers == Unset =>
+				page_numbers(element).map_ok(|numbers| { value: { ..$section, page_numbers: numbers.value }, noticed: numbers.noticed })
+
+			Element(element) if is_w(element.name, "titlePg") and $section.title_page == Unset =>
+				on_off(element).map_ok(|title_page| { value: { ..$section, title_page }, noticed: [] })
+
+			_ => Err(CannotHold)
+		}
+		match read {
+			Ok({ value, noticed }) => {
+				$section = value
+				$diagnostics = List.concat($diagnostics, noticed)
+			}
+
+			Err(CannotHold) => {
+				$section = { ..$section, preserved: List.append($section.preserved, child) }
+			}
+		}
+	}
+	{ section: $section, diagnostics: $diagnostics }
+}
+
+# A reference to a header or footer: its kind, and `r:id` naming an internal
+# relationship of the expected type; a section has one of each kind.
+header_footer_reference : Element, Reading, Str, List(Document.HeaderFooter) -> Try(Document.HeaderFooter, [CannotHold])
+header_footer_reference = |element, within, relationship_kind, existing| {
+	if !element.attributes.all(|attribute| is_w(attribute.name, "type") or is_r(attribute.name, "id")) {
+		return Err(CannotHold)
+	}
+	kind = match value_of(element, "type") {
+		Ok("default") => Default
+		Ok("first") => First
+		Ok("even") => Even
+		_ => return Err(CannotHold)
+	}
+	if existing.any(|reference| reference.kind == kind) {
+		return Err(CannotHold)
+	}
+	id = relationship_of(element, "id") ? |_| CannotHold
+	match within.relationships.get(id) {
+		Ok({ id: _, kind: found, target, mode: Internal }) if found == relationship_kind => Ok({ kind, part: target })
+		_ => Err(CannotHold)
+	}
+}
+
+# Where a section starts: no `w:val` is on the next page.
+section_start : Element -> Try([Unset, NextPage, Continuous, EvenPage, OddPage, NextColumn], [CannotHold])
+section_start = |element| {
+	if !holds(element, ["val"]) {
+		return Err(CannotHold)
+	}
+	match value_of(element, "val") {
+		Err(NotFound) | Ok("nextPage") => Ok(NextPage)
+		Ok("continuous") => Ok(Continuous)
+		Ok("evenPage") => Ok(EvenPage)
+		Ok("oddPage") => Ok(OddPage)
+		Ok("nextColumn") => Ok(NextColumn)
+		Ok(_) => Err(CannotHold)
+	}
+}
+
+# A page size: its width and height, and its orientation, portrait unless
+# it says otherwise. A size without both lengths, or naming a paper by its
+# code, cannot be held.
+page_size : Element -> Try(Read([Unset, Size({ width : U64, height : U64, orientation : [Portrait, Landscape] })]), [CannotHold])
+page_size = |element| {
+	if !holds(element, ["w", "h", "orient"]) {
+		return Err(CannotHold)
+	}
+	width = unsigned(element, "w")?
+	height = unsigned(element, "h")?
+	orientation = match value_of(element, "orient") {
+		Err(NotFound) | Ok("portrait") => Portrait
+		Ok("landscape") => Landscape
+		Ok(_) => return Err(CannotHold)
+	}
+	Ok({ value: Size({ width: width.value, height: height.value, orientation }), noticed: List.concat(width.noticed, height.noticed) })
+}
+
+# Page margins: every one is required, and one that is missing is zero,
+# noticed.
+margins : Element -> Try(Read([Unset, Margins({ top : I64, right : U64, bottom : I64, left : U64, header : U64, footer : U64, gutter : U64 })]), [CannotHold])
+margins = |element| {
+	if !holds(element, ["top", "right", "bottom", "left", "header", "footer", "gutter"]) {
+		return Err(CannotHold)
+	}
+	top = whole_or_zero(element, "top")?
+	right = unsigned_or_zero(element, "right")?
+	bottom = whole_or_zero(element, "bottom")?
+	left = unsigned_or_zero(element, "left")?
+	header = unsigned_or_zero(element, "header")?
+	footer = unsigned_or_zero(element, "footer")?
+	gutter = unsigned_or_zero(element, "gutter")?
+	noticed = [top.noticed, right.noticed, bottom.noticed, left.noticed, header.noticed, footer.noticed, gutter.noticed].fold(List.with_capacity(0), List.concat)
+	Ok({ value: Margins({ top: top.value, right: right.value, bottom: bottom.value, left: left.value, header: header.value, footer: footer.value, gutter: gutter.value }), noticed })
+}
+
+whole_or_zero : Element, Str -> Try(Read(I64), [CannotHold])
+whole_or_zero = |element, local|
+	match value_of(element, local) {
+		Ok(_) => whole(element, local)
+		Err(NotFound) => Ok({ value: 0, noticed: [Defaulted({ element: element.name.local, attribute: local })] })
+	}
+
+unsigned_or_zero : Element, Str -> Try(Read(U64), [CannotHold])
+unsigned_or_zero = |element, local|
+	match value_of(element, local) {
+		Ok(_) => unsigned(element, local)
+		Err(NotFound) => Ok({ value: 0, noticed: [Defaulted({ element: element.name.local, attribute: local })] })
+	}
+
+SectionColumns : [Unset, Equal({ count : U64, space : U64, separator : [NoLine, Line] }), Unequal({ widths : List({ width : U64, space : U64 }), separator : [NoLine, Line] })]
+
+# Columns of equal width, one unless `w:num` says otherwise with 720 twips
+# between them unless `w:space` does, or, when `w:equalWidth` is off, each
+# `w:col` with its width and the space after it, none by default. The space
+# and count of unequal columns are their columns', as the schema says.
+section_columns : Element -> Try(Read(SectionColumns), [CannotHold])
+section_columns = |element| {
+	if !holds(element, ["equalWidth", "space", "num", "sep"]) {
+		return Err(CannotHold)
+	}
+	separator = match value_of(element, "sep") {
+		Err(NotFound) => NoLine
+		Ok(text) => if (toggle(text)? == On) Line else NoLine
+	}
+	equal = match value_of(element, "equalWidth") {
+		Err(NotFound) => On
+		Ok(text) => toggle(text)?
+	}
+	listed = kept(element.children)
+	if equal == On {
+		if !listed.is_empty() {
+			return Err(CannotHold)
+		}
+		count = match value_of(element, "num") {
+			Ok(_) => unsigned(element, "num")?
+			Err(NotFound) => { value: 1, noticed: [] }
+		}
+		space = match value_of(element, "space") {
+			Ok(_) => unsigned(element, "space")?
+			Err(NotFound) => { value: 720, noticed: [] }
+		}
+		Ok({ value: Equal({ count: count.value, space: space.value, separator }), noticed: List.concat(count.noticed, space.noticed) })
+	} else {
+		var $widths = List.with_capacity(listed.len())
+		var $noticed = List.with_capacity(0)
+		for child in listed {
+			match child {
+				Element(column) if is_w(column.name, "col") and holds(column, ["w", "space"]) => {
+					width = unsigned(column, "w")?
+					space = match value_of(column, "space") {
+						Ok(_) => unsigned(column, "space")?
+						Err(NotFound) => { value: 0, noticed: [] }
+					}
+					$widths = List.append($widths, { width: width.value, space: space.value })
+					$noticed = List.concat($noticed, List.concat(width.noticed, space.noticed))
+				}
+
+				_ => {
+					return Err(CannotHold)
+				}
+			}
+		}
+		if $widths.is_empty() {
+			Err(CannotHold)
+		} else {
+			Ok({ value: Unequal({ widths: $widths, separator }), noticed: $noticed })
+		}
+	}
+}
+
+# Page numbering: its format and the number it starts from. Chapter
+# numbering in page numbers cannot be held.
+page_numbers : Element -> Try(Read([Unset, PageNumbers({ format : [Unset, Format(Str)], start : [Unset, Start(U64)] })]), [CannotHold])
+page_numbers = |element| {
+	if !holds(element, ["fmt", "start"]) {
+		return Err(CannotHold)
+	}
+	format = match value_of(element, "fmt") {
+		Ok(name) => Format(name)
+		Err(NotFound) => Unset
+	}
+	match value_of(element, "start") {
+		Ok(_) => {
+			first = unsigned(element, "start")?
+			Ok({ value: PageNumbers({ format, start: Start(first.value) }), noticed: first.noticed })
+		}
+
+		Err(NotFound) => Ok({ value: PageNumbers({ format, start: Unset }), noticed: [] })
+	}
+}
+
+# An on or off value as the schema spells it.
+toggle : Str -> Try([On, Off], [CannotHold])
+toggle = |text|
+	match text {
+		"true" | "1" | "on" => Ok(On)
+		"false" | "0" | "off" => Ok(Off)
+		_ => Err(CannotHold)
+	}
+
+header_relationship : Str
+header_relationship = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header"
+
+footer_relationship : Str
+footer_relationship = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer"
+
+core_namespace : Str
+core_namespace = "http://schemas.openxmlformats.org/package/2006/metadata/core-properties"
+
+dublin_core : Str
+dublin_core = "http://purl.org/dc/elements/1.1/"
+
+dc_terms : Str
+dc_terms = "http://purl.org/dc/terms/"
+
+extended_namespace : Str
+extended_namespace = "http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"
+
+custom_namespace : Str
+custom_namespace = "http://schemas.openxmlformats.org/officeDocument/2006/custom-properties"
+
+variant_types : Str
+variant_types = "http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes"
+
+instance_namespace : Str
+instance_namespace = "http://www.w3.org/2001/XMLSchema-instance"
+
+# The properties of a properties part: its root's elements, when the root is
+# the one named, after markup compatibility processing.
+property_elements : XmlTree.Node, Str, Str -> List(XmlTree.Node)
+property_elements = |tree, namespace, local| {
+	interpreted = Mce.process(tree).interpreted
+	match interpreted {
+		Element(root) if is_named(interpreted, namespace, local) => root.children.keep_if(|child| is_named_element(child))
+		_ => []
+	}
+}
+
+is_named_element : XmlTree.Node -> Bool
+is_named_element = |node|
+	match node {
+		Element(_) => Bool.True
+		Text(_) => Bool.False
+	}
+
+core_property : Element, Document.CoreProperties -> Try(Document.CoreProperties, [CannotHold])
+core_property = |element, properties|
+	match (element.name.namespace, element.name.local) {
+		(Uri(namespace), "title") if namespace == dublin_core and properties.title == Unset => Ok({ ..properties, title: Text(plain_text(element)?) })
+		(Uri(namespace), "subject") if namespace == dublin_core and properties.subject == Unset => Ok({ ..properties, subject: Text(plain_text(element)?) })
+		(Uri(namespace), "creator") if namespace == dublin_core and properties.creator == Unset => Ok({ ..properties, creator: Text(plain_text(element)?) })
+		(Uri(namespace), "description") if namespace == dublin_core and properties.description == Unset => Ok({ ..properties, description: Text(plain_text(element)?) })
+		(Uri(namespace), "keywords") if namespace == core_namespace and properties.keywords == Unset => Ok({ ..properties, keywords: Text(plain_text(element)?) })
+		(Uri(namespace), "lastModifiedBy") if namespace == core_namespace and properties.last_modified_by == Unset => Ok({ ..properties, last_modified_by: Text(plain_text(element)?) })
+		(Uri(namespace), "revision") if namespace == core_namespace and properties.revision == Unset => Ok({ ..properties, revision: Number(natural(plain_text(element)?) ? |_| CannotHold) })
+		(Uri(namespace), "created") if namespace == dc_terms and properties.created == Unset => Ok({ ..properties, created: Date(date(element)?) })
+		(Uri(namespace), "modified") if namespace == dc_terms and properties.modified == Unset => Ok({ ..properties, modified: Date(date(element)?) })
+		_ => Err(CannotHold)
+	}
+
+extended_property : Element, Document.ExtendedProperties -> Try(Document.ExtendedProperties, [CannotHold])
+extended_property = |element, properties| {
+	count = || Ok(natural(plain_text(element)?) ? |_| CannotHold)
+	match element.name.local {
+		"Application" if properties.application == Unset => Ok({ ..properties, application: Text(plain_text(element)?) })
+		"AppVersion" if properties.app_version == Unset => Ok({ ..properties, app_version: Text(plain_text(element)?) })
+		"Company" if properties.company == Unset => Ok({ ..properties, company: Text(plain_text(element)?) })
+		"Manager" if properties.manager == Unset => Ok({ ..properties, manager: Text(plain_text(element)?) })
+		"Template" if properties.template == Unset => Ok({ ..properties, template: Text(plain_text(element)?) })
+		"Pages" if properties.pages == Unset => Ok({ ..properties, pages: Count(count()?) })
+		"Words" if properties.words == Unset => Ok({ ..properties, words: Count(count()?) })
+		"Characters" if properties.characters == Unset => Ok({ ..properties, characters: Count(count()?) })
+		"CharactersWithSpaces" if properties.characters_with_spaces == Unset => Ok({ ..properties, characters_with_spaces: Count(count()?) })
+		"Lines" if properties.lines == Unset => Ok({ ..properties, lines: Count(count()?) })
+		"Paragraphs" if properties.paragraphs == Unset => Ok({ ..properties, paragraphs: Count(count()?) })
+		"TotalTime" if properties.total_time == Unset => Ok({ ..properties, total_time: Count(count()?) })
+		_ => Err(CannotHold)
+	}
+}
+
+custom_property : XmlTree.Node -> Try(Document.CustomProperty, [CannotHold])
+custom_property = |node| {
+	element = match node {
+		Element(found) if is_named(node, custom_namespace, "property") => found
+		_ => return Err(CannotHold)
+	}
+	if !element.attributes.all(|attribute| attribute.name.namespace == NoNamespace and ["fmtid", "pid", "name"].contains(attribute.name.local)) {
+		return Err(CannotHold)
+	}
+	name = unqualified(element, "name") ? |_| CannotHold
+	held = match kept(element.children) {
+		[Element(held_value)] if held_value.name.namespace == Uri(variant_types) => held_value
+		_ => return Err(CannotHold)
+	}
+	text = plain_text(held)?
+	value = match held.name.local {
+		"lpwstr" | "lpstr" | "bstr" => Text(text)
+		"i1" | "i2" | "i4" | "i8" | "int" | "ui1" | "ui2" | "ui4" | "ui8" | "uint" => Integer(integer(text)?)
+		"bool" => Boolean(toggle(text)? == On)
+		"filetime" | "date" => if (is_w3c_date(text)) Date(text) else return Err(CannotHold)
+		_ => return Err(CannotHold)
+	}
+	Ok(Property({ name, value }))
+}
+
+# A whole number, an optional sign and decimal digits, as [decimal] reads it.
+integer : Str -> Try(I64, [CannotHold])
+integer = |text|
+	if text.contains(".") {
+		Err(CannotHold)
+	} else {
+		Ok((decimal(text, 1) ? |_| CannotHold).value)
+	}
+
+# The text of an element without attributes that holds only text.
+plain_text : Element -> Try(Str, [CannotHold])
+plain_text = |element| {
+	if !element.attributes.is_empty() {
+		return Err(CannotHold)
+	}
+	var $text = List.with_capacity(32)
+	for child in element.children {
+		match child {
+			Text(content) => {
+				$text = List.concat($text, content.to_utf8())
+			}
+
+			Element(_) => {
+				return Err(CannotHold)
+			}
+		}
+	}
+	Ok(Str.from_utf8($text) ?? "")
+}
+
+# A date in the W3C date and time format, whose only attribute may name its
+# type as that format.
+date : Element -> Try(Str, [CannotHold])
+date = |element| {
+	typed = element.attributes.all(|attribute| attribute.name.namespace == Uri(instance_namespace) and attribute.name.local == "type" and attribute.value.ends_with(":W3CDTF"))
+	text = plain_text({ ..element, attributes: [] })?
+	if typed and is_w3c_date(text) {
+		Ok(text)
+	} else {
+		Err(CannotHold)
+	}
+}
+
+# Whether text is a date in the W3C date and time format: a year, a month or
+# a day, or a day and a time to the minute, second or fraction of a second
+# with its zone, `Z` or an offset in hours and minutes.
+is_w3c_date : Str -> Bool
+is_w3c_date = |text| {
+	bytes = text.to_utf8()
+	at = |index, byte| bytes.get(index) == Ok(byte)
+	digits = |start, count| {
+		var $index = start
+		var $all = Bool.True
+		while $index < start + count {
+			$all = $all and match bytes.get($index) {
+				Ok(byte) => byte >= '0' and byte <= '9'
+				Err(_) => Bool.False
+			}
+			$index = $index + 1
+		}
+		$all
+	}
+	day = digits(0, 4) and at(4, '-') and digits(5, 2) and at(7, '-') and digits(8, 2)
+	if bytes.len() == 4 {
+		digits(0, 4)
+	} else if bytes.len() == 7 {
+		digits(0, 4) and at(4, '-') and digits(5, 2)
+	} else if bytes.len() == 10 {
+		day
+	} else if day and at(10, 'T') and digits(11, 2) and at(13, ':') and digits(14, 2) {
+		seconds = if (at(16, ':') and digits(17, 2)) 19 else 16
+		var $zone = seconds
+		if seconds == 19 and at(19, '.') and digits(20, 1) {
+			$zone = 21
+			while digits($zone, 1) {
+				$zone = $zone + 1
+			}
+		}
+		rest = bytes.len() - $zone
+		(rest == 1 and at($zone, 'Z')) or (rest == 6 and (at($zone, '+') or at($zone, '-')) and digits($zone + 1, 2) and at($zone + 3, ':') and digits($zone + 4, 2))
+	} else {
+		Bool.False
+	}
+}
+
+# A count: decimal digits, at most nineteen.
+natural : Str -> Try(U64, [NotNumber])
+natural = |text| {
+	digits = text.to_utf8()
+	if digits.is_empty() or digits.len() > 19 {
+		return Err(NotNumber)
+	}
+	digits.fold(Ok(0.U64), |sum, digit| if (digit >= '0' and digit <= '9') Ok((sum?) * 10 + (digit - '0').to_u64()) else Err(NotNumber))
 }
 
 block : XmlTree.Node, Reading, List(WmlRead.Diagnostic) -> { block : Document.Block, diagnostics : List(WmlRead.Diagnostic) }
@@ -620,6 +1176,11 @@ block = |node, within, diagnostics|
 		Element(element) if is_w_in(element.name, block_containers) => {
 			read = blocks(element.children, within, diagnostics)
 			{ block: Container({ element: without_children(element), content: read.blocks }), diagnostics: read.diagnostics }
+		}
+
+		Element(element) if is_w(element.name, "sectPr") => {
+			read = section(element.children, within, diagnostics)
+			{ block: Section(read.section), diagnostics: read.diagnostics }
 		}
 
 		_ => { block: Preserved(node), diagnostics: diagnostics }
@@ -1192,7 +1753,9 @@ rounded = |element, local, text| Rounded({ element: element.name.local, attribut
 # A decimal number, an optional sign, digits and an optional fraction,
 # multiplied by `factor` and rounded to the nearest whole number, halves away
 # from zero; `exact` says nothing was rounded away. At most fifteen digits
-# are read, so the value cannot overflow.
+# are read, so the value cannot overflow: more whole digits are not a number,
+# and fraction digits beyond them, such as those of `863.9999999999999` that
+# Google Docs exports write, are ignored.
 decimal : Str, U64 -> Try({ value : I64, exact : Bool }, [NotNumber])
 decimal = |text, factor| {
 	bytes = text.to_utf8()
@@ -1202,6 +1765,7 @@ decimal = |text, factor| {
 	var $scale = 1.U64
 	var $digits = 0.U64
 	var $point = Bool.False
+	var $ignored = Bool.False
 	var $index = start
 	while $index < bytes.len() {
 		byte = bytes.get($index) ?? 0
@@ -1213,6 +1777,8 @@ decimal = |text, factor| {
 			if $point {
 				$scale = $scale * 10
 			}
+		} else if byte >= '0' and byte <= '9' and $point {
+			$ignored = $ignored or byte != '0'
 		} else {
 			return Err(NotNumber)
 		}
@@ -1224,7 +1790,7 @@ decimal = |text, factor| {
 	scaled = $mantissa * factor
 	magnitude = scaled // $scale + (if (2 * (scaled % $scale) >= $scale) 1 else 0)
 	value = magnitude.to_i64_wrap()
-	Ok({ value: if (negative) -value else value, exact: scaled % $scale == 0 })
+	Ok({ value: if (negative) -value else value, exact: scaled % $scale == 0 and !$ignored })
 }
 
 paragraph : List(XmlTree.Node), Reading -> Document.Paragraph
@@ -1441,13 +2007,7 @@ embedded = |root| {
 
 # A length in English Metric Units: decimal digits, at most nineteen.
 emus : Try(Str, [NotFound]) -> Try(U64, [NotLength])
-emus = |value| {
-	digits = (value ? |_| NotLength).to_utf8()
-	if digits.is_empty() or digits.len() > 19 {
-		return Err(NotLength)
-	}
-	digits.fold(Ok(0.U64), |sum, digit| if (digit >= '0' and digit <= '9') Ok((sum?) * 10 + (digit - '0').to_u64()) else Err(NotLength))
-}
+emus = |value| natural(value ? |_| NotLength).map_err(|_| NotLength)
 
 # The text of `w:t` or `w:instrText`, which hold only character data. Unless
 # the element says `xml:space="preserve"`, its whitespace is the producer's
@@ -1874,12 +2434,11 @@ expect {
 }
 
 ## A table holds its properties, grid, rows and cells, a cell holds its
-## paragraphs, and the section properties after it are kept as they were
-## read.
+## paragraphs, and the section properties after it end a section.
 expect {
 	table_xml = "<w:tbl><w:tblPr/><w:tr><w:tc><w:tcPr/><w:p><w:r><w:t>cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"
 	match read("<w:p/>\n  ${table_xml}\n  <w:sectPr/>") {
-		[Paragraph(empty), Table({ properties, grid: [], content: [Row({ properties: row_properties_read, content: [Cell({ properties: cell_properties_read, content: [Paragraph(in_cell)] })] })] }), Preserved(_)] =>
+		[Paragraph(empty), Table({ properties, grid: [], content: [Row({ properties: row_properties_read, content: [Cell({ properties: cell_properties_read, content: [Paragraph(in_cell)] })] })] }), Section(_)] =>
 			empty == { properties: Document.no_paragraph_properties, content: [] }
 				and properties == { style: Unset, width: Unset, borders: [], shading: Unset, preserved: [] }
 				and row_properties_read == { header: Unset, grid_before: Unset, grid_after: Unset, preserved: [] }
@@ -1994,7 +2553,8 @@ expect {
 }
 
 ## Numbers are read leniently and rounded halves away from zero, and what is
-## not a number, or has more digits than are read, is not one.
+## not a number, or has more whole digits than are read, is not one; fraction
+## digits beyond those read are ignored.
 expect {
 	decimal("12", 1) == Ok({ value: 12, exact: Bool.True })
 		and decimal("-2.5", 1) == Ok({ value: -3, exact: Bool.False })
@@ -2004,6 +2564,8 @@ expect {
 		and decimal("1.2.3", 1) == Err(NotNumber)
 		and decimal("1e3", 1) == Err(NotNumber)
 		and decimal("1234567890123456", 1) == Err(NotNumber)
+		and decimal("863.9999999999999", 1) == Ok({ value: 864, exact: Bool.False })
+		and decimal("1.0000000000000000", 1) == Ok({ value: 1, exact: Bool.True })
 }
 
 ## Markup compatibility is applied first: an alternative is read as the
@@ -2026,4 +2588,128 @@ expect {
 	bare = XmlTree.parse("<w:document xmlns:w='${wordprocessingml}'/>".to_utf8(), {}) ?? Text("")
 	none = { relationships: [], footnotes: [], endnotes: [] }
 	WmlRead.body(other, none) == [] and WmlRead.body(bare, none) == []
+}
+
+## A paragraph whose mark ends a section is followed by the section's end,
+## without the section in its properties; the body's last section ends the
+## body. The properties the model holds are read, references to headers and
+## footers name their parts, and the rest are kept in order.
+expect {
+	relationships = [
+		{ id: "rId1", kind: header_relationship, target: "/word/header1.xml", mode: Internal },
+		{ id: "rId2", kind: footer_relationship, target: "/word/footer1.xml", mode: Internal },
+		{ id: "rId3", kind: header_relationship, target: "/word/header2.xml", mode: Internal },
+	]
+	references = "<w:headerReference w:type='default' r:id='rId1'/><w:footerReference w:type='first' r:id='rId2'/><w:headerReference w:type='even' r:id='rId9'/><w:footerReference w:type='default' r:id='rId3'/><w:headerReference w:type='default' r:id='rId3'/>"
+	first = "<w:sectPr>${references}<w:footnotePr/><w:type w:val='continuous'/><w:pgSz w:w='16838' w:h='11906' w:orient='landscape'/><w:pgMar w:top='-1440' w:right='1440' w:bottom='1440' w:left='1800' w:header='708' w:footer='709' w:gutter='0'/><w:pgNumType w:fmt='lowerRoman' w:start='3'/><w:cols w:num='2' w:space='360' w:sep='1'/><w:titlePg/><w:docGrid w:linePitch='360'/></w:sectPr>"
+	last = "<w:sectPr><w:pgSz w:w='12240' w:h='15840' w:code='1'/><w:cols w:equalWidth='0'><w:col w:w='4000' w:space='500'/><w:col w:w='5000'/></w:cols><w:pgNumType w:chapStyle='1'/></w:sectPr>"
+	body = "<w:p><w:pPr><w:pStyle w:val='Body'/>${first}</w:pPr><w:r><w:t>a</w:t></w:r></w:p><w:p/>${last}"
+	context = { relationships, footnotes: [], endnotes: [] }
+	match read_in(body, context) {
+		[Paragraph(ending), Section(ended), Paragraph(_), Section(final)] =>
+			ending.properties == { ..Document.no_paragraph_properties, style: Style("Body") }
+				and ended.start == Continuous
+				and ended.page_size == Size({ width: 16838, height: 11906, orientation: Landscape })
+				and ended.margins == Margins({ top: -1440, right: 1440, bottom: 1440, left: 1800, header: 708, footer: 709, gutter: 0 })
+				and ended.page_numbers == PageNumbers({ format: Format("lowerRoman"), start: Start(3) })
+				and ended.columns == Equal({ count: 2, space: 360, separator: Line })
+				and ended.title_page == On
+				and ended.headers == [{ kind: Default, part: "/word/header1.xml" }]
+				and ended.footers == [{ kind: First, part: "/word/footer1.xml" }]
+				and ended.preserved.len() == 5
+				and final.page_size == Unset
+				and final.columns == Unequal({ widths: [{ width: 4000, space: 500 }, { width: 5000, space: 0 }], separator: NoLine })
+				and final.page_numbers == Unset
+				and final.preserved.len() == 2
+				and Document.sections(read_in(body, context)) == [ended, final]
+
+		_ => Bool.False
+	}
+}
+
+## Margins written with a fraction, as Google Docs exports write them, are
+## rounded with a diagnostic, and a missing margin is zero with one.
+expect {
+	margins_xml = "<w:sectPr><w:pgMar w:top='1440' w:right='863.9999999999999' w:bottom='1440' w:left='864' w:header='720' w:footer='720'/></w:sectPr>"
+	tree = XmlTree.parse("<w:document xmlns:w='${wordprocessingml}'><w:body>${margins_xml}</w:body></w:document>".to_utf8(), {}) ?? Text("")
+	result = WmlRead.read_body(tree, { relationships: [], footnotes: [], endnotes: [] })
+	match result.blocks {
+		[Section(read_section)] =>
+			read_section.margins == Margins({ top: 1440, right: 864, bottom: 1440, left: 864, header: 720, footer: 720, gutter: 0 })
+				and result.diagnostics == [Rounded({ element: "pgMar", attribute: "right", value: "863.9999999999999" }), Defaulted({ element: "pgMar", attribute: "gutter" })]
+
+		_ => Bool.False
+	}
+}
+
+## A header or footer part's blocks are read as the body's are; another part
+## has none.
+expect {
+	declarations = "xmlns:w='${wordprocessingml}'"
+	header = XmlTree.parse("<w:hdr ${declarations}><w:p><w:r><w:t>Head</w:t></w:r></w:p><w:tbl/></w:hdr>".to_utf8(), {}) ?? Text("")
+	other = XmlTree.parse("<w:document ${declarations}><w:p/></w:document>".to_utf8(), {}) ?? Text("")
+	none = { relationships: [], footnotes: [], endnotes: [] }
+	match WmlRead.header_footer(header, none) {
+		[Paragraph(heading), Table(_)] => Document.paragraph_text(heading) == "Head" and WmlRead.header_footer(other, none) == []
+		_ => Bool.False
+	}
+}
+
+## Core properties are read with their dates as written; a property with
+## markup, a date that is not a W3C date and the properties the model does
+## not hold are kept in order.
+expect {
+	declarations = "xmlns:cp='${core_namespace}' xmlns:dc='${dublin_core}' xmlns:dcterms='${dc_terms}' xmlns:xsi='${instance_namespace}'"
+	dated = |name, value| "<dcterms:${name} xsi:type='dcterms:W3CDTF'>${value}</dcterms:${name}>"
+	content = "<dc:title>Lease</dc:title><dc:subject></dc:subject><dc:creator>Ada</dc:creator><cp:keywords><cp:value>a</cp:value></cp:keywords><cp:lastModifiedBy>Grace</cp:lastModifiedBy><cp:revision>12</cp:revision>${dated("created", "2026-11-09T11:03:00Z")}${dated("modified", "yesterday")}<dc:language>en-AU</dc:language>"
+	tree = XmlTree.parse("<cp:coreProperties ${declarations}>${content}</cp:coreProperties>".to_utf8(), {}) ?? Text("")
+	read_core = WmlRead.core_properties(tree)
+	read_core == { ..read_core, title: Text("Lease"), subject: Text(""), creator: Text("Ada"), keywords: Unset, description: Unset, last_modified_by: Text("Grace"), revision: Number(12), created: Date("2026-11-09T11:03:00Z"), modified: Unset }
+		and read_core.preserved.len() == 3
+		and WmlRead.core_properties(Text("")).title == Unset
+}
+
+## Extended properties are read as text and counts; others are kept.
+expect {
+	content = "<Application>Microsoft Office Word</Application><Pages>2</Pages><Company></Company><TotalTime>7</TotalTime><Words>many</Words><HeadingPairs><vt:vector size='0' baseType='variant'/></HeadingPairs><AppVersion>16.0000</AppVersion>"
+	tree = XmlTree.parse("<Properties xmlns='${extended_namespace}' xmlns:vt='${variant_types}'>${content}</Properties>".to_utf8(), {}) ?? Text("")
+	read_extended = WmlRead.extended_properties(tree)
+	read_extended.application == Text("Microsoft Office Word")
+		and read_extended.app_version == Text("16.0000")
+		and read_extended.company == Text("")
+		and read_extended.pages == Count(2)
+		and read_extended.total_time == Count(7)
+		and read_extended.words == Unset
+		and read_extended.preserved.len() == 2
+}
+
+## Custom properties are read with their typed values in order; a value of
+## another type and a linked property are kept.
+expect {
+	property = |pid, name, value| "<property fmtid='{D5CDD505-2E9C-101B-9397-08002B2CF9AE}' pid='${pid}' name='${name}'>${value}</property>"
+	properties = [
+		property("2", "Client", "<vt:lpwstr>Acme</vt:lpwstr>"),
+		property("3", "Count", "<vt:i4>-42</vt:i4>"),
+		property("4", "Signed", "<vt:bool>true</vt:bool>"),
+		property("5", "Due", "<vt:filetime>2026-12-01T00:00:00Z</vt:filetime>"),
+		property("6", "Rate", "<vt:r8>1.5</vt:r8>"),
+		"<property fmtid='x' pid='7' name='Linked' linkTarget='bookmark'><vt:lpwstr>a</vt:lpwstr></property>",
+	]
+	tree = XmlTree.parse("<Properties xmlns='${custom_namespace}' xmlns:vt='${variant_types}'>${Str.join_with(properties, "")}</Properties>".to_utf8(), {}) ?? Text("")
+	match WmlRead.custom_properties(tree) {
+		[Property(client), Property(count), Property(sign), Property(due), Preserved(_), Preserved(_)] =>
+			client == { name: "Client", value: Text("Acme") }
+				and count == { name: "Count", value: Integer(-42) }
+				and sign == { name: "Signed", value: Boolean(Bool.True) }
+				and due == { name: "Due", value: Date("2026-12-01T00:00:00Z") }
+
+		_ => Bool.False
+	}
+}
+
+## W3C dates are a year, a month, a day, or a day and a time with its zone.
+expect {
+	dates = ["2026", "2026-11", "2026-11-09", "2026-11-09T11:03Z", "2026-11-09T11:03:00Z", "2026-11-09T11:03:00.25+10:00", "2026-11-09T11:03:00-05:30"]
+	others = ["", "26", "2026-1", "2026-11-09T11:03:00", "2026-11-09 11:03:00Z", "2026-11-09T11:03:00.Z", "2026-11-09T11:03:00+1000", "yesterday"]
+	dates.all(is_w3c_date) and !others.any(is_w3c_date)
 }

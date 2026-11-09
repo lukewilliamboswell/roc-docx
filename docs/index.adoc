@@ -19,7 +19,8 @@ Deciding whether to use roc-docx:: <<what-roc-docx-is>> says what the package
 does, who it is for and what it leaves out.
 Using it for the first time:: <<read-and-write-the-parts-of-a-document>>
 opens a document, lists what is inside it and writes it to a new package;
-<<read-a-documents-text>> reads its body's text, blocks, formatting and styles.
+<<read-a-documents-text>> reads its body's text, blocks, formatting and styles,
+its sections, headers and footers, and its properties.
 Understanding the design:: <<architecture>> is the enduring design: the
 pipeline, the document model, fidelity rules, the oracles and the tests.
 Changing the package:: <<contribute-to-roc-docx>> covers the checks, the

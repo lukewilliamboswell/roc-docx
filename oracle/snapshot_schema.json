@@ -57,7 +57,7 @@
       "items": { "$ref": "#/$defs/revision" }
     },
     "sections": {
-      "description": "The body's sections in order.",
+      "description": "The body's sections in order, a run of body content after the last section's end being a section of its own. A section that does not state its page size or margins has a portrait Letter page, 12240 by 15840 twips, with margins of 1440, as LibreOffice gives one.",
       "type": "array",
       "items": { "$ref": "#/$defs/section" }
     },
@@ -133,11 +133,11 @@
         "page_width": { "type": "integer", "minimum": 0 },
         "page_height": { "type": "integer", "minimum": 0 },
         "orientation": { "enum": ["portrait", "landscape"] },
-        "margin_top": { "type": "integer" },
-        "margin_bottom": { "type": "integer" },
+        "margin_top": { "description": "The distance from the page's top edge to the body, which a header stands within; negative when the body may run into the header.", "type": "integer" },
+        "margin_bottom": { "description": "The distance from the page's bottom edge to the body, which a footer stands within.", "type": "integer" },
         "margin_left": { "type": "integer" },
         "margin_right": { "type": "integer" },
-        "header": { "description": "The default header's paragraphs joined by LF, or empty.", "type": "string" },
+        "header": { "description": "The default header's paragraphs joined by LF, or empty; a section without a default header has the previous section's. A field contributes its result.", "type": "string" },
         "footer": { "description": "The default footer's paragraphs joined by LF, or empty.", "type": "string" }
       }
     },

@@ -5,7 +5,8 @@
 ## The snapshot has the contract's fixed shape, every field present, and
 ## declares in `keys` only what the package is authoritative for: the
 ## body's blocks with their kind, level and text, their runs' direct
-## formatting and hyperlinks, and the notes' kinds and text. Every other
+## formatting and hyperlinks, the notes' kinds and text, the sections' page
+## geometry and header and footer text, and the core properties. Every other
 ## field holds its empty value.
 import Docx
 import Document
@@ -44,6 +45,11 @@ Snapshot :: [].{
 	## The notes are the footnotes and endnotes the body refers to, in the
 	## order of their references, each with its blocks' text joined by line
 	## feeds.
+	##
+	## The sections are those [Document.sections] finds in the body, with
+	## their page geometry in twips and the text of their default header
+	## and footer, and the properties are the document's core properties,
+	## as `sections_json` and `properties_json` describe.
 	json : Document, { path : Str, version : Str } -> Str
 	json = |document, { path, version }| {
 		body = Docx.body(document)
@@ -62,7 +68,6 @@ Snapshot :: [].{
 				Ok("{\"kind\": \"${kind}\", \"text\": ${quoted(text)}}")
 			},
 		)
-		properties = ["title", "subject", "creator", "keywords", "description", "last_modified_by", "created", "modified"].map(|name| "\"${name}\": \"\"")
 		Str.join_with(
 			[
 				"{",
@@ -74,8 +79,8 @@ Snapshot :: [].{
 				"  \"notes\": [${list_json(notes)}],",
 				"  \"comments\": [],",
 				"  \"revisions\": [],",
-				"  \"sections\": [],",
-				"  \"properties\": {${Str.join_with(properties, ", ")}}",
+				"  \"sections\": [${list_json(sections_json(document, body, styles))}],",
+				"  \"properties\": ${properties_json(Docx.core_properties(document))}",
 				"}",
 				"",
 			],
@@ -102,7 +107,93 @@ keys = [
 	"blocks.runs.link",
 	"notes.kind",
 	"notes.text",
+	"sections.page_width",
+	"sections.page_height",
+	"sections.orientation",
+	"sections.margin_top",
+	"sections.margin_bottom",
+	"sections.margin_left",
+	"sections.margin_right",
+	"sections.header",
+	"sections.footer",
+	"properties.title",
+	"properties.subject",
+	"properties.creator",
+	"properties.keywords",
+	"properties.description",
+	"properties.last_modified_by",
+	"properties.created",
+	"properties.modified",
 ]
+
+# The body's sections as JSON objects: each section that ends in the body,
+# and after the last one, unless the body ends with it, the section the rest
+# of the body is in, which states nothing. A section that does not give its
+# page size or margins has the contract's: a portrait Letter page, 12,240 by
+# 15,840 twips, with margins of 1,440. Its header and footer are the text of
+# its default header and footer, a section without one having the previous
+# section's, each block's text joined by line feeds as a note's is.
+sections_json : Document, List(Document.Block), Styles -> List(Str)
+sections_json = |document, body, styles| {
+	unstated = { start: Unset, page_size: Unset, margins: Unset, columns: Unset, page_numbers: Unset, title_page: Unset, headers: [], footers: [], preserved: [] }
+	trailing = match body.last() {
+		Ok(Section(_)) => []
+		_ => [unstated]
+	}
+	var $header = Err(NoPart)
+	var $footer = Err(NoPart)
+	var $out = List.with_capacity(2)
+	for section in List.concat(Document.sections(body), trailing) {
+		$header = default_part(section.headers, $header)
+		$footer = default_part(section.footers, $footer)
+		$out = List.append($out, section_json(section, region_text(document, $header, styles), region_text(document, $footer, styles)))
+	}
+	$out
+}
+
+default_part : List(Document.HeaderFooter), Try(Str, [NoPart]) -> Try(Str, [NoPart])
+default_part = |references, previous|
+	match references.find_first(|reference| reference.kind == Default) {
+		Ok(reference) => Ok(reference.part)
+		Err(_) => previous
+	}
+
+region_text : Document, Try(Str, [NoPart]), Styles -> Str
+region_text = |document, part, styles|
+	match part {
+		Ok(name) => Str.join_with(snapshot_of_blocks(Docx.header_footer(document, name), styles).map(|block| block.text), "\n")
+		Err(NoPart) => ""
+	}
+
+section_json : Document.Section, Str, Str -> Str
+section_json = |section, header, footer| {
+	(width, height, orientation) = match section.page_size {
+		Size(size) => (size.width, size.height, if (size.orientation == Landscape) "landscape" else "portrait")
+		Unset => (12240, 15840, "portrait")
+	}
+	(top, bottom, left, right) = match section.margins {
+		Margins(margins) => (margins.top.to_str(), margins.bottom.to_str(), margins.left.to_str(), margins.right.to_str())
+		Unset => ("1440", "1440", "1440", "1440")
+	}
+	"{\"page_width\": ${width.to_str()}, \"page_height\": ${height.to_str()}, \"orientation\": \"${orientation}\", \"margin_top\": ${top}, \"margin_bottom\": ${bottom}, \"margin_left\": ${left}, \"margin_right\": ${right}, \"header\": ${quoted(header)}, \"footer\": ${quoted(footer)}}"
+}
+
+# The core properties as the snapshot's object, a property that is not
+# given empty and a date as the document writes it.
+properties_json : Document.CoreProperties -> Str
+properties_json = |core| {
+	text = |property|
+		match property {
+			Text(value) => quoted(value)
+			Unset => "\"\""
+		}
+	date = |property|
+		match property {
+			Date(value) => quoted(value)
+			Unset => "\"\""
+		}
+	"{\"title\": ${text(core.title)}, \"subject\": ${text(core.subject)}, \"creator\": ${text(core.creator)}, \"keywords\": ${text(core.keywords)}, \"description\": ${text(core.description)}, \"last_modified_by\": ${text(core.last_modified_by)}, \"created\": ${date(core.created)}, \"modified\": ${date(core.modified)}}"
+}
 
 # A block of the snapshot, and a run of its text with its direct formatting
 # and its hyperlink's target.
@@ -178,6 +269,7 @@ snapshot_blocks = |state, block, styles|
 		}
 
 		Container({ element: _, content }) => content.fold(state, |inner_state, inner| snapshot_blocks(inner_state, inner, styles))
+		Section(_) => state
 		Preserved(_) => state
 	}
 
@@ -239,6 +331,7 @@ block_texts = |out, block|
 
 		Table(_) => List.append(out, "")
 		Container({ element: _, content }) => content.fold(out, block_texts)
+		Section(_) => out
 		Preserved(_) => out
 	}
 
@@ -357,6 +450,7 @@ note_references = |out, block|
 		Paragraph(paragraph) => paragraph.content.fold(out, inline_note_references)
 		Table(table) => Document.table_rows(table).fold(out, |by_row, row| Document.row_cells(row).fold(by_row, |by_cell, cell| cell.content.fold(by_cell, note_references)))
 		Container({ element: _, content }) => content.fold(out, note_references)
+		Section(_) => out
 		Preserved(_) => out
 	}
 
@@ -449,8 +543,8 @@ quoted = |text| {
 }
 
 # The snapshot of a package whose main document has this body content, with
-# an external hyperlink relationship `rId1`, and these notes in its footnotes
-# and endnotes parts.
+# an external hyperlink relationship `rId1`, these notes in its footnotes
+# and endnotes parts, and a header part, `rId4`, saying `Draft`.
 snapshot_of : Str, { footnotes : Str, endnotes : Str } -> Try(Str, _)
 snapshot_of = |content, notes| {
 	relationships = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
@@ -465,10 +559,12 @@ snapshot_of = |content, notes| {
 					{ id: "rId1", kind: "${relationships}/hyperlink", target: "https://example.org/", mode: External },
 					{ id: "rId2", kind: "${relationships}/footnotes", target: "/word/footnotes.xml", mode: Internal },
 					{ id: "rId3", kind: "${relationships}/endnotes", target: "/word/endnotes.xml", mode: Internal },
+					{ id: "rId4", kind: "${relationships}/header", target: "/word/header1.xml", mode: Internal },
 				],
 			},
 			part("footnotes", "footnotes"),
 			part("endnotes", "endnotes"),
+			part("header1", "header"),
 		],
 	}
 	declarations = "xmlns:w='${wordprocessingml}' xmlns:r='${relationships}'"
@@ -477,6 +573,8 @@ snapshot_of = |content, notes| {
 			"<w:footnotes ${declarations}>${notes.footnotes}</w:footnotes>"
 		} else if name == "/word/endnotes.xml" {
 			"<w:endnotes ${declarations}>${notes.endnotes}</w:endnotes>"
+		} else if name == "/word/header1.xml" {
+			"<w:hdr ${declarations}><w:p><w:r><w:t>Draft</w:t></w:r></w:p></w:hdr>"
 		} else {
 			"<w:document ${declarations}><w:body>${content}</w:body></w:document>"
 		}
@@ -497,7 +595,8 @@ run_line = |text, link| "{\"text\": \"${text}\", \"bold\": false, \"italic\": fa
 
 ## Empty paragraphs are blocks only when they anchor something, a table is
 ## one block with its text grid, and paragraphs in content controls are
-## blocks.
+## blocks; a section that states no page has the contract's page, and a
+## document without core properties has every property empty.
 expect {
 	empty = "<w:p/><w:p><w:r><w:t></w:t></w:r><w:bookmarkStart w:id='1' w:name='b'/></w:p>"
 	anchoring = "<w:p><w:del><w:r><w:delText>gone</w:delText></w:r></w:del></w:p><w:p><w:commentRangeStart w:id='1'/></w:p><w:p><w:r><w:footnoteReference w:id='1'/></w:r></w:p><w:p><w:pPr><w:rPr><w:ins w:id='2'/></w:rPr></w:pPr></w:p>"
@@ -510,7 +609,7 @@ expect {
 			"  \"schema\": \"roc-docx-snapshot/1\",",
 			"  \"producer\": {\"name\": \"roc-docx\", \"version\": \"test\"},",
 			"  \"document\": \"a \\\"b\\\".docx\",",
-			"  \"keys\": [\"blocks.kind\", \"blocks.level\", \"blocks.text\", \"blocks.rows\", \"blocks.runs.bold\", \"blocks.runs.italic\", \"blocks.runs.underline\", \"blocks.runs.strike\", \"blocks.runs.superscript\", \"blocks.runs.subscript\", \"blocks.runs.link\", \"notes.kind\", \"notes.text\"],",
+			"  \"keys\": [${Str.join_with(keys.map(quoted), ", ")}],",
 			"  \"blocks\": [",
 			"${block("paragraph", "")},\n${block("paragraph", "")},\n${block("paragraph", "")},\n${block("paragraph", "")},",
 			"    {\"kind\": \"table\", \"level\": 0, \"list\": \"\", \"text\": \"\", \"runs\": [], \"rows\": [[\"cell\"]]},",
@@ -519,7 +618,9 @@ expect {
 			"  \"notes\": [],",
 			"  \"comments\": [],",
 			"  \"revisions\": [],",
-			"  \"sections\": [],",
+			"  \"sections\": [",
+			"    {\"page_width\": 12240, \"page_height\": 15840, \"orientation\": \"portrait\", \"margin_top\": 1440, \"margin_bottom\": 1440, \"margin_left\": 1440, \"margin_right\": 1440, \"header\": \"\", \"footer\": \"\"}",
+			"  ],",
 			"  \"properties\": {\"title\": \"\", \"subject\": \"\", \"creator\": \"\", \"keywords\": \"\", \"description\": \"\", \"last_modified_by\": \"\", \"created\": \"\", \"modified\": \"\"}",
 			"}",
 			"",
@@ -629,3 +730,19 @@ expect {
 ## JSON strings escape quotes, backslashes and control characters and keep
 ## other characters as they are.
 expect quoted("a\"b\\c\nd\te\r\u(1)é") == "\"a\\\"b\\\\c\\nd\\te\\r\\u0001é\""
+
+## Sections give their page geometry in twips and their default header's
+## text, a section without a header having the previous section's; content
+## after the last section's end is a section that states nothing.
+expect {
+	ended = |properties| "<w:p><w:pPr><w:sectPr>${properties}</w:sectPr></w:pPr></w:p>"
+	first = ended("<w:headerReference w:type='default' r:id='rId4'/><w:pgSz w:w='11906' w:h='16838'/><w:pgMar w:top='720' w:right='1440' w:bottom='-720' w:left='1800' w:header='0' w:footer='0' w:gutter='0'/>")
+	second = ended("<w:pgSz w:w='16838' w:h='11906' w:orient='landscape'/>")
+	section = |geometry| "{${geometry}, \"header\": \"Draft\", \"footer\": \"\"}"
+	sections = [
+		section("\"page_width\": 11906, \"page_height\": 16838, \"orientation\": \"portrait\", \"margin_top\": 720, \"margin_bottom\": -720, \"margin_left\": 1800, \"margin_right\": 1440"),
+		section("\"page_width\": 16838, \"page_height\": 11906, \"orientation\": \"landscape\", \"margin_top\": 1440, \"margin_bottom\": 1440, \"margin_left\": 1440, \"margin_right\": 1440"),
+		section("\"page_width\": 12240, \"page_height\": 15840, \"orientation\": \"portrait\", \"margin_top\": 1440, \"margin_bottom\": 1440, \"margin_left\": 1440, \"margin_right\": 1440"),
+	]
+	snapshot_of("${first}${second}<w:p><w:r><w:t>after</w:t></w:r></w:p>", no_notes).map_ok(|json| json.contains("  \"sections\": [\n    ${Str.join_with(sections, ",\n    ")}\n  ],")) == Ok(Bool.True)
+}
