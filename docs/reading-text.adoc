@@ -51,10 +51,7 @@ paragraphs = Docx.body(document).keep_oks(
     |block|
         match block {
             Paragraph(paragraph) => Ok(Document.paragraph_text(paragraph))
-            Table(_) => Err(NotAParagraph)
-            Section(_) => Err(NotAParagraph)
-            Container(_) => Err(NotAParagraph)
-            Preserved(_) => Err(NotAParagraph)
+            _ => Err(NotAParagraph)
         },
 )
 ----

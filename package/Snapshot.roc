@@ -5,9 +5,10 @@
 ## The snapshot has the contract's fixed shape, every field present, and
 ## declares in `keys` only what the package is authoritative for: the
 ## body's blocks with their kind, level, list kind and text, their runs'
-## direct formatting and hyperlinks, the notes' kinds and text, the sections'
-## page geometry and header and footer text, and the core properties. Every other
-## field holds its empty value.
+## direct formatting and hyperlinks, the notes' kinds and text, the comments'
+## authors, dates, text and anchored text, the sections' page geometry and
+## header and footer text, and the core properties. Every other field holds
+## its empty value.
 import Docx
 import Document
 import Numbering
@@ -49,6 +50,13 @@ Snapshot :: [].{
 	## order of their references, each with its blocks' text joined by line
 	## feeds.
 	##
+	## The comments are those the body anchors, in the order their anchors
+	## begin, as [Docx.comments] gives them: each with its author, its date
+	## as the instant in UTC, `2026-05-04T09:15:00Z`, or empty when it has
+	## none, its blocks' text joined by line feeds, and the text its range
+	## covers, empty for a comment at a point. Every comment is its own
+	## thread and none is resolved.
+	##
 	## The sections are those [Document.sections] finds in the body, with
 	## their page geometry in twips and the text of their default header
 	## and footer, and the properties are the document's core properties,
@@ -80,7 +88,7 @@ Snapshot :: [].{
 				"  \"keys\": [${Str.join_with(keys.map(quoted), ", ")}],",
 				"  \"blocks\": [${list_json(blocks)}],",
 				"  \"notes\": [${list_json(notes)}],",
-				"  \"comments\": [],",
+				"  \"comments\": [${list_json(comments_json(document, tables))}],",
 				"  \"revisions\": [],",
 				"  \"sections\": [${list_json(sections_json(document, body, tables))}],",
 				"  \"properties\": ${properties_json(Docx.core_properties(document))}",
@@ -111,6 +119,10 @@ keys = [
 	"blocks.runs.link",
 	"notes.kind",
 	"notes.text",
+	"comments.author",
+	"comments.date",
+	"comments.text",
+	"comments.anchor",
 	"sections.page_width",
 	"sections.page_height",
 	"sections.orientation",
@@ -129,6 +141,52 @@ keys = [
 	"properties.created",
 	"properties.modified",
 ]
+
+# The comments the body anchors as JSON objects, in the order their anchors
+# begin.
+comments_json : Document, Tables -> List(Str)
+comments_json = |document, tables| {
+	anchored = Docx.comments(document).comments.drop_if(|entry| entry.anchor == Unanchored)
+	var $out = List.with_capacity(anchored.len())
+	for entry in anchored {
+		comment = entry.comment
+		date = match comment.date {
+			Date(stamp) => utc_text(stamp.utc_seconds)
+			Unset => ""
+		}
+		anchor = match entry.anchor {
+			Range(text) => text
+			_ => ""
+		}
+		text = Str.join_with(snapshot_of_blocks(comment.content, tables).map(|block| block.text), "\n")
+		$out = List.append($out, "{\"author\": ${quoted(comment.author)}, \"date\": ${quoted(date)}, \"text\": ${quoted(text)}, \"anchor\": ${quoted(anchor)}, \"thread\": ${$out.len().to_str()}, \"resolved\": false}")
+	}
+	$out
+}
+
+# An instant in seconds since 1970-01-01T00:00:00Z as an ISO 8601 date and
+# time in UTC, to the second, counting each year from March so that a leap
+# day ends it.
+utc_text : I64 -> Str
+utc_text = |seconds| {
+	floor_div = |a, b| if (a >= 0) a // b else 0 - ((b - 1 - a) // b)
+	days = floor_div(seconds, 86400)
+	of_day = seconds - days * 86400
+	shifted = days + 719468
+	era = floor_div(shifted, 146097)
+	of_era = shifted - era * 146097
+	year_of_era = (of_era - of_era // 1460 + of_era // 36524 - of_era // 146096) // 365
+	of_year = of_era - (365 * year_of_era + year_of_era // 4 - year_of_era // 100)
+	from_march = (5 * of_year + 2) // 153
+	day = of_year - (153 * from_march + 2) // 5 + 1
+	month = if (from_march < 10) from_march + 3 else from_march - 9
+	year = year_of_era + era * 400 + (if (month <= 2) 1 else 0)
+	pad = |value, width| {
+		digits = value.to_str()
+		Str.concat(Str.repeat("0", width - Str.count_utf8_bytes(digits)), digits)
+	}
+	"${pad(year, 4)}-${pad(month, 2)}-${pad(day, 2)}T${pad(of_day // 3600, 2)}:${pad((of_day // 60) % 60, 2)}:${pad(of_day % 60, 2)}Z"
+}
 
 # The body's sections as JSON objects: each section that ends in the body,
 # and after the last one, unless the body ends with it, the section the rest
@@ -284,6 +342,8 @@ snapshot_blocks = |state, block, tables|
 
 		Container({ element: _, content }) => content.fold(state, |inner_state, inner| snapshot_blocks(inner_state, inner, tables))
 		Section(_) => state
+		CommentStart(_) => state
+		CommentEnd(_) => state
 		Preserved(_) => state
 	}
 
@@ -346,6 +406,8 @@ block_texts = |out, block|
 		Table(_) => List.append(out, "")
 		Container({ element: _, content }) => content.fold(out, block_texts)
 		Section(_) => out
+		CommentStart(_) => out
+		CommentEnd(_) => out
 		Preserved(_) => out
 	}
 
@@ -465,6 +527,8 @@ note_references = |out, block|
 		Table(table) => Document.table_rows(table).fold(out, |by_row, row| Document.row_cells(row).fold(by_row, |by_cell, cell| cell.content.fold(by_cell, note_references)))
 		Container({ element: _, content }) => content.fold(out, note_references)
 		Section(_) => out
+		CommentStart(_) => out
+		CommentEnd(_) => out
 		Preserved(_) => out
 	}
 
@@ -509,6 +573,7 @@ inline_anchors = |inline|
 				|content|
 					match content {
 						NoteReference(_) => Bool.True
+						CommentReference(_) => Bool.True
 						Preserved(node) => is_named(node, ["footnoteReference", "endnoteReference", "commentReference"])
 						_ => Bool.False
 					},
@@ -519,6 +584,8 @@ inline_anchors = |inline|
 		Container({ element, content }) => is_named(element, revisions) or content.any(inline_anchors)
 		BookmarkStart(_) => Bool.False
 		BookmarkEnd(_) => Bool.False
+		CommentStart(_) => Bool.True
+		CommentEnd(_) => Bool.True
 		Preserved(node) => is_named(node, ["commentRangeStart", "commentRangeEnd"])
 	}
 
@@ -557,11 +624,11 @@ quoted = |text| {
 }
 
 # The snapshot of a package whose main document has this body content, with
-# an external hyperlink relationship `rId1`, these notes in its footnotes
-# and endnotes parts, a header part, `rId4`, saying `Draft`, and through
+# an external hyperlink relationship `rId1`, these notes and comments in its
+# footnotes, endnotes and comments parts, a header part, `rId4`, saying `Draft`, and through
 # `rId5` the numbering instances 3, of a numbered list, and 4, of a bulleted
 # one.
-snapshot_of : Str, { footnotes : Str, endnotes : Str } -> Try(Str, _)
+snapshot_of : Str, { footnotes : Str, endnotes : Str, comments : Str } -> Try(Str, _)
 snapshot_of = |content, notes| {
 	relationships = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 	part = |name, kind| { name: "/word/${name}.xml", content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.${kind}+xml", relationships: [] }
@@ -577,12 +644,14 @@ snapshot_of = |content, notes| {
 					{ id: "rId3", kind: "${relationships}/endnotes", target: "/word/endnotes.xml", mode: Internal },
 					{ id: "rId4", kind: "${relationships}/header", target: "/word/header1.xml", mode: Internal },
 					{ id: "rId5", kind: "${relationships}/numbering", target: "/word/numbering.xml", mode: Internal },
+					{ id: "rId6", kind: "${relationships}/comments", target: "/word/comments.xml", mode: Internal },
 				],
 			},
 			part("footnotes", "footnotes"),
 			part("endnotes", "endnotes"),
 			part("header1", "header"),
 			part("numbering", "numbering"),
+			part("comments", "comments"),
 		],
 	}
 	declarations = "xmlns:w='${wordprocessingml}' xmlns:r='${relationships}'"
@@ -591,6 +660,8 @@ snapshot_of = |content, notes| {
 			"<w:footnotes ${declarations}>${notes.footnotes}</w:footnotes>"
 		} else if name == "/word/endnotes.xml" {
 			"<w:endnotes ${declarations}>${notes.endnotes}</w:endnotes>"
+		} else if name == "/word/comments.xml" {
+			"<w:comments ${declarations}>${notes.comments}</w:comments>"
 		} else if name == "/word/header1.xml" {
 			"<w:hdr ${declarations}><w:p><w:r><w:t>Draft</w:t></w:r></w:p></w:hdr>"
 		} else if name == "/word/numbering.xml" {
@@ -603,8 +674,8 @@ snapshot_of = |content, notes| {
 	Ok(Snapshot.json(parsed.document, { path: "a \"b\".docx", version: "test" }))
 }
 
-no_notes : { footnotes : Str, endnotes : Str }
-no_notes = { footnotes: "", endnotes: "" }
+no_notes : { footnotes : Str, endnotes : Str, comments : Str }
+no_notes = { footnotes: "", endnotes: "", comments: "" }
 
 # A snapshot block as JSON, with its runs.
 block_line : Str, Str, Str -> Str
@@ -735,7 +806,7 @@ expect {
 	reference = |kind, id| "<w:r><w:${kind}Reference w:id='${id}'/></w:r>"
 	body = "<w:p><w:r><w:t>a</w:t></w:r>${reference("endnote", "1")}${reference("footnote", "2")}${reference("footnote", "9")}</w:p><w:p>${reference("footnote", "1")}</w:p>"
 	expected = "  \"notes\": [\n    {\"kind\": \"endnote\", \"text\": \"End\"},\n    {\"kind\": \"footnote\", \"text\": \"Second\"},\n    {\"kind\": \"footnote\", \"text\": \"First\\nline\"}\n  ],"
-	snapshot_of(body, { footnotes, endnotes }).map_ok(|json| json.contains(expected)) == Ok(Bool.True)
+	snapshot_of(body, { footnotes, endnotes, comments: "" }).map_ok(|json| json.contains(expected)) == Ok(Bool.True)
 }
 
 ## Moved-away text is not current text; a paragraph whose mark is deleted is
@@ -771,3 +842,22 @@ expect {
 	]
 	snapshot_of("${first}${second}<w:p><w:r><w:t>after</w:t></w:r></w:p>", no_notes).map_ok(|json| json.contains("  \"sections\": [\n    ${Str.join_with(sections, ",\n    ")}\n  ],")) == Ok(Bool.True)
 }
+
+## Comments are listed in the order their anchors begin, with their author,
+## their date as the instant in UTC, their paragraphs' text and the text
+## their range covers, a comment at a point covering none; a comment the body
+## does not anchor is not listed.
+expect {
+	comment = |id, date, paragraphs| "<w:comment w:id='${id}' w:author='Ada Reviewer' ${date}>${Str.join_with(paragraphs.map(|text| "<w:p><w:r><w:annotationRef/><w:t>${text}</w:t></w:r></w:p>"), "")}</w:comment>"
+	comments = Str.join_with([comment("4", "w:date='2024-02-29T23:30:00-01:00'", ["Shorter.", "Please."]), comment("8", "", ["Here."]), comment("6", "", ["Unused."])], "")
+	body = "<w:p><w:r><w:t xml:space='preserve'>Say </w:t><w:commentReference w:id='8'/></w:r><w:commentRangeStart w:id='4'/><w:r><w:t>this</w:t></w:r></w:p><w:p><w:r><w:t>now</w:t></w:r><w:commentRangeEnd w:id='4'/></w:p>"
+	expected = [
+		"{\"author\": \"Ada Reviewer\", \"date\": \"\", \"text\": \"Here.\", \"anchor\": \"\", \"thread\": 0, \"resolved\": false}",
+		"{\"author\": \"Ada Reviewer\", \"date\": \"2024-03-01T00:30:00Z\", \"text\": \"Shorter.\\nPlease.\", \"anchor\": \"this\\nnow\", \"thread\": 1, \"resolved\": false}",
+	]
+	snapshot_of(body, { footnotes: "", endnotes: "", comments }).map_ok(|json| json.contains("  \"comments\": [\n    ${Str.join_with(expected, ",\n    ")}\n  ],")) == Ok(Bool.True)
+}
+
+## Instants before and after 1970 and across leap days are written as UTC
+## dates and times.
+expect [-86401, 0, 951782400, 1794202380].map(utc_text) == ["1969-12-30T23:59:59Z", "1970-01-01T00:00:00Z", "2000-02-29T00:00:00Z", "2026-11-09T05:33:00Z"]

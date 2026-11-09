@@ -286,8 +286,8 @@ everywhere.
 
 The package is compared with the oracles the same way. `Snapshot.json`
 writes its reading of a document as a snapshot that declares only the keys
-it is authoritative for so far: `blocks.text`, `blocks.rows`,
-`blocks.runs.link`, `notes.kind` and `notes.text`; the `snapshots` cases
+it is authoritative for so far: every block, run, note, section and property
+key, and the comments' `author`, `date`, `text` and `anchor`; the `snapshots` cases
 of `tests/main.roc` write one for every fixture under `.roc-docx/snapshots/`
 and check it against `tests/snapshots/`; and `oracle/snapshot_package.py`, the
 `package` adapter, only copies those files, so a lane compares exactly what

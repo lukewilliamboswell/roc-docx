@@ -2,7 +2,7 @@
   "schema": "roc-docx-snapshot/1",
   "producer": {"name": "roc-docx", "version": "working tree"},
   "document": "tests/fixtures/pandoc/review.docx",
-  "keys": ["blocks.kind", "blocks.level", "blocks.list", "blocks.text", "blocks.rows", "blocks.runs.bold", "blocks.runs.italic", "blocks.runs.underline", "blocks.runs.strike", "blocks.runs.superscript", "blocks.runs.subscript", "blocks.runs.link", "notes.kind", "notes.text", "sections.page_width", "sections.page_height", "sections.orientation", "sections.margin_top", "sections.margin_bottom", "sections.margin_left", "sections.margin_right", "sections.header", "sections.footer", "properties.title", "properties.subject", "properties.creator", "properties.keywords", "properties.description", "properties.last_modified_by", "properties.created", "properties.modified"],
+  "keys": ["blocks.kind", "blocks.level", "blocks.list", "blocks.text", "blocks.rows", "blocks.runs.bold", "blocks.runs.italic", "blocks.runs.underline", "blocks.runs.strike", "blocks.runs.superscript", "blocks.runs.subscript", "blocks.runs.link", "notes.kind", "notes.text", "comments.author", "comments.date", "comments.text", "comments.anchor", "sections.page_width", "sections.page_height", "sections.orientation", "sections.margin_top", "sections.margin_bottom", "sections.margin_left", "sections.margin_right", "sections.header", "sections.footer", "properties.title", "properties.subject", "properties.creator", "properties.keywords", "properties.description", "properties.last_modified_by", "properties.created", "properties.modified"],
   "blocks": [
     {"kind": "paragraph", "level": 0, "list": "", "text": "Consulting Agreement (Reviewed)", "runs": [{"text": "Consulting Agreement (Reviewed)", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
     {"kind": "paragraph", "level": 0, "list": "", "text": "Grace Author", "runs": [{"text": "Grace Author", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
@@ -18,7 +18,10 @@
     {"kind": "list_item", "level": 1, "list": "bullet", "text": "", "runs": [], "rows": []}
   ],
   "notes": [],
-  "comments": [],
+  "comments": [
+    {"author": "Ada Reviewer", "date": "2026-05-05T11:00:00Z", "text": "", "anchor": "for a term of nine months", "thread": 0, "resolved": false},
+    {"author": "Grace Author", "date": "2026-05-06T08:21:00Z", "text": "", "anchor": " Receipts must be itemised.", "thread": 1, "resolved": false}
+  ],
   "revisions": [],
   "sections": [
     {"page_width": 12240, "page_height": 15840, "orientation": "portrait", "margin_top": 1440, "margin_bottom": 1440, "margin_left": 1440, "margin_right": 1440, "header": "", "footer": ""}

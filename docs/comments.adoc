@@ -1,0 +1,95 @@
+= Read a document's comments
+
+This chapter reads the comments reviewers leave on a document: who wrote
+each one and when, what it says, and the text it is about. It continues from
+<<read-a-documents-text>>, whose blocks and current text it builds on.
+
+== The comments
+
+`Docx.comments` gives a document's comments, read from the part the main
+document's comments relationship leads to and joined with the body that
+anchors them:
+
+[source,roc]
+----
+{ document, diagnostics: _ } = Docx.parse(bytes)?
+summaries = Docx.comments(document).comments.map(
+    |entry|
+        match entry.anchor {
+            Range(text) => "${entry.comment.author} on: ${text}"
+            Point => entry.comment.author
+            Unanchored => entry.comment.author
+        },
+)
+----
+
+Each entry is a `Comments.Anchored` record with three fields:
+
+* `comment`, a `Document.Comment`;
+* `anchor`, where the comment applies in the body;
+* `id`, the comment's place among the comments of the comments part, which
+  is how the body names it.
+
+Comments come in the order their anchors begin in the body, as a reader
+meets them; comments that start at the same place, such as a comment and its
+replies, keep the order the document gives them. Comments the body does not
+anchor come last, in the order of their part. A document without a comments
+part has no comments.
+
+== What a comment holds
+
+A `Document.Comment` has:
+
+* `author`, the name of the person who wrote it;
+* `initials`, `Initials(text)` as the document gives them, or `Unset`;
+* `date`, `Date(timestamp)` or `Unset`;
+* `content`, its paragraphs and tables as a list of blocks, read the way
+  the body's blocks are, so `Document.paragraph_text` gives a paragraph's
+  text;
+* `preserved`, the comment's other attributes, kept as they were read.
+
+A date is a `Document.Timestamp`: `written`, the date and time as the
+document writes it, such as `2026-05-04T09:15:00Z`, and `utc_seconds`, the
+instant it names in seconds since 1970-01-01T00:00:00Z. A date with an
+offset from UTC is converted; a date without a zone is taken as UTC, as
+LibreOffice and pandoc take it. Fractions of a second are left out of the
+instant and kept in what was written. A date that is not a date and time
+is `Unset`, and the attribute that held it is kept in `preserved`.
+
+The schema requires an author. A comment without one has the empty author,
+and a `Defaulted({ element: "comment", attribute: "author" })` diagnostic
+comes beside the comments.
+
+Word writes a comment's content beginning with a mark that refers back to
+the comment; it is kept as `Preserved` run content and contributes no text.
+
+== Anchors
+
+A comment's `anchor` is one of:
+
+* `Range(text)`, the current text between the start and the end of the
+  comment's range, as `Docx.text` reads it: inserted text included, deleted
+  and moved-away text not, a line feed for every paragraph that ends inside
+  the range. A range that starts and ends at one place, as Word writes a
+  comment on no text, covers the empty text. A range that never ends runs to
+  the end of the body.
+* `Point`, where the body refers to the comment without a range around the
+  reference, as Word allows.
+* `Unanchored`, when the body neither marks a range for the comment nor
+  refers to it.
+
+In the body, a range's boundaries are `CommentStart(id)` and
+`CommentEnd(id)`. They are inlines inside a paragraph, and blocks, table
+content or row content when a range starts or ends between paragraphs,
+rows or cells. The reference that shows where a comment is, usually just
+after its range, is the run content `CommentReference(id)`. Each names the
+comment by its `id`; the document's own numbers for its comments are not
+part of the model.
+
+Neither the boundaries nor the references contribute text. A boundary or
+reference that names a comment the comments part does not have, or that
+another construct has displaced, is kept as `Preserved`.
+
+Replies, resolution and the identifiers Word keeps for comments in further
+parts are not read yet. Those parts are kept, and a document is written back
+with them unchanged.

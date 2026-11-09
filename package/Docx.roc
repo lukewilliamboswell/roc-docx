@@ -3,9 +3,11 @@
 ##
 ## `Docx.parse` opens the package within the default `Limits` and reads it as
 ## a [Document]; `Docx.body` and `Docx.text` read what its body says,
-## `Docx.footnotes` and `Docx.endnotes` its notes and `Docx.fields` its fields;
+## `Docx.footnotes` and `Docx.endnotes` its notes, `Docx.comments` its
+## comments and `Docx.fields` its fields;
 ## `Docx.to_bytes` writes a document as a package. What reading drops comes
 ## back as diagnostics beside the document, never printed.
+import Comments
 import Document
 import Mce
 import Numbering
@@ -66,7 +68,7 @@ Docx :: [].{
 						Ok(notes) => WmlRead.note_ids(notes.tree)
 						Err(NotFound) => []
 					}
-				WmlRead.read_body(main.tree, { relationships: main.relationships, footnotes: ids(footnotes_relationship), endnotes: ids(endnotes_relationship) })
+				WmlRead.read_body(main.tree, { relationships: main.relationships, footnotes: ids(footnotes_relationship), endnotes: ids(endnotes_relationship), comments: comment_ids(document) })
 			}
 
 			Err(NotFound) => { blocks: [], diagnostics: [] }
@@ -82,6 +84,21 @@ Docx :: [].{
 	## A document's endnotes, as [Docx.footnotes] gives its footnotes.
 	endnotes : Document -> List(Document.Note)
 	endnotes = |document| notes(document, endnotes_relationship)
+
+	## A document's comments joined with its body by [Comments.anchored]:
+	## each comment, read by [WmlRead.comments] from the part the main
+	## document's comments relationship targets, with its place in that part
+	## and the text it is anchored to, those the body anchors in the order
+	## their anchors begin. What reading the comments noticed comes beside
+	## them. A document without a comments part has none.
+	comments : Document -> { comments : List(Comments.Anchored), diagnostics : List(WmlRead.Diagnostic) }
+	comments = |document| {
+		read = match comments_part(document) {
+			Ok(part) => WmlRead.comments(part.tree, { relationships: part.relationships, footnotes: [], endnotes: [], comments: [] })
+			Err(NotFound) => { comments: [], diagnostics: [] }
+		}
+		{ comments: Comments.anchored(Docx.body(document), read.comments), diagnostics: read.diagnostics }
+	}
 
 	## The fields of a document's body, as [Document.fields] gathers them:
 	## each field's code and its result as last calculated. The fields of a
@@ -118,7 +135,7 @@ Docx :: [].{
 	header_footer : Document, Str -> List(Document.Block)
 	header_footer = |document, part|
 		match Document.xml_part(document, part) {
-			Ok(found) => WmlRead.header_footer(found.tree, { relationships: found.relationships, footnotes: [], endnotes: [] })
+			Ok(found) => WmlRead.header_footer(found.tree, { relationships: found.relationships, footnotes: [], endnotes: [], comments: comment_ids(document) })
 			Err(NotFound) => []
 		}
 
@@ -206,10 +223,29 @@ notes = |document, kind| {
 		Err(NotFound) => Err(NotFound)
 	}
 	match found {
-		Ok(part) => WmlRead.notes(part.tree, { relationships: part.relationships, footnotes: [], endnotes: [] })
+		Ok(part) => WmlRead.notes(part.tree, { relationships: part.relationships, footnotes: [], endnotes: [], comments: comment_ids(document) })
 		Err(NotFound) => []
 	}
 }
+
+comments_relationship : Str
+comments_relationship = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments"
+
+# The comments part of the main document.
+comments_part : Document -> Try(Document.XmlPart, [NotFound])
+comments_part = |document| {
+	main = Document.related(document, "/", Opc.officedocument_relationship)?
+	Document.related(document, main.name, comments_relationship)
+}
+
+# The identifiers of the comments that ranges and references name, in the
+# order of the comments part.
+comment_ids : Document -> List(Str)
+comment_ids = |document|
+	match comments_part(document) {
+		Ok(part) => WmlRead.comment_ids(part.tree)
+		Err(NotFound) => []
+	}
 
 numbering_relationship : Str
 numbering_relationship = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering"
@@ -241,6 +277,8 @@ block_text = |state, block|
 
 		Container({ element: _, content }) => content.fold(state, block_text)
 		Section(_) => state
+		CommentStart(_) => state
+		CommentEnd(_) => state
 		Preserved(_) => state
 	}
 
@@ -486,4 +524,61 @@ expect {
 
 		_ => Bool.False
 	}
+}
+
+# A package whose main document anchors comments of a comments part that
+# lists them in another order than their identifiers.
+commented : {} -> Try(List(U8), Opc.WriteError)
+commented = |{}| {
+	relationships = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+	declarations = "xmlns:w='http://schemas.openxmlformats.org/wordprocessingml/2006/main'"
+	graph = {
+		relationships: [{ id: "rId1", kind: Opc.officedocument_relationship, target: "/word/document.xml", mode: Internal }],
+		parts: [
+			{
+				name: "/word/document.xml",
+				content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml",
+				relationships: [{ id: "rId9", kind: "${relationships}/comments", target: "/word/comments.xml", mode: Internal }],
+			},
+			{ name: "/word/comments.xml", content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml", relationships: [] },
+		],
+	}
+	range = |id, text| "<w:commentRangeStart w:id='${id}'/><w:r><w:t>${text}</w:t></w:r><w:commentRangeEnd w:id='${id}'/><w:r><w:commentReference w:id='${id}'/></w:r>"
+	body = "<w:p>${range("0", "first")}<w:r><w:t xml:space='preserve'> and </w:t></w:r>${range("1", "second")}</w:p>"
+	comment = |id, initials, text| "<w:comment w:id='${id}' w:author='Morgan Reviewer' w:initials='${initials}' w:date='2026-11-09T10:54:16Z'><w:p><w:r><w:t>${text}</w:t></w:r></w:p></w:comment>"
+	Opc.to_bytes(
+		graph,
+		|name|
+			if name == "/word/document.xml" {
+				Bytes("<w:document ${declarations}><w:body>${body}</w:body></w:document>".to_utf8())
+			} else {
+				Bytes("<w:comments ${declarations}>${comment("1", "MR", "Later")}${comment("0", "", "Earlier")}</w:comments>".to_utf8())
+			},
+	)
+}
+
+# A block's text when it is a paragraph.
+paragraph_of : Document.Block -> Str
+paragraph_of = |block|
+	match block {
+		Paragraph(paragraph) => Document.paragraph_text(paragraph)
+		_ => ""
+	}
+
+## Comments are found through the main document's relationship, each with its
+## place in the comments part, which the body's ranges and references name,
+## and the text it covers, in the order their ranges begin; they read the
+## same from the document as written.
+expect {
+	parsed = Docx.parse(commented({})?)?
+	again = Docx.parse(Docx.to_bytes(parsed.document)?)?
+	read = |document| Docx.comments(document).comments.map(|entry| { id: entry.id, anchor: entry.anchor, initials: entry.comment.initials, text: entry.comment.content.map(paragraph_of) })
+	body_ok = match Docx.body(parsed.document) {
+		[Paragraph({ properties: _, content: [CommentStart(1), Run(_), CommentEnd(1), Run(_), Run(_), CommentStart(0), Run(_), CommentEnd(0), Run(_)] })] => Bool.True
+		_ => Bool.False
+	}
+	body_ok
+		and read(parsed.document) == [{ id: 1, anchor: Range("first"), initials: Initials(""), text: ["Earlier"] }, { id: 0, anchor: Range("second"), initials: Initials("MR"), text: ["Later"] }]
+		and read(again.document) == read(parsed.document)
+		and Docx.text(parsed.document) == "first and second\n"
 }

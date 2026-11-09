@@ -10,8 +10,9 @@
 ## part's bytes beyond them.
 ##
 ## The body's model, [Document.Block] and what it holds, is read from the
-## main document's tree by [Docx.body], and its notes from the footnotes and
-## endnotes parts by [Docx.footnotes] and [Docx.endnotes]. Until the model is
+## main document's tree by [Docx.body], its notes from the footnotes and
+## endnotes parts by [Docx.footnotes] and [Docx.endnotes], and its comments
+## from the comments part by [Docx.comments]. Until the model is
 ## written, the trees are what a document writes, so the model is a reading
 ## of them rather than a copy kept beside them.
 import Lenient
@@ -24,14 +25,18 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 
 	## A block of the body, in reading order: a paragraph; a table; the end
 	## of a section, with the section's properties, after the paragraph whose
-	## mark ends it or at the end of the body; an element the model does not
-	## represent whose content is still read as blocks, kept without its
-	## children in `element` (a content control and its content, custom XML);
-	## or any other element, kept whole as it was read.
+	## mark ends it or at the end of the body; the start or end of a comment's
+	## range between blocks, naming the comment as [Document.Inline] does; an
+	## element the model does not represent whose content is still read as
+	## blocks, kept without its children in `element` (a content control and
+	## its content, custom XML); or any other element, kept whole as it was
+	## read.
 	Block := [
 		Paragraph(Paragraph),
 		Table(Table),
 		Section(Section),
+		CommentStart(U64),
+		CommentEnd(U64),
 		Container({ element : XmlTree.Node, content : List(Block) }),
 		Preserved(XmlTree.Node),
 	].{
@@ -133,12 +138,13 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 	Numbering : { instance : [Unset, Instance(U32)], level : [Unset, Level(U8)] }
 
 	## A paragraph's content, in order: a run; a hyperlink; a simple field; a
-	## bookmark's start or end; an element the model does not represent whose
-	## content is still read as paragraph content, kept without its children
-	## in `element` (an inserted, deleted or moved range, a content control
-	## and its content, a smart tag, custom XML, a bidirectional embedding, or
-	## a hyperlink whose target cannot be resolved); or any other element,
-	## such as a comment range boundary, kept whole in its place.
+	## bookmark's start or end; the start or end of a comment's range; an
+	## element the model does not represent whose content is still read as
+	## paragraph content, kept without its children in `element` (an
+	## inserted, deleted or moved range, a content control and its content, a
+	## smart tag, custom XML, a bidirectional embedding, or a hyperlink whose
+	## target cannot be resolved); or any other element kept whole in its
+	## place.
 	##
 	## A hyperlink holds its target, the attributes the model does not
 	## represent (a tooltip, a target frame, whether it was visited) and its
@@ -146,13 +152,18 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 	## does not represent (whether it is locked or must be updated) and its
 	## content, which is the field's result as last calculated. A bookmark's
 	## start and end both name the bookmark by its name, which is unique in a
-	## document.
+	## document. A comment's range covers the content between its start and
+	## its end, which may be in different paragraphs or blocks; both name the
+	## comment by its place among the comments of the document's comments
+	## part, as [Docx.comments] gives each comment's `id`.
 	Inline := [
 		Run(Run),
 		Hyperlink({ target : LinkTarget, preserved : List(XmlTree.Attribute), content : List(Inline) }),
 		SimpleField({ code : Str, preserved : List(XmlTree.Attribute), content : List(Inline) }),
 		BookmarkStart(Str),
 		BookmarkEnd(Str),
+		CommentStart(U64),
+		CommentEnd(U64),
 		Container({ element : XmlTree.Node, content : List(Inline) }),
 		Preserved(XmlTree.Node),
 	].{
@@ -260,9 +271,11 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 	## symbol, a character `code` in a named `font`; a soft hyphen, shown only
 	## where a line breaks; a hyphen at which a line never breaks; a reference
 	## to a footnote or endnote; the mark that numbers a note, inside the note
-	## itself; a complex field's mark or a piece of its field code; an inline
-	## picture; or any other element, such as a floating drawing or a deleted
-	## field code, kept whole in its place.
+	## itself; a reference to a comment, where the comment is shown, named by
+	## its place as a comment's range names it; a complex field's mark or a
+	## piece of its field code; an inline picture; or any other element, such
+	## as a floating drawing, a deleted field code or the mark a comment's
+	## content begins with, kept whole in its place.
 	##
 	## A note reference names its note by its place among the document's
 	## footnotes or endnotes, as [Docx.footnotes] and [Docx.endnotes] list
@@ -283,6 +296,7 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 		NonBreakingHyphen,
 		NoteReference({ kind : NoteKind, note : U64 }),
 		NoteMark(NoteKind),
+		CommentReference(U64),
 		FieldMark({ kind : [Begin, Separate, End], element : XmlTree.Node }),
 		FieldCode(Str),
 		Picture({ media : Str, size : { width : U64, height : U64 }, drawing : XmlTree.Node }),
@@ -305,13 +319,15 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 	## is kept in its place as it was read.
 	GridColumn : [Column(U64), Preserved(XmlTree.Node)]
 
-	## A table's content, in order: a row; an element the model does not
-	## represent whose content is still read as rows, kept without its
-	## children in `element` (a content control and its content, custom XML);
-	## or any other element, such as a bookmark boundary, kept whole in its
-	## place.
+	## A table's content, in order: a row; the start or end of a comment's
+	## range between rows; an element the model does not represent whose
+	## content is still read as rows, kept without its children in `element`
+	## (a content control and its content, custom XML); or any other element,
+	## such as a bookmark boundary, kept whole in its place.
 	TableContent := [
 		Row(Row),
+		CommentStart(U64),
+		CommentEnd(U64),
 		Container({ element : XmlTree.Node, content : List(TableContent) }),
 		Preserved(XmlTree.Node),
 	].{
@@ -329,13 +345,16 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 	## it was read, in order.
 	RowProperties : { header : [Unset, On, Off], grid_before : [Unset, Columns(U64)], grid_after : [Unset, Columns(U64)], preserved : List(XmlTree.Node) }
 
-	## A row's content, in order: a cell; an element the model does not
-	## represent whose content is still read as cells, kept without its
-	## children in `element` (a content control and its content, custom XML);
-	## or any other element, such as the table property exceptions of the row
-	## or a bookmark boundary, kept whole in its place.
+	## A row's content, in order: a cell; the start or end of a comment's
+	## range between cells; an element the model does not represent whose
+	## content is still read as cells, kept without its children in `element`
+	## (a content control and its content, custom XML); or any other element,
+	## such as the table property exceptions of the row or a bookmark
+	## boundary, kept whole in its place.
 	RowContent := [
 		Cell(Cell),
+		CommentStart(U64),
+		CommentEnd(U64),
 		Container({ element : XmlTree.Node, content : List(RowContent) }),
 		Preserved(XmlTree.Node),
 	].{
@@ -402,6 +421,27 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 	## body, the longer one above notes continued from the previous page, and
 	## the notice that notes continue on the next.
 	Note : { kind : [Note, Separator, ContinuationSeparator, ContinuationNotice], content : List(Block) }
+
+	## A comment: who wrote it, by name and by initials as the document gives
+	## them; when, as [Document.Timestamp] holds a date; and its content,
+	## paragraphs and tables read as a body's blocks are. A comment's `w:id`
+	## is how the document's ranges and references name it, which the model
+	## replaces by the comment's place; every other attribute, and a date
+	## that is not a date and time, is kept in `preserved` as it was read.
+	Comment : {
+		author : Str,
+		initials : [Unset, Initials(Str)],
+		date : [Unset, Date(Timestamp)],
+		content : List(Block),
+		preserved : List(XmlTree.Attribute),
+	}
+
+	## A date and time as the document writes it, in the XML Schema
+	## `dateTime` form such as `2026-05-04T09:15:00Z`, and the instant it
+	## names in seconds since 1970-01-01T00:00:00Z, fractions of a second
+	## left out. A time with an offset from UTC is converted; a time without
+	## one is taken as UTC, as LibreOffice and pandoc take it.
+	Timestamp : { written : Str, utc_seconds : I64 }
 
 	## A field as written: its field code, every piece joined, and its result
 	## as last calculated, as text. Fields are never evaluated.
@@ -807,6 +847,8 @@ inline_text_bytes = |text, inline|
 		SimpleField({ code: _, preserved: _, content }) => content.fold(text, inline_text_bytes)
 		BookmarkStart(_) => text
 		BookmarkEnd(_) => text
+		CommentStart(_) => text
+		CommentEnd(_) => text
 		Preserved(_) => text
 	}
 
@@ -823,6 +865,8 @@ rows_of = |rows, content|
 	match content {
 		Row(row) => List.append(rows, row)
 		Container({ element: _, content: inner }) => inner.fold(rows, rows_of)
+		CommentStart(_) => rows
+		CommentEnd(_) => rows
 		Preserved(_) => rows
 	}
 
@@ -831,6 +875,8 @@ cells_of = |cells, content|
 	match content {
 		Cell(cell) => List.append(cells, cell)
 		Container({ element: _, content: inner }) => inner.fold(cells, cells_of)
+		CommentStart(_) => cells
+		CommentEnd(_) => cells
 		Preserved(_) => cells
 	}
 
@@ -907,6 +953,8 @@ block_fields = |state, block|
 		Table(table) => Document.table_rows(table).fold(state, |by_row, row| Document.row_cells(row).fold(by_row, |by_cell, cell| cell.content.fold(by_cell, block_fields)))
 		Container({ element: _, content }) => content.fold(state, block_fields)
 		Section(_) => state
+		CommentStart(_) => state
+		CommentEnd(_) => state
 		Preserved(_) => state
 	}
 
@@ -924,6 +972,8 @@ inline_fields = |state, inline|
 		Container({ element: _, content }) => content.fold(state, inline_fields)
 		BookmarkStart(_) => state
 		BookmarkEnd(_) => state
+		CommentStart(_) => state
+		CommentEnd(_) => state
 		Preserved(_) => state
 	}
 
@@ -977,6 +1027,7 @@ run_content_text = |text, content|
 		NonBreakingHyphen => List.concat(text, [0xE2, 0x80, 0x91])
 		NoteReference(_) => text
 		NoteMark(_) => text
+		CommentReference(_) => text
 		FieldMark(_) => text
 		FieldCode(_) => text
 		Picture(_) => text

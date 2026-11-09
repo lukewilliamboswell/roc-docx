@@ -20,10 +20,12 @@ WmlRead :: [].{
 
 	## What reading a part needs from the rest of its package: the
 	## relationships whose source is the part, which hyperlinks and pictures
-	## name, and the identifiers of the footnotes and of the endnotes in the
+	## name; the identifiers of the footnotes and of the endnotes in the
 	## order of their parts, as [WmlRead.note_ids] lists them, which note
-	## references name.
-	Context : { relationships : List(Opc.Relationship), footnotes : List(Str), endnotes : List(Str) }
+	## references name; and the identifiers of the comments in the order of
+	## their part, as [WmlRead.comment_ids] lists them, which comment ranges
+	## and references name.
+	Context : { relationships : List(Opc.Relationship), footnotes : List(Str), endnotes : List(Str), comments : List(Str) }
 
 	## The body of a main document part, block by block in reading order, from
 	## the part's tree as [Docx.parse] read it. The tree is interpreted by
@@ -36,18 +38,20 @@ WmlRead :: [].{
 	## a break (`w:cr` a line break), `w:sym` a symbol, `w:softHyphen` and
 	## `w:noBreakHyphen` hyphens, `w:footnoteReference` and
 	## `w:endnoteReference` note references, `w:footnoteRef` and
-	## `w:endnoteRef` note marks, `w:fldChar` a field's mark, `w:instrText` a
-	## piece of its code, and a `w:drawing` holding a `wp:inline` picture a
-	## picture. In a paragraph, `w:hyperlink` is a hyperlink, `w:fldSimple` a
-	## simple field and `w:bookmarkStart` and `w:bookmarkEnd` a bookmark's
-	## boundaries.
+	## `w:endnoteRef` note marks, `w:commentReference` a comment reference,
+	## `w:fldChar` a field's mark, `w:instrText` a piece of its code, and a
+	## `w:drawing` holding a `wp:inline` picture a picture. In a paragraph,
+	## `w:hyperlink` is a hyperlink, `w:fldSimple` a simple field and
+	## `w:bookmarkStart` and `w:bookmarkEnd` a bookmark's boundaries.
+	## `w:commentRangeStart` and `w:commentRangeEnd` are a comment range's
+	## boundaries, in a paragraph or between blocks, rows or cells.
 	##
 	## An element whose attributes are not ones the model can hold, such as a
 	## break of an unknown type, a symbol without a character code, a note
 	## reference with a custom mark or a bookmark spanning table columns, or
-	## that names what the package does not have, such as a missing note, a
-	## relationship that is not there or a bookmark end without its start,
-	## is kept as it was read; a hyperlink or simple field like that is a
+	## that names what the package does not have, such as a missing note or
+	## comment, a relationship that is not there or a bookmark end without
+	## its start, is kept as it was read; a hyperlink or simple field like that is a
 	## container of its content.
 	##
 	## A table's first `w:tblPr` holds its properties and its first
@@ -105,6 +109,62 @@ WmlRead :: [].{
 	## [WmlRead.notes] reads them; a note without one has the empty string.
 	note_ids : XmlTree.Node -> List(Str)
 	note_ids = |tree| note_elements(Mce.process(tree).interpreted).map(|element| value_of(element, "id") ?? "")
+
+	## The comments of a comments part, in the part's order, from the part's
+	## tree as [Docx.parse] read it, interpreted by [Mce.process] first, with
+	## what reading them noticed. A comment's content is read as a body's
+	## blocks are; `w:author`, `w:initials` and `w:date` say who wrote it and
+	## when. A comment without an author, which the schema requires, has the
+	## empty author and a `Defaulted` diagnostic. A tree whose root is not a
+	## WordprocessingML comments part has no comments.
+	comments : XmlTree.Node, Context -> { comments : List(Document.Comment), diagnostics : List(WmlRead.Diagnostic) }
+	comments = |tree, context| {
+		interpreted = Mce.process(tree).interpreted
+		within = reading(interpreted, context)
+		elements = comment_elements(interpreted)
+		var $comments = List.with_capacity(elements.len())
+		var $diagnostics = List.with_capacity(0)
+		for element in elements {
+			author = match value_of(element, "author") {
+				Ok(name) => name
+				Err(NotFound) => {
+					$diagnostics = List.append($diagnostics, Defaulted({ element: "comment", attribute: "author" }))
+					""
+				}
+			}
+			date = match value_of(element, "date") {
+				Ok(written) =>
+					match timestamp(written) {
+						Ok(stamp) => Date(stamp)
+						Err(NotDate) => Unset
+					}
+
+				Err(NotFound) => Unset
+			}
+			kept = |attribute| is_w_in(attribute.name, ["id", "author", "initials"]) or (is_w(attribute.name, "date") and date != Unset)
+			read = blocks(element.children, within, $diagnostics)
+			$diagnostics = read.diagnostics
+			comment : Document.Comment
+			comment = {
+				author,
+				initials: match value_of(element, "initials") {
+					Ok(initials) => Initials(initials)
+					Err(NotFound) => Unset
+				},
+				date,
+				content: read.blocks,
+				preserved: element.attributes.drop_if(kept),
+			}
+			$comments = List.append($comments, comment)
+		}
+		{ comments: $comments, diagnostics: $diagnostics }
+	}
+
+	## The identifiers of a comments part's comments, in the order
+	## [WmlRead.comments] reads them; a comment without one has the empty
+	## string.
+	comment_ids : XmlTree.Node -> List(Str)
+	comment_ids = |tree| comment_elements(Mce.process(tree).interpreted).map(|element| value_of(element, "id") ?? "")
 
 	## The blocks of a header or footer part, from the part's tree as
 	## [Docx.parse] read it, interpreted by [Mce.process] first and read as a
@@ -278,12 +338,13 @@ WmlRead :: [].{
 }
 
 # What reading a part looks up: its relationships and its bookmarks' names by
-# identifier, and each note's place by identifier.
+# identifier, and each note's and comment's place by identifier.
 Reading : {
 	relationships : Dict(Str, Opc.Relationship),
 	bookmarks : Dict(Str, Str),
 	footnotes : Dict(Str, U64),
 	endnotes : Dict(Str, U64),
+	comments : Dict(Str, U64),
 }
 
 reading : XmlTree.Node, WmlRead.Context -> Reading
@@ -292,7 +353,7 @@ reading = |interpreted, context| {
 	for relationship in context.relationships {
 		$relationships = $relationships.insert(relationship.id, relationship)
 	}
-	{ relationships: $relationships, bookmarks: bookmark_names(interpreted), footnotes: places(context.footnotes), endnotes: places(context.endnotes) }
+	{ relationships: $relationships, bookmarks: bookmark_names(interpreted), footnotes: places(context.footnotes), endnotes: places(context.endnotes), comments: places(context.comments) }
 }
 
 places : List(Str) -> Dict(Str, U64)
@@ -344,6 +405,101 @@ note_elements = |root|
 
 		_ => []
 	}
+
+# The comment elements of a comments part's root.
+comment_elements : XmlTree.Node -> List(Element)
+comment_elements = |root|
+	match root {
+		Element(element) if is_w(element.name, "comments") =>
+			element.children.keep_oks(
+				|child|
+					match child {
+						Element(comment) if is_w(comment.name, "comment") => Ok(comment)
+						_ => Err(NotAComment)
+					},
+			)
+
+		_ => []
+	}
+
+# A date and time in the XML Schema `dateTime` form: a four-digit year, month
+# and day, `T`, hours, minutes and seconds with an optional fraction, and an
+# optional zone, `Z` or an offset in hours and minutes.
+timestamp : Str -> Try(Document.Timestamp, [NotDate])
+timestamp = |written| {
+	bytes = written.to_utf8()
+	at = |index, byte| bytes.get(index) == Ok(byte)
+	number = |start, count| {
+		var $sum = 0.I64
+		var $index = start
+		while $index < start + count {
+			match bytes.get($index) {
+				Ok(digit) if digit >= '0' and digit <= '9' => {
+					$sum = $sum * 10 + (digit - '0').to_i64()
+				}
+
+				_ => {
+					return Err(NotDate)
+				}
+			}
+			$index = $index + 1
+		}
+		Ok($sum)
+	}
+	if !(at(4, '-') and at(7, '-') and at(10, 'T') and at(13, ':') and at(16, ':')) {
+		return Err(NotDate)
+	}
+	year = number(0, 4)?
+	month = number(5, 2)?
+	day = number(8, 2)?
+	hour = number(11, 2)?
+	minute = number(14, 2)?
+	second = number(17, 2)?
+	var $zone = 19.U64
+	if at(19, '.') {
+		$zone = 20
+		while bytes.get($zone).map_ok(|digit| digit >= '0' and digit <= '9') == Ok(Bool.True) {
+			$zone = $zone + 1
+		}
+		if $zone == 20 {
+			return Err(NotDate)
+		}
+	}
+	rest = bytes.len() - $zone
+	offset = if rest == 0 or (rest == 1 and at($zone, 'Z')) {
+		0
+	} else if rest == 6 and (at($zone, '+') or at($zone, '-')) and at($zone + 3, ':') {
+		minutes = number($zone + 1, 2)? * 60 + number($zone + 4, 2)?
+		if (at($zone, '-')) 0 - minutes else minutes
+	} else {
+		return Err(NotDate)
+	}
+	if month < 1 or month > 12 or day < 1 or day > days_in_month(year, month) or hour > 23 or minute > 59 or second > 59 {
+		return Err(NotDate)
+	}
+	Ok({ written, utc_seconds: days_from_civil(year, month, day) * 86400 + hour * 3600 + minute * 60 + second - offset * 60 })
+}
+
+days_in_month : I64, I64 -> I64
+days_in_month = |year, month|
+	if month == 2 {
+		if ((year % 4 == 0 and year % 100 != 0) or year % 400 == 0) 29 else 28
+	} else if month == 4 or month == 6 or month == 9 or month == 11 {
+		30
+	} else {
+		31
+	}
+
+# The days from 1970-01-01 to a day of the proleptic Gregorian calendar,
+# counting each year from March so that a leap day ends it.
+days_from_civil : I64, I64, I64 -> I64
+days_from_civil = |year, month, day| {
+	shifted = if (month <= 2) year - 1 else year
+	era = (if (shifted >= 0) shifted else shifted - 399) // 400
+	of_era = shifted - era * 400
+	of_year = (153 * (if (month > 2) month - 3 else month + 9) + 2) // 5 + day - 1
+	era * 146097 + of_era * 365 + of_era // 4 - of_era // 100 + of_year - 719468
+}
 
 # One paragraph property element read into the properties, or `CannotHold`
 # when the model cannot represent it.
@@ -1189,6 +1345,8 @@ block = |node, within, diagnostics|
 			{ block: Section(read.section), diagnostics: read.diagnostics }
 		}
 
+		Element(element) if element.name.local == "commentRangeStart" and is_w(element.name, "commentRangeStart") => { block: comment_place(element, within).map_ok(|place| CommentStart(place)) ?? Preserved(node), diagnostics: diagnostics }
+		Element(element) if element.name.local == "commentRangeEnd" and is_w(element.name, "commentRangeEnd") => { block: comment_place(element, within).map_ok(|place| CommentEnd(place)) ?? Preserved(node), diagnostics: diagnostics }
 		_ => { block: Preserved(node), diagnostics: diagnostics }
 	}
 
@@ -1246,6 +1404,8 @@ table_content = |node, within, diagnostics|
 			{ content: Container({ element: without_children(element), content: $content }), diagnostics: $diagnostics }
 		}
 
+		Element(element) if element.name.local == "commentRangeStart" and is_w(element.name, "commentRangeStart") => { content: comment_place(element, within).map_ok(|place| CommentStart(place)) ?? Preserved(node), diagnostics: diagnostics }
+		Element(element) if element.name.local == "commentRangeEnd" and is_w(element.name, "commentRangeEnd") => { content: comment_place(element, within).map_ok(|place| CommentEnd(place)) ?? Preserved(node), diagnostics: diagnostics }
 		_ => { content: Preserved(node), diagnostics: diagnostics }
 	}
 
@@ -1296,6 +1456,8 @@ row_content = |node, within, diagnostics|
 			{ content: Container({ element: without_children(element), content: $content }), diagnostics: $diagnostics }
 		}
 
+		Element(element) if element.name.local == "commentRangeStart" and is_w(element.name, "commentRangeStart") => { content: comment_place(element, within).map_ok(|place| CommentStart(place)) ?? Preserved(node), diagnostics: diagnostics }
+		Element(element) if element.name.local == "commentRangeEnd" and is_w(element.name, "commentRangeEnd") => { content: comment_place(element, within).map_ok(|place| CommentEnd(place)) ?? Preserved(node), diagnostics: diagnostics }
 		_ => { content: Preserved(node), diagnostics: diagnostics }
 	}
 
@@ -1795,6 +1957,8 @@ inline = |node, within|
 		Element(element) if is_w(element.name, "fldSimple") => simple_field(element, within) ?? container(element, within)
 		Element(element) if is_w(element.name, "bookmarkStart") => bookmark_start(element) ?? Preserved(node)
 		Element(element) if is_w(element.name, "bookmarkEnd") => bookmark_end(element, within) ?? Preserved(node)
+		Element(element) if element.name.local == "commentRangeStart" and is_w(element.name, "commentRangeStart") => comment_place(element, within).map_ok(|place| CommentStart(place)) ?? Preserved(node)
+		Element(element) if element.name.local == "commentRangeEnd" and is_w(element.name, "commentRangeEnd") => comment_place(element, within).map_ok(|place| CommentEnd(place)) ?? Preserved(node)
 		Element(element) if is_w_in(element.name, inline_containers) => container(element, within)
 		_ => Preserved(node)
 	}
@@ -1853,6 +2017,17 @@ bookmark_end = |element, within|
 		Err(Unknown)
 	}
 
+# A comment range's boundary or a comment reference: `w:id` names a comment
+# of the comments part. One displaced by custom XML is not modelled.
+comment_place : Element, Reading -> Try(U64, [Unknown])
+comment_place = |element, within|
+	if only(element, ["id"]) {
+		id = value_of(element, "id") ? |_| Unknown
+		Ok(within.comments.get(id) ? |_| Unknown)
+	} else {
+		Err(Unknown)
+	}
+
 run : List(XmlTree.Node), Reading -> Document.Run
 run = |children, within| {
 	var $properties = Err(Missing)
@@ -1889,6 +2064,7 @@ run_content = |node, within|
 				"endnoteReference" => note_reference(element, Endnote, within.endnotes) ?? Preserved(node)
 				"footnoteRef" => NoteMark(Footnote)
 				"endnoteRef" => NoteMark(Endnote)
+				"commentReference" => comment_place(element, within).map_ok(|place| CommentReference(place)) ?? Preserved(node)
 				"fldChar" => field_mark(element, node) ?? Preserved(node)
 				"instrText" => text(element).map_ok(|code| FieldCode(code)) ?? Preserved(node)
 				"drawing" => picture(element, node, within) ?? Preserved(node)
@@ -2130,7 +2306,7 @@ only = |element, locals| element.attributes.all(|attribute| is_w_in(attribute.na
 
 # The blocks of a main document part with this body content.
 read : Str -> List(Document.Block)
-read = |content| read_in(content, { relationships: [], footnotes: [], endnotes: [] })
+read = |content| read_in(content, { relationships: [], footnotes: [], endnotes: [], comments: [] })
 
 # The blocks of a main document part with this body content, in a package.
 read_in : Str, WmlRead.Context -> List(Document.Block)
@@ -2293,7 +2469,7 @@ expect {
 	]
 	link = |attributes| "<w:hyperlink ${attributes}><w:r><w:t>x</w:t></w:r></w:hyperlink>"
 	links = [link("r:id='rId1' w:tooltip='Tip'"), link("r:id='rId1' w:anchor='part'"), link("w:anchor='terms' w:history='1'"), link("r:id='rId9'"), link("r:id='rId2'"), link("w:tgtFrame='_blank'")]
-	match read_in("<w:p>${Str.join_with(links, "")}</w:p>", { relationships, footnotes: [], endnotes: [] }) {
+	match read_in("<w:p>${Str.join_with(links, "")}</w:p>", { relationships, footnotes: [], endnotes: [], comments: [] }) {
 		[Paragraph({ properties: _, content: [Hyperlink(external), Hyperlink(located), Hyperlink(internal), Container(missing), Container(part), Container(untargeted)] })] =>
 			external.target == External("https://example.org/a b")
 				and external.preserved.map(|attribute| attribute.value) == ["Tip"]
@@ -2328,7 +2504,7 @@ expect {
 ## own mark is read.
 expect {
 	run_xml = "<w:r><w:footnoteReference w:id='4'/><w:endnoteReference w:id='4'/><w:footnoteReference w:id='3'/><w:footnoteReference w:customMarkFollows='1' w:id='4'/><w:t>*</w:t><w:footnoteRef/><w:endnoteRef/></w:r>"
-	match read_in("<w:p>${run_xml}</w:p>", { relationships: [], footnotes: ["-1", "0", "4"], endnotes: ["4"] }) {
+	match read_in("<w:p>${run_xml}</w:p>", { relationships: [], footnotes: ["-1", "0", "4"], endnotes: ["4"], comments: [] }) {
 		[Paragraph({ properties: _, content: [Run(r)] })] =>
 			match r.content {
 				[NoteReference(footnote), NoteReference(endnote), Preserved(_), Preserved(_), Text("*"), NoteMark(Footnote), NoteMark(Endnote)] =>
@@ -2373,7 +2549,7 @@ expect {
 	drawing = |placement, extent, id| "<w:drawing><wp:${placement}>${extent}<wp:docPr id='1' name='Picture 1'/><a:graphic><a:graphicData uri='http://schemas.openxmlformats.org/drawingml/2006/picture'><a:blip r:embed='${id}'/></a:graphicData></a:graphic></wp:${placement}></w:drawing>"
 	extent = "<wp:extent cx='1828800' cy='914400'/>"
 	drawings = [drawing("inline", extent, "rId4"), drawing("anchor", extent, "rId4"), drawing("inline", extent, "rId5"), drawing("inline", "<wp:extent cx='1.5' cy='2'/>", "rId4")]
-	match read_in("<w:p><w:r>${Str.join_with(drawings, "")}</w:r></w:p>", { relationships, footnotes: [], endnotes: [] }) {
+	match read_in("<w:p><w:r>${Str.join_with(drawings, "")}</w:r></w:p>", { relationships, footnotes: [], endnotes: [], comments: [] }) {
 		[Paragraph({ properties: _, content: [Run(r)] })] =>
 			match r.content {
 				[Picture(inline_picture), Preserved(_), Preserved(_), Preserved(_)] => inline_picture.media == "/word/media/image1.png" and inline_picture.size == { width: 1828800, height: 914400 }
@@ -2389,11 +2565,11 @@ expect {
 expect {
 	notes = "<w:footnote w:type='separator' w:id='-1'><w:p><w:r><w:separator/></w:r></w:p></w:footnote><w:footnote w:id='0' w:type='continuationSeparator'/><w:footnote w:id='2'><w:p><w:r><w:footnoteRef/><w:t>Note.</w:t></w:r></w:p></w:footnote>"
 	tree = XmlTree.parse("<w:footnotes xmlns:w='${wordprocessingml}'>${notes}<w:other/></w:footnotes>".to_utf8(), {}) ?? Text("")
-	read_notes = WmlRead.notes(tree, { relationships: [], footnotes: [], endnotes: [] })
+	read_notes = WmlRead.notes(tree, { relationships: [], footnotes: [], endnotes: [], comments: [] })
 	WmlRead.note_ids(tree) == ["-1", "0", "2"]
 		and read_notes.map(|note| note.kind) == [Separator, ContinuationSeparator, Note]
 		and read_notes.map(|note| note.content.len()) == [1, 0, 1]
-		and WmlRead.notes(Text("x"), { relationships: [], footnotes: [], endnotes: [] }) == []
+		and WmlRead.notes(Text("x"), { relationships: [], footnotes: [], endnotes: [], comments: [] }) == []
 }
 
 ## A table holds its properties, grid, rows and cells, a cell holds its
@@ -2471,7 +2647,7 @@ expect {
 expect {
 	xml = "<w:tbl><w:tblPr><w:tblW w:w='33.3333%' w:type='pct'/></w:tblPr><w:tblGrid><w:gridCol w:w='10470.0'/><w:gridCol w:w='99.5'/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w='50%' w:type='pct'/><w:vMerge/></w:tcPr><w:p/></w:tc></w:tr></w:tbl>"
 	tree = XmlTree.parse("<w:document xmlns:w='${wordprocessingml}'><w:body>${xml}</w:body></w:document>".to_utf8(), {}) ?? Text("")
-	result = WmlRead.read_body(tree, { relationships: [], footnotes: [], endnotes: [] })
+	result = WmlRead.read_body(tree, { relationships: [], footnotes: [], endnotes: [], comments: [] })
 	match result.blocks {
 		[Table({ properties, grid: columns_read, content: [Row({ properties: _, content: [Cell(cell_read)] })] })] =>
 			properties.width == Fiftieths(1667)
@@ -2522,7 +2698,7 @@ expect {
 	choice = "<mc:AlternateContent><mc:Choice Requires='x'><x:shape/></mc:Choice><mc:Fallback><w:t>fallback</w:t></mc:Fallback></mc:AlternateContent>"
 	xml = "<w:document xmlns:w='${wordprocessingml}' ${mc}><w:body><x:block/><w:p x:id='1'><w:r>${choice}</w:r></w:p></w:body></w:document>"
 	tree = XmlTree.parse(xml.to_utf8(), {}) ?? Text("")
-	match WmlRead.body(tree, { relationships: [], footnotes: [], endnotes: [] }) {
+	match WmlRead.body(tree, { relationships: [], footnotes: [], endnotes: [], comments: [] }) {
 		[Paragraph({ properties: _, content: [Run(r)] })] => r.content == [Text("fallback")]
 		_ => Bool.False
 	}
@@ -2533,7 +2709,7 @@ expect {
 expect {
 	other = XmlTree.parse("<w:styles xmlns:w='${wordprocessingml}'><w:body><w:p/></w:body></w:styles>".to_utf8(), {}) ?? Text("")
 	bare = XmlTree.parse("<w:document xmlns:w='${wordprocessingml}'/>".to_utf8(), {}) ?? Text("")
-	none = { relationships: [], footnotes: [], endnotes: [] }
+	none = { relationships: [], footnotes: [], endnotes: [], comments: [] }
 	WmlRead.body(other, none) == [] and WmlRead.body(bare, none) == []
 }
 
@@ -2551,7 +2727,7 @@ expect {
 	first = "<w:sectPr>${references}<w:footnotePr/><w:type w:val='continuous'/><w:pgSz w:w='16838' w:h='11906' w:orient='landscape'/><w:pgMar w:top='-1440' w:right='1440' w:bottom='1440' w:left='1800' w:header='708' w:footer='709' w:gutter='0'/><w:pgNumType w:fmt='lowerRoman' w:start='3'/><w:cols w:num='2' w:space='360' w:sep='1'/><w:titlePg/><w:docGrid w:linePitch='360'/></w:sectPr>"
 	last = "<w:sectPr><w:pgSz w:w='12240' w:h='15840' w:code='1'/><w:cols w:equalWidth='0'><w:col w:w='4000' w:space='500'/><w:col w:w='5000'/></w:cols><w:pgNumType w:chapStyle='1'/></w:sectPr>"
 	body = "<w:p><w:pPr><w:pStyle w:val='Body'/>${first}</w:pPr><w:r><w:t>a</w:t></w:r></w:p><w:p/>${last}"
-	context = { relationships, footnotes: [], endnotes: [] }
+	context = { relationships, footnotes: [], endnotes: [], comments: [] }
 	match read_in(body, context) {
 		[Paragraph(ending), Section(ended), Paragraph(_), Section(final)] =>
 			ending.properties == { ..Document.no_paragraph_properties, style: Style("Body") }
@@ -2579,7 +2755,7 @@ expect {
 expect {
 	margins_xml = "<w:sectPr><w:pgMar w:top='1440' w:right='863.9999999999999' w:bottom='1440' w:left='864' w:header='720' w:footer='720'/></w:sectPr>"
 	tree = XmlTree.parse("<w:document xmlns:w='${wordprocessingml}'><w:body>${margins_xml}</w:body></w:document>".to_utf8(), {}) ?? Text("")
-	result = WmlRead.read_body(tree, { relationships: [], footnotes: [], endnotes: [] })
+	result = WmlRead.read_body(tree, { relationships: [], footnotes: [], endnotes: [], comments: [] })
 	match result.blocks {
 		[Section(read_section)] =>
 			read_section.margins == Margins({ top: 1440, right: 864, bottom: 1440, left: 864, header: 720, footer: 720, gutter: 0 })
@@ -2595,7 +2771,7 @@ expect {
 	declarations = "xmlns:w='${wordprocessingml}'"
 	header = XmlTree.parse("<w:hdr ${declarations}><w:p><w:r><w:t>Head</w:t></w:r></w:p><w:tbl/></w:hdr>".to_utf8(), {}) ?? Text("")
 	other = XmlTree.parse("<w:document ${declarations}><w:p/></w:document>".to_utf8(), {}) ?? Text("")
-	none = { relationships: [], footnotes: [], endnotes: [] }
+	none = { relationships: [], footnotes: [], endnotes: [], comments: [] }
 	match WmlRead.header_footer(header, none) {
 		[Paragraph(heading), Table(_)] => Document.paragraph_text(heading) == "Head" and WmlRead.header_footer(other, none) == []
 		_ => Bool.False
@@ -2659,4 +2835,80 @@ expect {
 	dates = ["2026", "2026-11", "2026-11-09", "2026-11-09T11:03Z", "2026-11-09T11:03:00Z", "2026-11-09T11:03:00.25+10:00", "2026-11-09T11:03:00-05:30"]
 	others = ["", "26", "2026-1", "2026-11-09T11:03:00", "2026-11-09 11:03:00Z", "2026-11-09T11:03:00.Z", "2026-11-09T11:03:00+1000", "yesterday"]
 	dates.all(is_w3c_date) and !others.any(is_w3c_date)
+}
+
+## A comments part's comments are read in order with their author, initials,
+## date and content, and their identifiers listed in the same order; a date
+## that is not a date and time and the attributes the model does not hold are
+## kept, and a comment without an author has the empty one with a
+## diagnostic.
+expect {
+	comment_paragraph = |words| "<w:p><w:r><w:annotationRef/></w:r><w:r><w:t>${words}</w:t></w:r></w:p>"
+	comments = [
+		"<w:comment w:id='7' w:author='Ada Reviewer' w:initials='AR' w:date='2026-05-04T09:15:00Z'>${comment_paragraph("One")}${comment_paragraph("Two")}</w:comment>",
+		"<w:comment w:id='3' w:author='Grace Author' w:date='soon' w:custom='x'>${comment_paragraph("Three")}</w:comment>",
+		"<w:comment w:id='5'/>",
+	]
+	tree = XmlTree.parse("<w:comments xmlns:w='${wordprocessingml}'>${Str.join_with(comments, "")}<w:other/></w:comments>".to_utf8(), {}) ?? Text("")
+	read_comments = WmlRead.comments(tree, { relationships: [], footnotes: [], endnotes: [], comments: [] })
+	texts = |comment|
+		comment.content.map(
+			|content|
+				match content {
+					Paragraph(read_paragraph) => Document.paragraph_text(read_paragraph)
+					_ => ""
+				},
+		)
+	match read_comments.comments {
+		[first, second, third] =>
+			WmlRead.comment_ids(tree) == ["7", "3", "5"]
+				and first.author == "Ada Reviewer"
+				and first.initials == Initials("AR")
+				and first.date == Date({ written: "2026-05-04T09:15:00Z", utc_seconds: 1777886100 })
+				and texts(first) == ["One", "Two"]
+				and first.preserved == []
+				and second.initials == Unset
+				and second.date == Unset
+				and second.preserved.map(|attribute| attribute.name.local) == ["date", "custom"]
+				and third.author == ""
+				and read_comments.diagnostics == [Defaulted({ element: "comment", attribute: "author" })]
+				and WmlRead.comments(Text("x"), { relationships: [], footnotes: [], endnotes: [], comments: [] }).comments == []
+
+		_ => Bool.False
+	}
+}
+
+## A date and time is read as written with its instant in UTC: an offset is
+## converted, across a leap day, a time without a zone is UTC and a fraction
+## of a second is left out; anything else is not a date and time.
+expect {
+	instant = |written| timestamp(written).map_ok(|stamp| stamp.utc_seconds)
+	instant("2026-05-04T09:15:00Z") == Ok(1777886100)
+		and instant("2024-02-29T23:30:00-01:00") == Ok(1709253000)
+		and instant("2026-11-09T11:03:00.75+05:30") == Ok(1794202380)
+		and instant("2000-01-01T00:00:00") == Ok(946684800)
+		and ["", "2026-05-04", "2026-05-04T09:15Z", "2026-02-29T00:00:00Z", "2026-05-04T24:00:00Z", "2026-05-04T09:15:00.Z", "2026-05-04T09:15:00+0100"].all(|written| timestamp(written) == Err(NotDate))
+}
+
+## Comment ranges and references name their comment by its place in the
+## comments part, in a paragraph and between blocks, rows and cells; one
+## naming a comment that is not there, or displaced by custom XML, is kept.
+expect {
+	context = { relationships: [], footnotes: [], endnotes: [], comments: ["4", "9"] }
+	table_xml = "<w:tbl><w:commentRangeStart w:id='9'/><w:tr><w:commentRangeEnd w:id='9'/><w:tc><w:p/></w:tc></w:tr></w:tbl>"
+	paragraph_xml = "<w:p><w:commentRangeStart w:id='9'/><w:r><w:t>a</w:t><w:commentReference w:id='9'/><w:commentReference w:id='1'/></w:r><w:commentRangeEnd w:id='2'/><w:commentRangeStart w:id='4' w:displacedByCustomXml='next'/></w:p>"
+	match read_in("<w:commentRangeStart w:id='4'/>${paragraph_xml}${table_xml}<w:commentRangeEnd w:id='4'/>", context) {
+		[CommentStart(0), Paragraph(read_paragraph), Table(read_table), CommentEnd(0)] =>
+			match (read_paragraph.content, read_table.content) {
+				([CommentStart(1), Run({ properties: _, content: [Text("a"), CommentReference(1), Preserved(_)] }), Preserved(_), Preserved(_)], [CommentStart(1), Row(first_row)]) =>
+					match first_row.content {
+						[CommentEnd(1), Cell(_)] => Bool.True
+						_ => Bool.False
+					}
+
+				_ => Bool.False
+			}
+
+		_ => Bool.False
+	}
 }
