@@ -4,11 +4,13 @@
 ##
 ## The snapshot has the contract's fixed shape, every field present, and
 ## declares in `keys` only what the package is authoritative for: the
-## body's blocks, their text and their runs' hyperlinks, and the notes' kinds
-## and text. Every other field holds its empty value.
+## body's blocks with their kind, level and text, their runs' direct
+## formatting and hyperlinks, and the notes' kinds and text. Every other
+## field holds its empty value.
 import Docx
 import Document
 import Opc
+import Styles
 import XmlTree
 
 Snapshot :: [].{
@@ -29,7 +31,15 @@ Snapshot :: [].{
 	## with the hyperlink's target: its address, its address and `#` and the
 	## location, or `#` and the bookmark's name. A hyperlink is a hyperlink
 	## element or the result of a `HYPERLINK` field, whose target
-	## [Document.field_target] reads.
+	## [Document.field_target] reads. Runs also split where a run's direct
+	## formatting changes; formatting a style gives is not run formatting.
+	##
+	## A paragraph is a heading when its effective outline level, from its
+	## style or stated directly, is one of the nine heading levels, its level
+	## counted from 1; otherwise it is a list item when its effective
+	## numbering reference names a numbering instance, its level its list
+	## level counted from 1. Paragraphs joined into one block take the kind of
+	## the last of them, whose mark remains.
 	##
 	## The notes are the footnotes and endnotes the body refers to, in the
 	## order of their references, each with its blocks' text joined by line
@@ -37,7 +47,8 @@ Snapshot :: [].{
 	json : Document, { path : Str, version : Str } -> Str
 	json = |document, { path, version }| {
 		body = Docx.body(document)
-		blocks = snapshot_of_blocks(body).map(block_json)
+		styles = Docx.styles(document).styles
+		blocks = snapshot_of_blocks(body, styles).map(block_json)
 		footnotes = Docx.footnotes(document)
 		endnotes = Docx.endnotes(document)
 		notes = body.fold(List.with_capacity(8), note_references).keep_oks(
@@ -47,7 +58,7 @@ Snapshot :: [].{
 					Endnote => ("endnote", endnotes)
 				}
 				note = list.get(reference.note) ? |_| Missing
-				text = Str.join_with(snapshot_of_blocks(note.content).map(|block| block.text), "\n")
+				text = Str.join_with(snapshot_of_blocks(note.content, styles).map(|block| block.text), "\n")
 				Ok("{\"kind\": \"${kind}\", \"text\": ${quoted(text)}}")
 			},
 		)
@@ -58,7 +69,7 @@ Snapshot :: [].{
 				"  \"schema\": \"roc-docx-snapshot/1\",",
 				"  \"producer\": {\"name\": \"roc-docx\", \"version\": ${quoted(version)}},",
 				"  \"document\": ${quoted(path)},",
-				"  \"keys\": [\"blocks.text\", \"blocks.rows\", \"blocks.runs.link\", \"notes.kind\", \"notes.text\"],",
+				"  \"keys\": [${Str.join_with(keys.map(quoted), ", ")}],",
 				"  \"blocks\": [${list_json(blocks)}],",
 				"  \"notes\": [${list_json(notes)}],",
 				"  \"comments\": [],",
@@ -76,10 +87,58 @@ Snapshot :: [].{
 wordprocessingml : Str
 wordprocessingml = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 
-# A block of the snapshot, and a run of its text with its hyperlink's target.
-SnapshotBlock : { kind : Str, text : Str, runs : List(SnapshotRun), rows : List(List(Str)) }
+keys : List(Str)
+keys = [
+	"blocks.kind",
+	"blocks.level",
+	"blocks.text",
+	"blocks.rows",
+	"blocks.runs.bold",
+	"blocks.runs.italic",
+	"blocks.runs.underline",
+	"blocks.runs.strike",
+	"blocks.runs.superscript",
+	"blocks.runs.subscript",
+	"blocks.runs.link",
+	"notes.kind",
+	"notes.text",
+]
 
-SnapshotRun : { text : Str, link : Str }
+# A block of the snapshot, and a run of its text with its direct formatting
+# and its hyperlink's target.
+SnapshotBlock : { kind : Str, level : U64, text : Str, runs : List(SnapshotRun), rows : List(List(Str)) }
+
+SnapshotRun : { text : Str, formatting : Formatting, link : Str }
+
+# The run formatting the snapshot compares, from a run's direct properties.
+Formatting : { bold : Bool, italic : Bool, underline : Bool, strike : Bool, superscript : Bool, subscript : Bool }
+
+formatting : Document.RunProperties -> Formatting
+formatting = |properties| {
+	bold: properties.bold == On,
+	italic: properties.italic == On,
+	underline: match properties.underline {
+		Underline(NoUnderline) => Bool.False
+		Underline(_) => Bool.True
+		Unset => Bool.False
+	},
+	strike: properties.strike == On or properties.double_strike == On,
+	superscript: properties.vertical_align == Superscript,
+	subscript: properties.vertical_align == Subscript,
+}
+
+# A paragraph's kind and level: a heading by its outline level, otherwise a
+# list item by its numbering reference, otherwise a paragraph.
+paragraph_shape : Styles, Document.ParagraphProperties -> { kind : Str, level : U64 }
+paragraph_shape = |styles, properties| {
+	effective = Styles.effective_paragraph(styles, properties, {})
+	match (effective.outline_level, effective.numbering.instance, effective.numbering.level) {
+		(Level(level), _, _) if level < 9 => { kind: "heading", level: level.to_u64() + 1 }
+		(_, Instance(instance), Level(level)) if instance != 0 => { kind: "list_item", level: level.to_u64() + 1 }
+		(_, Instance(instance), Unset) if instance != 0 => { kind: "list_item", level: 1 }
+		_ => { kind: "paragraph", level: 0 }
+	}
+}
 
 # The snapshot blocks so far; the paragraphs whose marks are deleted, joined,
 # waiting for the paragraph they run on into; and the complex fields open
@@ -87,7 +146,7 @@ SnapshotRun : { text : Str, link : Str }
 # result has begun: a field's result can span paragraphs.
 Blocks : { blocks : List(SnapshotBlock), joined : Try(Joined, [NoParagraph]), fields : List(OpenField) }
 
-Joined : { text : Str, anchored : Bool, runs : List(SnapshotRun) }
+Joined : { text : Str, anchored : Bool, runs : List(SnapshotRun), properties : Document.ParagraphProperties }
 
 OpenField : { code : Str, in_result : Bool }
 
@@ -95,38 +154,42 @@ OpenField : { code : Str, in_result : Bool }
 Runs : { runs : List(SnapshotRun), fields : List(OpenField) }
 
 # The snapshot blocks of blocks.
-snapshot_of_blocks : List(Document.Block) -> List(SnapshotBlock)
-snapshot_of_blocks = |blocks| flush(blocks.fold({ blocks: List.with_capacity(64), joined: Err(NoParagraph), fields: [] }, snapshot_blocks)).blocks
+snapshot_of_blocks : List(Document.Block), Styles -> List(SnapshotBlock)
+snapshot_of_blocks = |blocks, styles| flush(blocks.fold({ blocks: List.with_capacity(64), joined: Err(NoParagraph), fields: [] }, |state, block| snapshot_blocks(state, block, styles)), styles).blocks
 
 # Append a block's snapshot blocks.
-snapshot_blocks : Blocks, Document.Block -> Blocks
-snapshot_blocks = |state, block|
+snapshot_blocks : Blocks, Document.Block, Styles -> Blocks
+snapshot_blocks = |state, block, styles|
 	match block {
 		Paragraph(paragraph) => {
-			before = state.joined ?? { text: "", anchored: Bool.False, runs: [] }
+			before = state.joined ?? { text: "", anchored: Bool.False, runs: [], properties: paragraph.properties }
 			read = paragraph.content.fold({ runs: before.runs, fields: state.fields }, |runs, inline| snapshot_runs(runs, inline, ""))
-			joined = { text: Str.concat(before.text, Document.paragraph_text(paragraph)), anchored: before.anchored or anchors(paragraph), runs: read.runs }
+			joined = { text: Str.concat(before.text, Document.paragraph_text(paragraph)), anchored: before.anchored or anchors(paragraph), runs: read.runs, properties: paragraph.properties }
 			if Document.joins_next(paragraph) {
 				{ blocks: state.blocks, joined: Ok(joined), fields: read.fields }
 			} else {
-				flush({ blocks: state.blocks, joined: Ok(joined), fields: read.fields })
+				flush({ blocks: state.blocks, joined: Ok(joined), fields: read.fields }, styles)
 			}
 		}
 
 		Table(table) => {
-			flushed = flush(state)
-			{ blocks: List.append(flushed.blocks, { kind: "table", text: "", runs: [], rows: rows(table) }), joined: Err(NoParagraph), fields: flushed.fields }
+			flushed = flush(state, styles)
+			{ blocks: List.append(flushed.blocks, { kind: "table", level: 0, text: "", runs: [], rows: rows(table) }), joined: Err(NoParagraph), fields: flushed.fields }
 		}
 
-		Container({ element: _, content }) => content.fold(state, snapshot_blocks)
+		Container({ element: _, content }) => content.fold(state, |inner_state, inner| snapshot_blocks(inner_state, inner, styles))
 		Preserved(_) => state
 	}
 
 # Append the joined paragraph, as a block when it has text or anchors something.
-flush : Blocks -> Blocks
-flush = |state|
+flush : Blocks, Styles -> Blocks
+flush = |state, styles|
 	match state.joined {
-		Ok({ text, anchored, runs }) if text != "" or anchored => { blocks: List.append(state.blocks, { kind: "paragraph", text, runs, rows: [] }), joined: Err(NoParagraph), fields: state.fields }
+		Ok(joined) if joined.text != "" or joined.anchored => {
+			shape = paragraph_shape(styles, joined.properties)
+			{ blocks: List.append(state.blocks, { kind: shape.kind, level: shape.level, text: joined.text, runs: joined.runs, rows: [] }), joined: Err(NoParagraph), fields: state.fields }
+		}
+
 		_ => { blocks: state.blocks, joined: Err(NoParagraph), fields: state.fields }
 	}
 
@@ -201,7 +264,7 @@ snapshot_runs = |state, inline, link|
 			}
 
 		Run(run) => run.content.fold(state, |out, content| content_runs(out, run, content, link))
-		_ => with_text(state, Document.inline_text(inline), link)
+		_ => with_text(state, { text: Document.inline_text(inline), formatting: formatting(Document.no_run_properties), link })
 	}
 
 # Append a run's content, following the complex fields it begins, codes,
@@ -217,7 +280,7 @@ content_runs = |state, run, content, link|
 		FieldCode(code) => with_innermost(state, |field| { code: Str.concat(field.code, code), in_result: field.in_result })
 		_ => {
 			text = Document.inline_text(Run({ properties: run.properties, content: [content] }))
-			with_text(state, text, if (link == "") field_link(state.fields) else link)
+			with_text(state, { text, formatting: formatting(run.properties), link: if (link == "") field_link(state.fields) else link })
 		}
 	}
 
@@ -251,13 +314,13 @@ with_innermost = |state, change|
 		Err(_) => state
 	}
 
-# Text joins the run before when their links are the same.
-with_text : Runs, Str, Str -> Runs
-with_text = |state, text, link|
+# Text joins the run before when their formatting and links are the same.
+with_text : Runs, SnapshotRun -> Runs
+with_text = |state, run|
 	match state.runs.last() {
-		_ if text == "" => state
-		Ok(previous) if previous.link == link => { runs: List.append(List.drop_last(state.runs, 1), { text: Str.concat(previous.text, text), link }), fields: state.fields }
-		_ => { runs: List.append(state.runs, { text, link }), fields: state.fields }
+		_ if run.text == "" => state
+		Ok(previous) if previous.link == run.link and previous.formatting == run.formatting => { runs: List.append(List.drop_last(state.runs, 1), { ..run, text: Str.concat(previous.text, run.text) }), fields: state.fields }
+		_ => { runs: List.append(state.runs, run), fields: state.fields }
 	}
 
 # A hyperlink's target as the snapshot gives it: its address, its address and
@@ -272,9 +335,15 @@ address = |target|
 
 block_json : SnapshotBlock -> Str
 block_json = |block| {
-	runs = block.runs.map(|run| "{\"text\": ${quoted(run.text)}, \"bold\": false, \"italic\": false, \"underline\": false, \"strike\": false, \"superscript\": false, \"subscript\": false, \"link\": ${quoted(run.link)}}")
+	flag = |value| if (value) "true" else "false"
+	runs = block.runs.map(
+		|run| {
+			f = run.formatting
+			"{\"text\": ${quoted(run.text)}, \"bold\": ${flag(f.bold)}, \"italic\": ${flag(f.italic)}, \"underline\": ${flag(f.underline)}, \"strike\": ${flag(f.strike)}, \"superscript\": ${flag(f.superscript)}, \"subscript\": ${flag(f.subscript)}, \"link\": ${quoted(run.link)}}"
+		},
+	)
 	row_json = |cells| "[${Str.join_with(cells.map(quoted), ", ")}]"
-	"{\"kind\": \"${block.kind}\", \"level\": 0, \"list\": \"\", \"text\": ${quoted(block.text)}, \"runs\": [${Str.join_with(runs, ", ")}], \"rows\": [${Str.join_with(block.rows.map(row_json), ", ")}]}"
+	"{\"kind\": \"${block.kind}\", \"level\": ${block.level.to_str()}, \"list\": \"\", \"text\": ${quoted(block.text)}, \"runs\": [${Str.join_with(runs, ", ")}], \"rows\": [${Str.join_with(block.rows.map(row_json), ", ")}]}"
 }
 
 # Objects of a JSON list, one to a line.
@@ -441,7 +510,7 @@ expect {
 			"  \"schema\": \"roc-docx-snapshot/1\",",
 			"  \"producer\": {\"name\": \"roc-docx\", \"version\": \"test\"},",
 			"  \"document\": \"a \\\"b\\\".docx\",",
-			"  \"keys\": [\"blocks.text\", \"blocks.rows\", \"blocks.runs.link\", \"notes.kind\", \"notes.text\"],",
+			"  \"keys\": [\"blocks.kind\", \"blocks.level\", \"blocks.text\", \"blocks.rows\", \"blocks.runs.bold\", \"blocks.runs.italic\", \"blocks.runs.underline\", \"blocks.runs.strike\", \"blocks.runs.superscript\", \"blocks.runs.subscript\", \"blocks.runs.link\", \"notes.kind\", \"notes.text\"],",
 			"  \"blocks\": [",
 			"${block("paragraph", "")},\n${block("paragraph", "")},\n${block("paragraph", "")},\n${block("paragraph", "")},",
 			"    {\"kind\": \"table\", \"level\": 0, \"list\": \"\", \"text\": \"\", \"runs\": [], \"rows\": [[\"cell\"]]},",
@@ -477,6 +546,29 @@ expect {
 	]
 	expected = "\"rows\": [[\"span\", \"\", \"c\"], [\"down\", \"x\\ny\", \"\"], [\"\", \"n1\\n\\nn2\", \"z\"], [\"\", \"b1\", \"b2\"], [\"a1\", \"a2\", \"\"]]"
 	snapshot_of("<w:tbl>${Str.join_with(rows_xml, "")}</w:tbl>", no_notes).map_ok(|json| json.contains(expected)) == Ok(Bool.True)
+}
+
+## A heading is recognised by its outline level and a list item by its
+## numbering reference; runs carry their direct formatting through
+## hyperlinks, neighbours with the same formatting and link joined.
+expect {
+	heading = "<w:p><w:pPr><w:outlineLvl w:val='1'/></w:pPr><w:r><w:t>Head</w:t></w:r></w:p><w:p><w:pPr><w:outlineLvl w:val='9'/></w:pPr><w:r><w:t>Body</w:t></w:r></w:p>"
+	formatted = "<w:r><w:rPr><w:b/></w:rPr><w:t>Item</w:t></w:r><w:r><w:rPr><w:b w:val='true'/></w:rPr><w:t xml:space='preserve'> one</w:t></w:r><w:hyperlink w:anchor='b'><w:r><w:rPr><w:i/><w:u w:val='single'/><w:vertAlign w:val='superscript'/><w:dstrike/></w:rPr><w:t>2</w:t></w:r></w:hyperlink><w:r><w:rPr><w:b w:val='0'/><w:u w:val='none'/><w:vertAlign w:val='subscript'/></w:rPr><w:t>3</w:t></w:r>"
+	item = "<w:p><w:pPr><w:numPr><w:ilvl w:val='1'/><w:numId w:val='3'/></w:numPr></w:pPr><w:bookmarkStart w:id='1' w:name='b'/>${formatted}<w:bookmarkEnd w:id='1'/></w:p><w:p><w:pPr><w:numPr><w:numId w:val='0'/></w:numPr></w:pPr><w:r><w:t>Not listed</w:t></w:r></w:p>"
+	run = |text, flags, link| "{\"text\": \"${text}\", ${flags}, \"link\": \"${link}\"}"
+	runs = Str.join_with(
+		[
+			run("Item one", "\"bold\": true, \"italic\": false, \"underline\": false, \"strike\": false, \"superscript\": false, \"subscript\": false", ""),
+			run("2", "\"bold\": false, \"italic\": true, \"underline\": true, \"strike\": true, \"superscript\": true, \"subscript\": false", "#b"),
+			run("3", "\"bold\": false, \"italic\": false, \"underline\": false, \"strike\": false, \"superscript\": false, \"subscript\": true", ""),
+		],
+		", ",
+	)
+	json = snapshot_of("${heading}${item}", no_notes)?
+	json.contains("{\"kind\": \"heading\", \"level\": 2, \"list\": \"\", \"text\": \"Head\"")
+		and json.contains("{\"kind\": \"paragraph\", \"level\": 0, \"list\": \"\", \"text\": \"Body\"")
+		and json.contains("{\"kind\": \"list_item\", \"level\": 2, \"list\": \"\", \"text\": \"Item one23\", \"runs\": [${runs}]")
+		and json.contains("{\"kind\": \"paragraph\", \"level\": 0, \"list\": \"\", \"text\": \"Not listed\"")
 }
 
 ## A body with no blocks has an empty list of them.
@@ -529,8 +621,8 @@ expect {
 	control = "<w:sdt><w:sdtContent><w:p><w:r><w:t>e</w:t></w:r></w:p></w:sdtContent></w:sdt>"
 	table = "<w:tbl><w:tr><w:tc><w:p/></w:tc></w:tr></w:tbl>"
 	body = "${moved}${deleted_mark("d")}${control}${deleted_mark("f")}${table}${deleted_mark("")}<w:p/>"
-	paragraph = |text| block_json({ kind: "paragraph", text, runs: if (text == "") [] else [{ text, link: "" }], rows: [] })
-	expected = [paragraph("ac"), paragraph("de"), paragraph("f"), block_json({ kind: "table", text: "", runs: [], rows: [[""]] }), paragraph("")]
+	paragraph = |text| block_json({ kind: "paragraph", level: 0, text, runs: if (text == "") [] else [{ text, formatting: formatting(Document.no_run_properties), link: "" }], rows: [] })
+	expected = [paragraph("ac"), paragraph("de"), paragraph("f"), block_json({ kind: "table", level: 0, text: "", runs: [], rows: [[""]] }), paragraph("")]
 	snapshot_of(body, no_notes).map_ok(|json| json.contains("\"blocks\": [\n    ${Str.join_with(expected, ",\n    ")}\n  ],")) == Ok(Bool.True)
 }
 

@@ -9,6 +9,7 @@
 import Document
 import Mce
 import Opc
+import Styles
 import WmlRead
 import XmlTree
 
@@ -86,6 +87,21 @@ Docx :: [].{
 	fields : Document -> List(Document.Field)
 	fields = |document| Document.fields(Docx.body(document))
 
+	## A document's style table, read from the styles part of its main
+	## document by [Styles.read], with what reading did not take as written.
+	## A document without a styles part has no styles.
+	styles : Document -> { styles : Styles, diagnostics : List(Styles.Diagnostic) }
+	styles = |document| {
+		found = match Document.related(document, "/", Opc.officedocument_relationship) {
+			Ok(main) => Document.related(document, main.name, styles_relationship)
+			Err(NotFound) => Err(NotFound)
+		}
+		match found {
+			Ok(part) => Styles.read(part.tree)
+			Err(NotFound) => { styles: Styles.empty, diagnostics: [] }
+		}
+	}
+
 	## The current text of a document's body, its tracked changes as they
 	## stand: every paragraph's text, as [Document.paragraph_text] gives it,
 	## followed by a line feed, in reading order, including the paragraphs in
@@ -121,6 +137,9 @@ notes = |document, kind| {
 		Err(NotFound) => []
 	}
 }
+
+styles_relationship : Str
+styles_relationship = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles"
 
 TextState : { text : List(U8), joining : Bool }
 

@@ -2,12 +2,12 @@
   "schema": "roc-docx-snapshot/1",
   "producer": {"name": "roc-docx", "version": "working tree"},
   "document": "tests/fixtures/pandoc/revisions.docx",
-  "keys": ["blocks.text", "blocks.rows", "blocks.runs.link", "notes.kind", "notes.text"],
+  "keys": ["blocks.kind", "blocks.level", "blocks.text", "blocks.rows", "blocks.runs.bold", "blocks.runs.italic", "blocks.runs.underline", "blocks.runs.strike", "blocks.runs.superscript", "blocks.runs.subscript", "blocks.runs.link", "notes.kind", "notes.text"],
   "blocks": [
     {"kind": "paragraph", "level": 0, "list": "", "text": "Lease Amendment", "runs": [{"text": "Lease Amendment", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
-    {"kind": "paragraph", "level": 0, "list": "", "text": "Lease Amendment", "runs": [{"text": "Lease Amendment", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "heading", "level": 1, "list": "", "text": "Lease Amendment", "runs": [{"text": "Lease Amendment", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
     {"kind": "paragraph", "level": 0, "list": "", "text": "The term of the lease is extended by three years from the Expiry Date.", "runs": [{"text": "The term of the lease is extended by three years from the Expiry Date.", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
-    {"kind": "paragraph", "level": 0, "list": "", "text": "Rent", "runs": [{"text": "Rent", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "heading", "level": 2, "list": "", "text": "Rent", "runs": [{"text": "Rent", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
     {"kind": "paragraph", "level": 0, "list": "", "text": "The rent is increased by 3% on each anniversary of the Commencement Date.", "runs": [{"text": "The rent is increased by 3% on each anniversary of the Commencement Date.", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
     {"kind": "paragraph", "level": 0, "list": "", "text": "", "runs": [], "rows": []},
     {"kind": "paragraph", "level": 0, "list": "", "text": "All other terms of the lease continue unchanged.", "runs": [{"text": "All other terms of the lease continue unchanged.", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []}

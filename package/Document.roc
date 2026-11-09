@@ -40,9 +40,94 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 	## A paragraph: its properties and its content in order.
 	Paragraph : { properties : ParagraphProperties, content : List(Inline) }
 
-	## A paragraph's properties. None is modelled yet: each property element
-	## is kept as it was read, in order.
-	ParagraphProperties : { preserved : List(XmlTree.Node) }
+	## A paragraph's own properties, as the document states them directly on
+	## the paragraph or in a style; what its styles and the document's
+	## defaults contribute is [Styles.effective_paragraph]'s answer. Each
+	## property is `Unset` where nothing is stated, so a property left to
+	## the styles differs from one set to the value a style would give:
+	##
+	## * `style`, the paragraph style's identifier;
+	## * `alignment`, how lines are aligned between the indents;
+	## * `indentation` and `spacing`, in twentieths of a point;
+	## * `keep_next`, `keep_lines`, `page_break_before` and `widow_control`;
+	## * `outline_level`, from 0 for the top level, 9 being body text;
+	## * `borders`, the edges stated, and `shading`;
+	## * `tabs`, the tab stops set or cleared;
+	## * `numbering`, the reference to a numbering instance and level that
+	##   makes a paragraph a list item.
+	##
+	## A property element the model does not hold, or one whose attributes it
+	## cannot represent (a theme colour on a border, spacing in lines), is kept
+	## in `preserved` as it was read, in order, and so is a repeated element.
+	ParagraphProperties : {
+		style : [Unset, Style(Str)],
+		alignment : [Unset, Aligned(Alignment)],
+		indentation : Indentation,
+		spacing : Spacing,
+		keep_next : OnOff,
+		keep_lines : OnOff,
+		page_break_before : OnOff,
+		widow_control : OnOff,
+		outline_level : [Unset, Level(U8)],
+		borders : List(Border),
+		shading : Shading,
+		tabs : [Unset, Tabs(List(TabStop))],
+		numbering : Numbering,
+		preserved : List(XmlTree.Node),
+	}
+
+	## A paragraph's properties when nothing is stated.
+	no_paragraph_properties : ParagraphProperties
+	no_paragraph_properties = {
+		style: Unset,
+		alignment: Unset,
+		indentation: { left: Unset, right: Unset, first_line: Unset },
+		spacing: { before: Unset, after: Unset, line: Unset },
+		keep_next: Unset,
+		keep_lines: Unset,
+		page_break_before: Unset,
+		widow_control: Unset,
+		outline_level: Unset,
+		borders: [],
+		shading: Unset,
+		tabs: Unset,
+		numbering: { instance: Unset, level: Unset },
+		preserved: [],
+	}
+
+	## A property that is on or off, or `Unset` where nothing is stated.
+	OnOff : [Unset, On, Off]
+
+	## Paragraph alignment, as the schema names it: `Left` and `Right` are the
+	## transitional spellings of `Start` and `End`, kept apart so a document
+	## writes back as it was read; `Both` is justified.
+	Alignment : [Start, End, Left, Right, Center, Both, Distribute, MediumKashida, HighKashida, LowKashida, ThaiDistribute, NumTab]
+
+	## Indents in twentieths of a point: from the left and right margins, and
+	## the first line's indent from the left one, either further in or, for a
+	## hanging indent, back out.
+	Indentation : {
+		left : [Unset, Twips(I32)],
+		right : [Unset, Twips(I32)],
+		first_line : [Unset, FirstLine(I32), Hanging(I32)],
+	}
+
+	## Space before and after a paragraph in twentieths of a point, and the
+	## spacing of its lines: `Auto` in 240ths of a line, `Exact` and `AtLeast`
+	## in twentieths of a point.
+	Spacing : {
+		before : [Unset, Twips(U32)],
+		after : [Unset, Twips(U32)],
+		line : [Unset, Auto(I32), Exact(I32), AtLeast(I32)],
+	}
+
+	## A tab stop at a position in twentieths of a point, or the clearing of
+	## one a style set there.
+	TabStop : { kind : [Clear, Start, End, Left, Right, Center, Decimal, Bar, Num], position : I32, leader : [Unset, NoLeader, Dot, Hyphen, Underscore, Heavy, MiddleDot] }
+
+	## The numbering a paragraph belongs to: a numbering instance by its
+	## identifier, 0 meaning none, and a level from 0.
+	Numbering : { instance : [Unset, Instance(U32)], level : [Unset, Level(U8)] }
 
 	## A paragraph's content, in order: a run; a hyperlink; a simple field; a
 	## bookmark's start or end; an element the model does not represent whose
@@ -76,9 +161,96 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 	## A run: text with one set of character properties.
 	Run : { properties : RunProperties, content : List(RunContent) }
 
-	## A run's character properties. None is modelled yet: each property
-	## element is kept as it was read, in order.
-	RunProperties : { preserved : List(XmlTree.Node) }
+	## A run's own character properties, as the document states them directly
+	## on the run or in a style; what its styles and the document's defaults
+	## contribute is [Styles.effective_run]'s answer. Each property is
+	## `Unset` where nothing is stated:
+	##
+	## * `style`, the character style's identifier;
+	## * `bold`, `italic`, `caps`, `small_caps`, `strike`, `double_strike` and
+	##   `hidden`, which in a style toggle what the styles before it say;
+	## * `underline`, `vertical_align` (superscript and subscript), `color`,
+	##   `highlight`, `size` in half-points, `fonts` and `language`.
+	##
+	## A property element the model does not hold, or one whose attributes it
+	## cannot represent (an underline with its own colour, a font hint), is
+	## kept in `preserved` as it was read, in order, and so is a repeated
+	## element.
+	RunProperties : {
+		style : [Unset, Style(Str)],
+		bold : OnOff,
+		italic : OnOff,
+		caps : OnOff,
+		small_caps : OnOff,
+		strike : OnOff,
+		double_strike : OnOff,
+		hidden : OnOff,
+		underline : [Unset, Underline(Underline)],
+		vertical_align : [Unset, Baseline, Superscript, Subscript],
+		color : [Unset, Color(TextColor)],
+		highlight : [Unset, Highlight(Highlight)],
+		size : [Unset, HalfPoints(U32)],
+		fonts : Fonts,
+		language : Language,
+		preserved : List(XmlTree.Node),
+	}
+
+	## A run's properties when nothing is stated.
+	no_run_properties : RunProperties
+	no_run_properties = {
+		style: Unset,
+		bold: Unset,
+		italic: Unset,
+		caps: Unset,
+		small_caps: Unset,
+		strike: Unset,
+		double_strike: Unset,
+		hidden: Unset,
+		underline: Unset,
+		vertical_align: Unset,
+		color: Unset,
+		highlight: Unset,
+		size: Unset,
+		fonts: { ascii: Unset, high_ansi: Unset, east_asia: Unset, complex: Unset, ascii_theme: Unset, high_ansi_theme: Unset, east_asia_theme: Unset, complex_theme: Unset },
+		language: { latin: Unset, east_asia: Unset, complex: Unset },
+		preserved: [],
+	}
+
+	## An underline's line, as the schema names it; `NoUnderline` removes one
+	## a style sets.
+	Underline : [Single, Words, Double, Thick, Dotted, DottedHeavy, Dash, DashedHeavy, DashLong, DashLongHeavy, DotDash, DashDotHeavy, DotDotDash, DashDotDotHeavy, Wave, WavyHeavy, WavyDouble, NoUnderline]
+
+	## A text colour: automatic or a hexadecimal RGB value as written, and
+	## the theme colour it was chosen from, kept as written and not resolved
+	## against the theme.
+	TextColor : { value : [Auto, Rgb(Str)], theme : [Unset, Theme(Str)], tint : [Unset, Tint(Str)], shade : [Unset, Shade(Str)] }
+
+	## A highlighting colour; `NoHighlight` removes one a style sets.
+	Highlight : [Black, Blue, Cyan, Green, Magenta, Red, Yellow, White, DarkBlue, DarkCyan, DarkGreen, DarkMagenta, DarkRed, DarkYellow, DarkGray, LightGray, NoHighlight]
+
+	## The fonts of a run's text by script: Latin text below U+0080 (`ascii`),
+	## other Latin text (`high_ansi`), East Asian and complex-script text,
+	## each by name and by theme font. A theme font is kept as written and
+	## not resolved against the theme; where both are stated, the theme font
+	## is the one that applies.
+	Fonts : {
+		ascii : [Unset, Named(Str)],
+		high_ansi : [Unset, Named(Str)],
+		east_asia : [Unset, Named(Str)],
+		complex : [Unset, Named(Str)],
+		ascii_theme : [Unset, Theme(ThemeFont)],
+		high_ansi_theme : [Unset, Theme(ThemeFont)],
+		east_asia_theme : [Unset, Theme(ThemeFont)],
+		complex_theme : [Unset, Theme(ThemeFont)],
+	}
+
+	## A theme font: the theme's major (headings) or minor (body) font for a
+	## script.
+	ThemeFont : [MajorEastAsia, MajorBidi, MajorAscii, MajorHighAnsi, MinorEastAsia, MinorBidi, MinorAscii, MinorHighAnsi]
+
+	## The languages of a run's text by script, as BCP 47 tags such as
+	## `en-US`.
+	Language : { latin : [Unset, Tag(Str)], east_asia : [Unset, Tag(Str)], complex : [Unset, Tag(Str)] }
 
 	## What a run holds, in order: text; a tab; a line, page or column break,
 	## a line break saying which floating objects the next line clears; a
@@ -192,13 +364,14 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 	## available width in fiftieths of a per cent.
 	Width : [Unset, Auto, Nil, Twips(I64), Fiftieths(I64)]
 
-	## One edge of a table's or cell's borders: the line, by its name in the
-	## schema (`single`, `double`, `dotted`, `nil` and so on), its width in
-	## eighths of a point, its distance from the content in points, and its
-	## colour. `Left` and `Start`, `Right` and `End` are the two spellings
-	## the schema has for the same edges.
+	## One edge of a table's, cell's or paragraph's borders: the line, by its
+	## name in the schema (`single`, `double`, `dotted`, `nil` and so on), its
+	## width in eighths of a point, its distance from the content in points,
+	## and its colour. `Left` and `Start`, `Right` and `End` are the two
+	## spellings the schema has for the same edges; `Between` separates
+	## paragraphs of one border group and `Bar` is drawn beside a paragraph.
 	Border : {
-		edge : [Top, Left, Start, Bottom, Right, End, InsideHorizontal, InsideVertical, DiagonalDown, DiagonalUp],
+		edge : [Top, Left, Start, Bottom, Right, End, InsideHorizontal, InsideVertical, DiagonalDown, DiagonalUp, Between, Bar],
 		line : Str,
 		size : [Unset, Eighths(U64)],
 		space : [Unset, Points(U64)],
@@ -1049,10 +1222,10 @@ expect {
 ## through containers, and skips preserved content.
 expect {
 	preserved = parse("<w:delText xmlns:w='${wordprocessingml}'>gone</w:delText>")
-	run = |content| Run({ properties: { preserved: [] }, content })
+	run = |content| Run({ properties: Document.no_run_properties, content })
 	paragraph : Document.Paragraph
 	paragraph = {
-		properties: { preserved: [] },
+		properties: Document.no_paragraph_properties,
 		content: [
 			run([Text("a"), Tab, Break({ kind: Line, clear: NoClear }), Break({ kind: Page, clear: NoClear }), Symbol({ font: "Symbol", code: 0x3B1 }), SoftHyphen, NonBreakingHyphen, Preserved(preserved)]),
 			Container({ element: preserved, content: [run([Text("b"), Symbol({ font: "", code: 0xD800 }), Symbol({ font: "", code: 0x41 }), Symbol({ font: "Wingdings", code: 0xF0E0 })])] }),
@@ -1068,8 +1241,8 @@ expect {
 ## ends with the blocks.
 expect {
 	mark = |kind| FieldMark({ kind, element: Text("") })
-	run = |content| Run({ properties: { preserved: [] }, content })
-	paragraph = |content| Paragraph({ properties: { preserved: [] }, content })
+	run = |content| Run({ properties: Document.no_run_properties, content })
+	paragraph = |content| Paragraph({ properties: Document.no_paragraph_properties, content })
 	simple = SimpleField({ code: "DATE", preserved: [], content: [run([Text("today")])] })
 	blocks = [
 		paragraph([run([mark(Begin), FieldCode(" TOC "), FieldCode("\\o"), mark(Separate), Text("One")])]),

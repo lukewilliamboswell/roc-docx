@@ -108,6 +108,72 @@ WmlRead :: [].{
 	## names of the WordprocessingML element and attribute, and `value` is the
 	## value as the document wrote it.
 	Diagnostic : [Rounded({ element : Str, attribute : Str, value : Str })]
+
+	## A paragraph's properties from the children of its `w:pPr`, or of a
+	## style's or the document defaults' `w:pPr`. Each modelled property is
+	## read from its first element; an element whose attributes or children
+	## the model cannot represent, a repeated one and every other element are
+	## kept in `preserved` as they were read, in order. On and off values
+	## take every spelling the schema allows (`true`, `1`, `on` and their
+	## opposites, and no value for on).
+	paragraph_properties : List(XmlTree.Node) -> Document.ParagraphProperties
+	paragraph_properties = |nodes| {
+		var $properties = Document.no_paragraph_properties
+		var $taken = List.with_capacity(8)
+		for node in nodes {
+			match node {
+				Element(element) if element.name.namespace == Uri(wordprocessingml) and !$taken.contains(element.name.local) =>
+					match paragraph_property($properties, element) {
+						Ok(next) => {
+							$properties = next
+							$taken = List.append($taken, element.name.local)
+						}
+
+						Err(CannotHold) => {
+							$properties = { ..$properties, preserved: List.append($properties.preserved, node) }
+						}
+					}
+
+				_ => {
+					if is_content(node) {
+						$properties = { ..$properties, preserved: List.append($properties.preserved, node) }
+					}
+				}
+			}
+		}
+		$properties
+	}
+
+	## A run's properties from the children of its `w:rPr`, or of a style's
+	## or the document defaults' `w:rPr`, read as
+	## [WmlRead.paragraph_properties] reads a paragraph's.
+	run_properties : List(XmlTree.Node) -> Document.RunProperties
+	run_properties = |nodes| {
+		var $properties = Document.no_run_properties
+		var $taken = List.with_capacity(8)
+		for node in nodes {
+			match node {
+				Element(element) if element.name.namespace == Uri(wordprocessingml) and !$taken.contains(element.name.local) =>
+					match run_property($properties, element) {
+						Ok(next) => {
+							$properties = next
+							$taken = List.append($taken, element.name.local)
+						}
+
+						Err(CannotHold) => {
+							$properties = { ..$properties, preserved: List.append($properties.preserved, node) }
+						}
+					}
+
+				_ => {
+					if is_content(node) {
+						$properties = { ..$properties, preserved: List.append($properties.preserved, node) }
+					}
+				}
+			}
+		}
+		$properties
+	}
 }
 
 # What reading a part looks up: its relationships and its bookmarks' names by
@@ -176,6 +242,345 @@ note_elements = |root|
 			)
 
 		_ => []
+	}
+
+# One paragraph property element read into the properties, or `CannotHold`
+# when the model cannot represent it.
+paragraph_property : Document.ParagraphProperties, Element -> Try(Document.ParagraphProperties, [CannotHold])
+paragraph_property = |properties, element|
+	match element.name.local {
+		"pStyle" => Ok({ ..properties, style: Style(only_value(element)?) })
+		"keepNext" => Ok({ ..properties, keep_next: on_off(element)? })
+		"keepLines" => Ok({ ..properties, keep_lines: on_off(element)? })
+		"pageBreakBefore" => Ok({ ..properties, page_break_before: on_off(element)? })
+		"widowControl" => Ok({ ..properties, widow_control: on_off(element)? })
+		"outlineLvl" => {
+			level = U8.from_str(only_value(element)?) ? |_| CannotHold
+			if level > 9 {
+				Err(CannotHold)
+			} else {
+				Ok({ ..properties, outline_level: Level(level) })
+			}
+		}
+
+		"jc" => Ok({ ..properties, alignment: Aligned(paragraph_alignment(only_value(element)?)?) })
+		"ind" => {
+			leaf(element, ["left", "right", "firstLine", "hanging"])?
+			first_line = match (value_of(element, "firstLine"), value_of(element, "hanging")) {
+				(Err(NotFound), Err(NotFound)) => Unset
+				(Ok(value), Err(NotFound)) => FirstLine(signed(value)?)
+				(Err(NotFound), Ok(value)) => Hanging(signed(value)?)
+				_ => return Err(CannotHold)
+			}
+			Ok({ ..properties, indentation: { left: twips_attribute(element, "left")?, right: twips_attribute(element, "right")?, first_line } })
+		}
+
+		"spacing" => {
+			leaf(element, ["before", "after", "line", "lineRule"])?
+			line = match (value_of(element, "line"), value_of(element, "lineRule")) {
+				(Err(NotFound), Err(NotFound)) => Unset
+				(Ok(value), Err(NotFound)) => Auto(signed(value)?)
+				(Ok(value), Ok("auto")) => Auto(signed(value)?)
+				(Ok(value), Ok("exact")) => Exact(signed(value)?)
+				(Ok(value), Ok("atLeast")) => AtLeast(signed(value)?)
+				_ => return Err(CannotHold)
+			}
+			Ok({ ..properties, spacing: { before: unsigned_attribute(element, "before")?, after: unsigned_attribute(element, "after")?, line } })
+		}
+
+		"pBdr" => {
+			read = borders(element, paragraph_edges)?
+			if read.noticed.is_empty() {
+				Ok({ ..properties, borders: read.value })
+			} else {
+				Err(CannotHold)
+			}
+		}
+
+		"shd" => Ok({ ..properties, shading: shading(element)? })
+
+		"tabs" => {
+			if !element.attributes.is_empty() {
+				return Err(CannotHold)
+			}
+			var $stops = List.with_capacity(element.children.len())
+			for child in element.children {
+				match child {
+					Element(stop) if is_w(stop.name, "tab") => {
+						$stops = List.append($stops, tab_stop(stop)?)
+					}
+
+					_ => {
+						if is_content(child) {
+							return Err(CannotHold)
+						}
+					}
+				}
+			}
+			if $stops.is_empty() {
+				Err(CannotHold)
+			} else {
+				Ok({ ..properties, tabs: Tabs($stops) })
+			}
+		}
+
+		"numPr" => {
+			if !element.attributes.is_empty() {
+				return Err(CannotHold)
+			}
+			var $numbering = properties.numbering
+			var $seen = List.with_capacity(2)
+			for child in element.children {
+				match child {
+					Element(part) if part.name.namespace == Uri(wordprocessingml) and !$seen.contains(part.name.local) => {
+						value = only_value(part)?
+						$numbering = match part.name.local {
+							"numId" => { ..$numbering, instance: Instance(U32.from_str(value) ? |_| CannotHold) }
+							"ilvl" => { ..$numbering, level: Level(U8.from_str(value) ? |_| CannotHold) }
+							_ => return Err(CannotHold)
+						}
+						$seen = List.append($seen, part.name.local)
+					}
+
+					_ => {
+						if is_content(child) {
+							return Err(CannotHold)
+						}
+					}
+				}
+			}
+			Ok({ ..properties, numbering: $numbering })
+		}
+
+		_ => Err(CannotHold)
+	}
+
+# One run property element read into the properties, or `CannotHold` when
+# the model cannot represent it.
+run_property : Document.RunProperties, Element -> Try(Document.RunProperties, [CannotHold])
+run_property = |properties, element|
+	match element.name.local {
+		"rStyle" => Ok({ ..properties, style: Style(only_value(element)?) })
+		"b" => Ok({ ..properties, bold: on_off(element)? })
+		"i" => Ok({ ..properties, italic: on_off(element)? })
+		"caps" => Ok({ ..properties, caps: on_off(element)? })
+		"smallCaps" => Ok({ ..properties, small_caps: on_off(element)? })
+		"strike" => Ok({ ..properties, strike: on_off(element)? })
+		"dstrike" => Ok({ ..properties, double_strike: on_off(element)? })
+		"vanish" => Ok({ ..properties, hidden: on_off(element)? })
+		"u" => Ok({ ..properties, underline: Underline(underline(only_value(element)?)?) })
+		"vertAlign" => {
+			value = match only_value(element)? {
+				"baseline" => Baseline
+				"superscript" => Superscript
+				"subscript" => Subscript
+				_ => return Err(CannotHold)
+			}
+			Ok({ ..properties, vertical_align: value })
+		}
+
+		"color" => {
+			leaf(element, ["val", "themeColor", "themeTint", "themeShade"])?
+			value = match value_of(element, "val") {
+				Ok("auto") => Auto
+				Ok(rgb) => Rgb(rgb)
+				Err(NotFound) => return Err(CannotHold)
+			}
+			theme = match value_of(element, "themeColor") {
+				Ok(name) => Theme(name)
+				Err(NotFound) => Unset
+			}
+			tint = match value_of(element, "themeTint") {
+				Ok(amount) => Tint(amount)
+				Err(NotFound) => Unset
+			}
+			shade = match value_of(element, "themeShade") {
+				Ok(amount) => Shade(amount)
+				Err(NotFound) => Unset
+			}
+			Ok({ ..properties, color: Color({ value, theme, tint, shade }) })
+		}
+
+		"highlight" => Ok({ ..properties, highlight: Highlight(highlight(only_value(element)?)?) })
+		"sz" => Ok({ ..properties, size: HalfPoints(U32.from_str(only_value(element)?) ? |_| CannotHold) })
+		"rFonts" => {
+			leaf(element, ["ascii", "hAnsi", "eastAsia", "cs", "asciiTheme", "hAnsiTheme", "eastAsiaTheme", "cstheme"])?
+			fonts = {
+				ascii: named(element, "ascii"),
+				high_ansi: named(element, "hAnsi"),
+				east_asia: named(element, "eastAsia"),
+				complex: named(element, "cs"),
+				ascii_theme: theme_font(element, "asciiTheme")?,
+				high_ansi_theme: theme_font(element, "hAnsiTheme")?,
+				east_asia_theme: theme_font(element, "eastAsiaTheme")?,
+				complex_theme: theme_font(element, "cstheme")?,
+			}
+			Ok({ ..properties, fonts: fonts })
+		}
+
+		"lang" => {
+			leaf(element, ["val", "eastAsia", "bidi"])?
+			Ok({ ..properties, language: { latin: language_tag(element, "val"), east_asia: language_tag(element, "eastAsia"), complex: language_tag(element, "bidi") } })
+		}
+
+		_ => Err(CannotHold)
+	}
+
+# An element with only WordprocessingML attributes among these names and no
+# content.
+leaf : Element, List(Str) -> Try({}, [CannotHold])
+leaf = |element, locals|
+	if holds(element, locals) and !element.children.any(is_content) {
+		Ok({})
+	} else {
+		Err(CannotHold)
+	}
+
+# The `w:val` of an element that has only that attribute and no content.
+only_value : Element -> Try(Str, [CannotHold])
+only_value = |element| {
+	leaf(element, ["val"])?
+	Ok(value_of(element, "val") ? |_| CannotHold)
+}
+
+signed : Str -> Try(I32, [CannotHold])
+signed = |value| Ok(I32.from_str(value) ? |_| CannotHold)
+
+twips_attribute : Element, Str -> Try([Unset, Twips(I32)], [CannotHold])
+twips_attribute = |element, local|
+	match value_of(element, local) {
+		Ok(value) => Ok(Twips(signed(value)?))
+		Err(NotFound) => Ok(Unset)
+	}
+
+unsigned_attribute : Element, Str -> Try([Unset, Twips(U32)], [CannotHold])
+unsigned_attribute = |element, local|
+	match value_of(element, local) {
+		Ok(value) => Ok(Twips(U32.from_str(value) ? |_| CannotHold))
+		Err(NotFound) => Ok(Unset)
+	}
+
+named : Element, Str -> [Unset, Named(Str)]
+named = |element, local|
+	match value_of(element, local) {
+		Ok(name) => Named(name)
+		Err(NotFound) => Unset
+	}
+
+language_tag : Element, Str -> [Unset, Tag(Str)]
+language_tag = |element, local|
+	match value_of(element, local) {
+		Ok(tag) => Tag(tag)
+		Err(NotFound) => Unset
+	}
+
+tab_stop : Element -> Try(Document.TabStop, [CannotHold])
+tab_stop = |element| {
+	leaf(element, ["val", "pos", "leader"])?
+	kind = match value_of(element, "val") {
+		Ok("clear") => Clear
+		Ok("start") => Start
+		Ok("end") => End
+		Ok("left") => Left
+		Ok("right") => Right
+		Ok("center") => Center
+		Ok("decimal") => Decimal
+		Ok("bar") => Bar
+		Ok("num") => Num
+		_ => return Err(CannotHold)
+	}
+	leader = match value_of(element, "leader") {
+		Err(NotFound) => Unset
+		Ok("none") => NoLeader
+		Ok("dot") => Dot
+		Ok("hyphen") => Hyphen
+		Ok("underscore") => Underscore
+		Ok("heavy") => Heavy
+		Ok("middleDot") => MiddleDot
+		Ok(_) => return Err(CannotHold)
+	}
+	position = signed(value_of(element, "pos") ? |_| CannotHold)?
+	Ok({ kind, position, leader })
+}
+
+paragraph_alignment : Str -> Try(Document.Alignment, [CannotHold])
+paragraph_alignment = |value|
+	match value {
+		"start" => Ok(Start)
+		"end" => Ok(End)
+		"left" => Ok(Left)
+		"right" => Ok(Right)
+		"center" => Ok(Center)
+		"both" => Ok(Both)
+		"distribute" => Ok(Distribute)
+		"mediumKashida" => Ok(MediumKashida)
+		"highKashida" => Ok(HighKashida)
+		"lowKashida" => Ok(LowKashida)
+		"thaiDistribute" => Ok(ThaiDistribute)
+		"numTab" => Ok(NumTab)
+		_ => Err(CannotHold)
+	}
+
+underline : Str -> Try(Document.Underline, [CannotHold])
+underline = |value|
+	match value {
+		"single" => Ok(Single)
+		"words" => Ok(Words)
+		"double" => Ok(Double)
+		"thick" => Ok(Thick)
+		"dotted" => Ok(Dotted)
+		"dottedHeavy" => Ok(DottedHeavy)
+		"dash" => Ok(Dash)
+		"dashedHeavy" => Ok(DashedHeavy)
+		"dashLong" => Ok(DashLong)
+		"dashLongHeavy" => Ok(DashLongHeavy)
+		"dotDash" => Ok(DotDash)
+		"dashDotHeavy" => Ok(DashDotHeavy)
+		"dotDotDash" => Ok(DotDotDash)
+		"dashDotDotHeavy" => Ok(DashDotDotHeavy)
+		"wave" => Ok(Wave)
+		"wavyHeavy" => Ok(WavyHeavy)
+		"wavyDouble" => Ok(WavyDouble)
+		"none" => Ok(NoUnderline)
+		_ => Err(CannotHold)
+	}
+
+highlight : Str -> Try(Document.Highlight, [CannotHold])
+highlight = |value|
+	match value {
+		"black" => Ok(Black)
+		"blue" => Ok(Blue)
+		"cyan" => Ok(Cyan)
+		"green" => Ok(Green)
+		"magenta" => Ok(Magenta)
+		"red" => Ok(Red)
+		"yellow" => Ok(Yellow)
+		"white" => Ok(White)
+		"darkBlue" => Ok(DarkBlue)
+		"darkCyan" => Ok(DarkCyan)
+		"darkGreen" => Ok(DarkGreen)
+		"darkMagenta" => Ok(DarkMagenta)
+		"darkRed" => Ok(DarkRed)
+		"darkYellow" => Ok(DarkYellow)
+		"darkGray" => Ok(DarkGray)
+		"lightGray" => Ok(LightGray)
+		"none" => Ok(NoHighlight)
+		_ => Err(CannotHold)
+	}
+
+theme_font : Element, Str -> Try([Unset, Theme(Document.ThemeFont)], [CannotHold])
+theme_font = |element, local|
+	match value_of(element, local) {
+		Err(NotFound) => Ok(Unset)
+		Ok("majorEastAsia") => Ok(Theme(MajorEastAsia))
+		Ok("majorBidi") => Ok(Theme(MajorBidi))
+		Ok("majorAscii") => Ok(Theme(MajorAscii))
+		Ok("majorHAnsi") => Ok(Theme(MajorHighAnsi))
+		Ok("minorEastAsia") => Ok(Theme(MinorEastAsia))
+		Ok("minorBidi") => Ok(Theme(MinorBidi))
+		Ok("minorAscii") => Ok(Theme(MinorAscii))
+		Ok("minorHAnsi") => Ok(Theme(MinorHighAnsi))
+		Ok(_) => Err(CannotHold)
 	}
 
 # Elements whose content is blocks, read as containers in a block's place.
@@ -660,6 +1065,9 @@ alignment = |element| {
 	}
 }
 
+paragraph_edges : List(Str)
+paragraph_edges = ["top", "left", "bottom", "right", "between", "bar"]
+
 table_edges : List(Str)
 table_edges = ["top", "left", "start", "bottom", "right", "end", "insideH", "insideV"]
 
@@ -713,7 +1121,7 @@ borders = |element, allowed| {
 	}
 }
 
-edge : Str -> [Top, Left, Start, Bottom, Right, End, InsideHorizontal, InsideVertical, DiagonalDown, DiagonalUp]
+edge : Str -> [Top, Left, Start, Bottom, Right, End, InsideHorizontal, InsideVertical, DiagonalDown, DiagonalUp, Between, Bar]
 edge = |local|
 	match local {
 		"left" => Left
@@ -725,6 +1133,8 @@ edge = |local|
 		"insideV" => InsideVertical
 		"tl2br" => DiagonalDown
 		"tr2bl" => DiagonalUp
+		"between" => Between
+		"bar" => Bar
 		_ => Top
 	}
 
@@ -824,7 +1234,7 @@ paragraph = |children, within| {
 	for child in children {
 		match ($properties, child) {
 			(Err(Missing), Element(element)) if is_w(element.name, "pPr") => {
-				$properties = Ok({ preserved: kept(element.children) })
+				$properties = Ok(WmlRead.paragraph_properties(element.children))
 			}
 
 			_ => {
@@ -834,7 +1244,7 @@ paragraph = |children, within| {
 			}
 		}
 	}
-	{ properties: $properties ?? { preserved: [] }, content: $content }
+	{ properties: $properties ?? Document.no_paragraph_properties, content: $content }
 }
 
 inlines : List(XmlTree.Node), Reading -> List(Document.Inline)
@@ -921,7 +1331,7 @@ run = |children, within| {
 	for child in children {
 		match ($properties, child) {
 			(Err(Missing), Element(element)) if is_w(element.name, "rPr") => {
-				$properties = Ok({ preserved: kept(element.children) })
+				$properties = Ok(WmlRead.run_properties(element.children))
 			}
 
 			_ => {
@@ -931,7 +1341,7 @@ run = |children, within| {
 			}
 		}
 	}
-	{ properties: $properties ?? { preserved: [] }, content: $content }
+	{ properties: $properties ?? Document.no_run_properties, content: $content }
 }
 
 run_content : XmlTree.Node, Reading -> Document.RunContent
@@ -1207,6 +1617,73 @@ read_in = |content, context| {
 	WmlRead.body(tree, context)
 }
 
+# The properties of a `w:pPr` or `w:rPr` with this content.
+properties_of : Str -> List(XmlTree.Node)
+properties_of = |content|
+	match XmlTree.parse("<w:pPr xmlns:w='${wordprocessingml}'>${content}</w:pPr>".to_utf8(), {}) {
+		Ok(Element(element)) => element.children
+		_ => []
+	}
+
+## Every modelled paragraph property is read, each from its first element,
+## and what the model cannot hold is kept in order.
+expect {
+	border_xml = "<w:pBdr><w:top w:val='single' w:sz='4' w:space='1' w:color='auto'/><w:between w:val='double' w:sz='6'/></w:pBdr>"
+	tabs = "<w:tabs><w:tab w:val='clear' w:pos='720'/><w:tab w:val='right' w:leader='dot' w:pos='9000'/></w:tabs>"
+	stated = "<w:pStyle w:val='Quote'/><w:keepNext/><w:keepLines w:val='false'/><w:pageBreakBefore w:val='on'/><w:widowControl w:val='0'/><w:numPr><w:ilvl w:val='2'/><w:numId w:val='5'/></w:numPr>${border_xml}<w:shd w:val='clear' w:color='auto' w:fill='FFFF00'/>${tabs}<w:spacing w:before='120' w:after='60' w:line='360' w:lineRule='auto'/><w:ind w:left='720' w:right='-10' w:hanging='360'/><w:jc w:val='both'/><w:outlineLvl w:val='2'/>"
+	unheld = "<w:keepNext w:val='false'/><w:spacing w:beforeLines='100'/><w:ind w:left='720.5'/><w:suppressAutoHyphens/><w:rPr><w:b/></w:rPr>"
+	properties = WmlRead.paragraph_properties(properties_of("${stated}${unheld}"))
+	expected : Document.ParagraphProperties
+	expected = {
+		style: Style("Quote"),
+		alignment: Aligned(Both),
+		indentation: { left: Twips(720), right: Twips(-10), first_line: Hanging(360) },
+		spacing: { before: Twips(120), after: Twips(60), line: Auto(360) },
+		keep_next: On,
+		keep_lines: Off,
+		page_break_before: On,
+		widow_control: Off,
+		outline_level: Level(2),
+		borders: [
+			{ edge: Top, line: "single", size: Eighths(4), space: Points(1), color: Auto },
+			{ edge: Between, line: "double", size: Eighths(6), space: Unset, color: Unset },
+		],
+		shading: Shading({ pattern: "clear", color: Auto, fill: Rgb("FFFF00") }),
+		tabs: Tabs([{ kind: Clear, position: 720, leader: Unset }, { kind: Right, position: 9000, leader: Dot }]),
+		numbering: { instance: Instance(5), level: Level(2) },
+		preserved: properties_of(unheld),
+	}
+	properties == expected
+}
+
+## Every modelled run property is read, and an element with attributes the
+## model cannot hold, such as an underline colour or a font hint, is kept.
+expect {
+	stated = "<w:rStyle w:val='Emphasis'/><w:rFonts w:ascii='Aptos' w:hAnsi='Aptos' w:eastAsia='' w:asciiTheme='minorHAnsi' w:cstheme='majorBidi'/><w:b/><w:i w:val='0'/><w:caps/><w:smallCaps w:val='off'/><w:strike/><w:dstrike w:val='false'/><w:vanish/><w:color w:val='0F4761' w:themeColor='accent1' w:themeShade='BF'/><w:sz w:val='28'/><w:highlight w:val='darkYellow'/><w:u w:val='dottedHeavy'/><w:vertAlign w:val='subscript'/><w:lang w:val='en-GB' w:eastAsia='zh-CN'/>"
+	unheld = "<w:u w:val='single' w:color='FF0000'/><w:bCs/><w:sz w:val='big'/>"
+	properties = WmlRead.run_properties(properties_of("${stated}${unheld}"))
+	expected : Document.RunProperties
+	expected = {
+		style: Style("Emphasis"),
+		bold: On,
+		italic: Off,
+		caps: On,
+		small_caps: Off,
+		strike: On,
+		double_strike: Off,
+		hidden: On,
+		underline: Underline(DottedHeavy),
+		vertical_align: Subscript,
+		color: Color({ value: Rgb("0F4761"), theme: Theme("accent1"), tint: Unset, shade: Shade("BF") }),
+		highlight: Highlight(DarkYellow),
+		size: HalfPoints(28),
+		fonts: { ascii: Named("Aptos"), high_ansi: Named("Aptos"), east_asia: Named(""), complex: Unset, ascii_theme: Theme(MinorHighAnsi), high_ansi_theme: Unset, east_asia_theme: Unset, complex_theme: Theme(MajorBidi) },
+		language: { latin: Tag("en-GB"), east_asia: Tag("zh-CN"), complex: Unset },
+		preserved: properties_of(unheld),
+	}
+	properties == expected
+}
+
 ## A run's text, tab, breaks, symbol and hyphens are read in order.
 expect {
 	run_xml = "<w:r><w:rPr><w:b/></w:rPr><w:t xml:space='preserve'>a </w:t><w:tab/><w:br/><w:br w:type='page'/><w:br w:type='column'/><w:br w:clear='all'/><w:cr/><w:sym w:font='Wingdings' w:char='F0E0'/><w:softHyphen/><w:noBreakHyphen/></w:r>"
@@ -1224,7 +1701,7 @@ expect {
 		NonBreakingHyphen,
 	]
 	match read("<w:p>${run_xml}</w:p>") {
-		[Paragraph({ properties, content: [Run(r)] })] => properties == { preserved: [] } and r.content == expected and r.properties.preserved.len() == 1
+		[Paragraph({ properties, content: [Run(r)] })] => properties == Document.no_paragraph_properties and r.content == expected and r.properties == { ..Document.no_run_properties, bold: On }
 		_ => Bool.False
 	}
 }
@@ -1266,7 +1743,7 @@ expect {
 	content = "<w:pPr><w:pStyle w:val='Body'/></w:pPr><w:commentRangeStart w:id='1'/><w:ins w:id='2' w:author='A'><w:r><w:t>new</w:t></w:r></w:ins><w:del w:id='3' w:author='A'><w:r><w:delText>old</w:delText></w:r></w:del><w:sdt><w:sdtPr/><w:sdtContent><w:r><w:t>field</w:t></w:r></w:sdtContent></w:sdt><w:commentRangeEnd w:id='1'/>"
 	match read("<w:p>${content}</w:p>") {
 		[Paragraph({ properties, content: [Preserved(_), Container(ins), Container(del), Container(sdt), Preserved(_)] })] =>
-			properties.preserved.len() == 1
+			properties == { ..Document.no_paragraph_properties, style: Style("Body") }
 				and ins.content.len() == 1
 				and del.content.len() == 1
 				and match sdt.content {
@@ -1403,7 +1880,7 @@ expect {
 	table_xml = "<w:tbl><w:tblPr/><w:tr><w:tc><w:tcPr/><w:p><w:r><w:t>cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"
 	match read("<w:p/>\n  ${table_xml}\n  <w:sectPr/>") {
 		[Paragraph(empty), Table({ properties, grid: [], content: [Row({ properties: row_properties_read, content: [Cell({ properties: cell_properties_read, content: [Paragraph(in_cell)] })] })] }), Preserved(_)] =>
-			empty == { properties: { preserved: [] }, content: [] }
+			empty == { properties: Document.no_paragraph_properties, content: [] }
 				and properties == { style: Unset, width: Unset, borders: [], shading: Unset, preserved: [] }
 				and row_properties_read == { header: Unset, grid_before: Unset, grid_after: Unset, preserved: [] }
 				and cell_properties_read == { width: Unset, span: Unset, merge: Unset, borders: [], shading: Unset, alignment: Unset, preserved: [] }

@@ -72,8 +72,8 @@ text as `Docx.text` does.
 The model grows a construct at a time, and what it does not represent yet is
 never dropped. Every element it does not model is kept as the XML node it
 was read as, in its place among the modelled ones: a `Preserved` block,
-inline or run content. Paragraph and run properties are such nodes for now,
-in `properties.preserved`. An element whose content is blocks or paragraph
+inline or run content. A property element the model does not represent
+stays in `properties.preserved`. An element whose content is blocks or paragraph
 content is a `Container`: the element itself, without its children, and its
 content read as blocks or inlines. Content controls and custom XML are
 containers of blocks, and of rows and cells inside a table; inserted,
@@ -175,6 +175,74 @@ page in English Metric Units (914,400 to the inch), and `drawing` the
 drawing as it was read. The image part itself is written back byte for byte
 as it was read. A floating drawing, a picture whose image is not in the
 package and any other drawing are kept as `Preserved`.
+
+== Formatting and styles
+
+A paragraph's and a run's `properties` are what the document states on that
+paragraph or run, its direct formatting. Each property is `Unset` where the
+document says nothing, so a property left to the styles can be told from one
+set to the value a style would give:
+
+* a paragraph has its `style`, `alignment`, `indentation` and `spacing` in
+  twentieths of a point, `keep_next`, `keep_lines`, `page_break_before`,
+  `widow_control`, its `outline_level` from 0, `borders`, `shading`, `tabs`
+  and the `numbering` instance and level that make it a list item;
+* a run has its character `style`, `bold`, `italic`, `caps`, `small_caps`,
+  `strike`, `double_strike`, `hidden`, `underline`, `vertical_align`
+  (`Superscript`, `Subscript` or `Baseline`), `color`, `highlight`, `size` in
+  half-points, `fonts` by script and `language` by script.
+
+An on or off property is `On`, `Off` or `Unset`. A theme colour or theme font
+is kept as the document names it and not looked up in the theme. A property
+element the model cannot hold whole, such as spacing in lines, an underline
+with its own colour, a font hint or a number written with a fraction, stays
+in `preserved` as it was read, and so does a second copy of an element.
+
+`Docx.styles` reads the document's style table with `Styles.read`, and
+`Styles.effective_paragraph` and `Styles.effective_run` resolve what applies
+to a paragraph or run once its styles and the document's defaults are taken
+into account:
+
+[source,roc]
+----
+{ styles, diagnostics: _ } = Docx.styles(document)
+headings = Docx.body(document).keep_oks(
+    |block|
+        match block {
+            Paragraph(paragraph) =>
+                match Styles.effective_paragraph(styles, paragraph.properties, {}).outline_level {
+                    Level(level) if level < 9 => Ok({ level, text: Document.paragraph_text(paragraph) })
+                    _ => Err(NotAHeading)
+                }
+
+            _ => Err(NotAHeading)
+        },
+)
+----
+
+Resolution follows the order the standard gives: the document defaults,
+then a table style and a numbering level, then the paragraph style and the
+styles it is based on, then the paragraph's direct properties; for a run,
+then the character style and its bases, then the run's direct properties.
+A paragraph without a style has the document's default paragraph style.
+Toggle properties (bold, italic, caps, small caps, both strikes and hidden)
+are combined as the standard says: each kind of style that turns one on
+inverts it, so a bold character style in a bold paragraph style gives text
+that is not bold, and direct formatting sets it outright. A table style and a numbering level contribute
+only when the caller passes their properties, as `{ table_paragraph,
+table_run, numbering }`; `Styles.inherited` gives a style's properties with
+its bases', such as a table style's. The model keeps only what the document
+states, so resolving never changes what a document writes.
+
+A style based on one that does not exist or on a style of another kind is
+read without a base, and every style on a cycle of bases is too; each case
+is a `Styles.Diagnostic` beside the table, as is a style without an
+identifier or with one already taken, which is skipped.
+
+A heading is a paragraph whose effective outline level is 0 to 8, whether
+its style or the paragraph itself gives it; level 9 is body text. That is
+how LibreOffice reads headings, and it recognises a style based on a
+heading style as a heading.
 
 == Tables
 
