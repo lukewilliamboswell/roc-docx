@@ -60,6 +60,51 @@
       "cause": "Both sections' footers hold a PAGE field whose result Word last calculated as 1. The package never evaluates fields and reports that result; LibreOffice recalculates PAGE on import, and its Flat ODT export gives each page style's footer the number of the first page in that style, 2 for the second section. A page number in a footer is a different value on every page, not a fact of the footer.",
       "reference": "https://docs.oasis-open.org/office/OpenDocument/v1.3/os/part3-schema/OpenDocument-v1.3-os-part3-schema.html#element-text_page-number (text:page-number displays the current page number)",
       "reviewed_on": "2026-11-09"
+    },
+    {
+      "oracle": "schema",
+      "document": "tests/fixtures/gdocs/resume.docx",
+      "part": "word/document.xml",
+      "message_pattern": "attribute '\\{http://schemas\\.microsoft\\.com/office/word/2010/wordml\\}paraId': The attribute '\\{http://schemas\\.microsoft\\.com/office/word/2010/wordml\\}paraId' is not allowed\\.$|\\.mce\\.xml fails to validate$",
+      "cause": "Google Docs writes a w14:paraId on every paragraph and declares the w14 namespace without naming it in mc:Ignorable, so the Part 3 preprocessing keeps the attribute and the Transitional schema, which does not define it, rejects it. The package reads the attribute as an ignorable extension and declares it ignorable when writing; the written part validates.",
+      "reference": "ECMA-376 Part 3 (Markup Compatibility and Extensibility), the Ignorable attribute; ECMA-376 Part 4 Transitional wml.xsd (CT_P defines no w14 attributes)",
+      "reviewed_on": "2026-11-09"
+    },
+    {
+      "oracle": "schema",
+      "document": "tests/fixtures/gdocs/resume.docx",
+      "part": "word/comments.xml",
+      "message_pattern": "attribute '\\{http://schemas\\.microsoft\\.com/office/word/2010/wordml\\}paraId': The attribute '\\{http://schemas\\.microsoft\\.com/office/word/2010/wordml\\}paraId' is not allowed\\.$|\\.mce\\.xml fails to validate$",
+      "cause": "Google Docs writes a w14:paraId on every paragraph and declares the w14 namespace without naming it in mc:Ignorable, so the Part 3 preprocessing keeps the attribute and the Transitional schema, which does not define it, rejects it. The package reads the attribute as an ignorable extension and declares it ignorable when writing; the written part validates.",
+      "reference": "ECMA-376 Part 3 (Markup Compatibility and Extensibility), the Ignorable attribute; ECMA-376 Part 4 Transitional wml.xsd (CT_P defines no w14 attributes)",
+      "reviewed_on": "2026-11-09"
+    },
+    {
+      "oracle": "schema",
+      "document": "tests/fixtures/gdocs/resume.docx",
+      "part": "word/document.xml",
+      "message_pattern": "attribute '\\{http://schemas\\.openxmlformats\\.org/wordprocessingml/2006/main\\}(w|top|bottom|left|right)': '[0-9]+\\.[0-9]+' is not a valid value of the union type '\\{[^}]+\\}ST_(MeasurementOrPercent|SignedTwipsMeasure|TwipsMeasure)'\\.$|\\.mce\\.xml fails to validate$",
+      "cause": "Google Docs writes the table's width, its cells' margins and the section's page margins as decimal numbers with a fraction (w:w=\"10470.0\", w:w=\"144.0\", w:left=\"863.9999999999999\") where the schema's types allow only whole numbers, a percentage or a measure with a unit. The package reads each as the nearest whole number, halves away from zero, with a Rounded diagnostic and writes the whole number; the written part validates.",
+      "reference": "ECMA-376 Part 4 Transitional wml.xsd (CT_TblWidth, CT_PageMar, ST_MeasurementOrPercent, ST_SignedTwipsMeasure) and shared-commonSimpleTypes.xsd (ST_TwipsMeasure)",
+      "reviewed_on": "2026-11-09"
+    },
+    {
+      "oracle": "schema",
+      "document": "tests/fixtures/gdocs/resume.docx",
+      "part": "word/styles.xml",
+      "message_pattern": "attribute '\\{http://schemas\\.openxmlformats\\.org/wordprocessingml/2006/main\\}(w|top|bottom|left|right)': '[0-9]+\\.[0-9]+' is not a valid value of the union type '\\{[^}]+\\}ST_(MeasurementOrPercent|SignedTwipsMeasure|TwipsMeasure)'\\.$|\\.mce\\.xml fails to validate$",
+      "cause": "Google Docs writes the cell margins of the normal table style as decimal numbers with a fraction (w:w=\"100.0\") where the schema's types allow only whole numbers, a percentage or a measure with a unit. The package reads each as the nearest whole number, halves away from zero, with a Rounded diagnostic and writes the whole number; the written part validates.",
+      "reference": "ECMA-376 Part 4 Transitional wml.xsd (CT_TblWidth, CT_PageMar, ST_MeasurementOrPercent, ST_SignedTwipsMeasure) and shared-commonSimpleTypes.xsd (ST_TwipsMeasure)",
+      "reviewed_on": "2026-11-09"
+    },
+    {
+      "oracle": "schema",
+      "document": "tests/fixtures/gdocs/resume.docx",
+      "part": "word/document.xml",
+      "message_pattern": "element pgMar: Schemas validity error : Element '\\{http://schemas\\.openxmlformats\\.org/wordprocessingml/2006/main\\}pgMar': The attribute '\\{http://schemas\\.openxmlformats\\.org/wordprocessingml/2006/main\\}gutter' is required but missing\\.$|\\.mce\\.xml fails to validate$",
+      "cause": "Google Docs leaves the required w:gutter out of a section's page margins. The package reads the margins with a gutter of 0, the gutter Word and LibreOffice assume, with a Defaulted diagnostic, and writes it; the written part validates.",
+      "reference": "ECMA-376 Part 4 Transitional wml.xsd (CT_PageMar: gutter use=\"required\")",
+      "reviewed_on": "2026-11-09"
     }
   ]
 }

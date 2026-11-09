@@ -14,6 +14,7 @@
 ## endnotes parts by [Docx.footnotes] and [Docx.endnotes]. Until the model is
 ## written, the trees are what a document writes, so the model is a reading
 ## of them rather than a copy kept beside them.
+import Lenient
 import Limits
 import Mce
 import Opc
@@ -633,8 +634,18 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 
 	## Something reading did to a document that writing it back shows: a part
 	## lost `count` occurrences of editor state that carries no document
-	## meaning.
-	Diagnostic : [Dropped({ part : Str, content : Dropped, count : U64 })]
+	## meaning; or an attribute the schema does not allow as the part wrote
+	## it was repaired, as [Lenient.repair] repairs it: a number the schema
+	## wants whole, written with a fraction, `Rounded` to the nearest whole
+	## number, with `value` as the part wrote it, or a required attribute the
+	## element left out `Defaulted` with `value`. `element` and `attribute` are
+	## WordprocessingML local names, and a repair is reported where it is
+	## made, in document order.
+	Diagnostic : [
+		Dropped({ part : Str, content : Dropped, count : U64 }),
+		Rounded({ part : Str, element : Str, attribute : Str, value : Str }),
+		Defaulted({ part : Str, element : Str, attribute : Str, value : Str }),
+	]
 
 	## The editor state that is dropped, each by a rule of the architecture:
 	## revision save identifiers (`w:rsid` and every other WordprocessingML
@@ -677,8 +688,9 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 	## Read an opened package as a document: its part graph, and every part
 	## whose content type is XML (`application/xml`, `text/xml` or a type
 	## ending in `+xml`) parsed within the XML bounds of `limits`, with the
-	## dropped content removed. The diagnostics list each part's dropped
-	## content by kind, parts in graph order.
+	## dropped content removed and its attributes repaired. The diagnostics
+	## list each part's dropped content by kind and then its repairs, parts
+	## in graph order.
 	from_package : Opc.Package, Limits -> Try({ document : Document, diagnostics : List(Diagnostic) }, ReadError)
 	from_package = |pkg, limits| {
 		graph = Opc.graph(pkg)?
@@ -692,6 +704,9 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 				$trees = $trees.insert(part.name, kept.tree)
 				for dropped in kept.dropped {
 					$diagnostics = List.append($diagnostics, Dropped({ part: part.name, content: dropped.content, count: dropped.count }))
+				}
+				for repair in kept.repairs {
+					$diagnostics = List.append($diagnostics, repaired(part.name, repair))
 				}
 			}
 		}
@@ -763,7 +778,9 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 	## * Text that is only whitespace, beside an element among an element's
 	##   children, is ignored unless `xml:space="preserve"` applies there; all
 	##   other text compares exactly, adjacent runs of text joined.
-	## * The dropped content of [Document.Dropped] is removed from both.
+	## * The dropped content of [Document.Dropped] is removed from both, and
+	##   the attributes [Lenient.repair] repairs are compared repaired, so a
+	##   width written as `10470.0` equals one written as `10470`.
 	## * An extension namespace used without being declared ignorable compares
 	##   as declared, as [Mce.declare_extensions] declares it when writing.
 	equivalent_xml : XmlTree.Node, XmlTree.Node -> Bool
@@ -994,15 +1011,17 @@ Element : { name : XmlTree.Name, bindings : List(XmlTree.Binding), attributes : 
 # exhaust the call stack: an element is visited, then its children, then left.
 Step : [Visit(XmlTree.Node), Leave]
 
-# A tree without its dropped content, with how much of each kind it lost, in
-# the order of `Dropped`. The root is always kept.
-drop : XmlTree.Node -> { tree : XmlTree.Node, dropped : List({ content : Document.Dropped, count : U64 }) }
+# A tree without its dropped content and with its attributes repaired, with
+# how much of each kind it lost, in the order of `Dropped`, and the repairs in
+# document order. The root is always kept.
+drop : XmlTree.Node -> { tree : XmlTree.Node, dropped : List({ content : Document.Dropped, count : U64 }), repairs : List(Lenient.Repair) }
 drop = |root| {
 	go_back = go_back_ids(root)
 	var $save_ids = 0.U64
 	var $page_breaks = 0.U64
 	var $proofing = 0.U64
 	var $bookmarks = 0.U64
+	var $repairs = List.with_capacity(0)
 	var $pending = [Visit(root)]
 	var $frames = List.with_capacity(16)
 	var $nodes = List.with_capacity(16)
@@ -1020,9 +1039,13 @@ drop = |root| {
 				kind = if ($frames.is_empty()) Kept else dropped_kind(element, go_back)
 				match kind {
 					Kept => {
-						attributes = element.attributes.drop_if(is_save_id)
-						$save_ids = $save_ids + element.attributes.len() - attributes.len()
-						$frames = List.append($frames, { name: element.name, bindings: element.bindings, attributes, first_child: $nodes.len() })
+						kept_attributes = element.attributes.drop_if(is_save_id)
+						$save_ids = $save_ids + element.attributes.len() - kept_attributes.len()
+						repaired_attributes = Lenient.repair(element.name, kept_attributes)
+						if !repaired_attributes.repairs.is_empty() {
+							$repairs = List.concat($repairs, repaired_attributes.repairs)
+						}
+						$frames = List.append($frames, { name: element.name, bindings: element.bindings, attributes: repaired_attributes.attributes, first_child: $nodes.len() })
 						$pending = push_children(List.append($pending, Leave), element.children)
 					}
 
@@ -1061,8 +1084,16 @@ drop = |root| {
 		{ content: ProofingMarks, count: $proofing },
 		{ content: GoBackBookmark, count: $bookmarks },
 	]
-	{ tree: $nodes.last() ?? root, dropped: counts.keep_if(|entry| entry.count > 0) }
+	{ tree: $nodes.last() ?? root, dropped: counts.keep_if(|entry| entry.count > 0), repairs: $repairs }
 }
+
+# A repair as a diagnostic of the part it was made in.
+repaired : Str, Lenient.Repair -> Document.Diagnostic
+repaired = |part, repair|
+	match repair {
+		Rounded({ element, attribute, value }) => Rounded({ part, element, attribute, value })
+		Defaulted({ element, attribute, value }) => Defaulted({ part, element, attribute, value })
+	}
 
 # Whether an element below the root is dropped, and by which rule.
 dropped_kind : Element, List(Str) -> [Kept, RenderedPageBreak, ProofingMark, GoBackStart, GoBackEnd]
@@ -1319,6 +1350,41 @@ expect {
 		and !Document.equivalent_xml(base, parse("<w:document ${w_declaration}><w:p w:a='2'><w:t>a</w:t></w:p></w:document>"))
 		and !Document.equivalent_xml(base, parse("<w:document ${w_declaration}><w:p w:a='1' xml:space='preserve'> <w:t>a</w:t></w:p></w:document>"))
 		and !Document.equivalent_xml(base, parse("<w:document ${w_declaration}><w:p w:a='1'><w:t>a </w:t></w:p></w:document>"))
+}
+
+## Reading repairs the attributes a Google Docs export writes that the
+## schema does not allow and reports each repair; the written part holds the
+## repaired values, reads without a diagnostic, and is equivalent to the
+## part as it was read.
+expect {
+	part = "/word/document.xml"
+	main = "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"
+	graph = {
+		relationships: [{ id: "rId1", kind: Opc.officedocument_relationship, target: part, mode: Internal }],
+		parts: [{ name: part, content_type: main, relationships: [] }],
+	}
+	xml = "<w:document ${w_declaration}><w:body><w:tbl><w:tblPr><w:tblW w:w='10470.0' w:type='dxa'/></w:tblPr></w:tbl><w:sectPr><w:pgMar w:top='576' w:left='863.9999999999999'/></w:sectPr></w:body></w:document>"
+	read = Document.from_package(Opc.open(Opc.to_bytes(graph, |_| Bytes(xml.to_utf8()))?, {})?, {})?
+	written = Document.to_bytes(read.document)?
+	again = Document.from_package(Opc.open(written, {})?, {})?
+	text = Str.from_utf8(Opc.part_bytes(Opc.open(written, {})?, part)?) ?? ""
+	read.diagnostics
+		== [
+			Rounded({ part, element: "tblW", attribute: "w", value: "10470.0" }),
+			Rounded({ part, element: "pgMar", attribute: "left", value: "863.9999999999999" }),
+			Defaulted({ part, element: "pgMar", attribute: "gutter", value: "0" }),
+		]
+		and again.diagnostics == []
+		and Document.equivalent(read.document, again.document)
+		and text.contains("<w:tblW w:w=\"10470\" w:type=\"dxa\"/>")
+		and text.contains("<w:pgMar w:top=\"576\" w:left=\"864\" w:gutter=\"0\"/>")
+}
+
+## A width written with a fraction is equivalent to the whole number it
+## rounds to, and to no other.
+expect {
+	width = |value| parse("<w:document ${w_declaration}><w:tblW w:w='${value}' w:type='dxa'/></w:document>")
+	Document.equivalent_xml(width("10470.0"), width("10470")) and !Document.equivalent_xml(width("10470.5"), width("10470"))
 }
 
 ## A paragraph's text takes each kind of run content as its character, reads

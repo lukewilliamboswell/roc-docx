@@ -11,6 +11,7 @@
 ## rather than the part's identifiers for it. Whitespace-only text between
 ## elements is not content and is not kept.
 import Document
+import Lenient
 import Mce
 import Opc
 import XmlTree
@@ -1075,7 +1076,7 @@ integer = |text|
 	if text.contains(".") {
 		Err(CannotHold)
 	} else {
-		Ok((decimal(text, 1) ? |_| CannotHold).value)
+		Ok((Lenient.decimal(text, 1) ? |_| CannotHold).value)
 	}
 
 # The text of an element without attributes that holds only text.
@@ -1552,7 +1553,7 @@ width = |element| {
 		Ok("pct") => {
 			text = value_of(element, "w") ? |_| CannotHold
 			if text.ends_with("%") {
-				read = decimal(Str.drop_suffix(text, "%"), 50) ? |_| CannotHold
+				read = Lenient.decimal(Str.drop_suffix(text, "%"), 50) ? |_| CannotHold
 				Ok({ value: Fiftieths(read.value), noticed: if (read.exact) [] else [rounded(element, "w", text)] })
 			} else {
 				read = whole(element, "w")?
@@ -1572,7 +1573,7 @@ width = |element| {
 zero_or_absent : Element -> Bool
 zero_or_absent = |element|
 	match value_of(element, "w") {
-		Ok(text) => decimal(text, 1).map_ok(|read| read.value) == Ok(0)
+		Ok(text) => Lenient.decimal(text, 1).map_ok(|read| read.value) == Ok(0)
 		Err(NotFound) => Bool.True
 	}
 
@@ -1733,7 +1734,7 @@ holds = |element, locals| element.attributes.all(|attribute| is_w_in(attribute.n
 whole : Element, Str -> Try(Read(I64), [CannotHold])
 whole = |element, local| {
 	text = value_of(element, local) ? |_| CannotHold
-	read = decimal(text, 1) ? |_| CannotHold
+	read = Lenient.decimal(text, 1) ? |_| CannotHold
 	Ok({ value: read.value, noticed: if (text.contains(".")) [rounded(element, local, text)] else [] })
 }
 
@@ -1749,49 +1750,6 @@ unsigned = |element, local| {
 
 rounded : Element, Str, Str -> WmlRead.Diagnostic
 rounded = |element, local, text| Rounded({ element: element.name.local, attribute: local, value: text })
-
-# A decimal number, an optional sign, digits and an optional fraction,
-# multiplied by `factor` and rounded to the nearest whole number, halves away
-# from zero; `exact` says nothing was rounded away. At most fifteen digits
-# are read, so the value cannot overflow: more whole digits are not a number,
-# and fraction digits beyond them, such as those of `863.9999999999999` that
-# Google Docs exports write, are ignored.
-decimal : Str, U64 -> Try({ value : I64, exact : Bool }, [NotNumber])
-decimal = |text, factor| {
-	bytes = text.to_utf8()
-	negative = bytes.first() == Ok('-')
-	start = if (negative or bytes.first() == Ok('+')) 1 else 0
-	var $mantissa = 0.U64
-	var $scale = 1.U64
-	var $digits = 0.U64
-	var $point = Bool.False
-	var $ignored = Bool.False
-	var $index = start
-	while $index < bytes.len() {
-		byte = bytes.get($index) ?? 0
-		if byte == '.' and !$point {
-			$point = Bool.True
-		} else if byte >= '0' and byte <= '9' and $digits < 15 {
-			$mantissa = $mantissa * 10 + (byte - '0').to_u64()
-			$digits = $digits + 1
-			if $point {
-				$scale = $scale * 10
-			}
-		} else if byte >= '0' and byte <= '9' and $point {
-			$ignored = $ignored or byte != '0'
-		} else {
-			return Err(NotNumber)
-		}
-		$index = $index + 1
-	}
-	if $digits == 0 or factor > 1_000 {
-		return Err(NotNumber)
-	}
-	scaled = $mantissa * factor
-	magnitude = scaled // $scale + (if (2 * (scaled % $scale) >= $scale) 1 else 0)
-	value = magnitude.to_i64_wrap()
-	Ok({ value: if (negative) -value else value, exact: scaled % $scale == 0 and !$ignored })
-}
 
 paragraph : List(XmlTree.Node), Reading -> Document.Paragraph
 paragraph = |children, within| {
@@ -2550,22 +2508,6 @@ expect {
 
 		_ => Bool.False
 	}
-}
-
-## Numbers are read leniently and rounded halves away from zero, and what is
-## not a number, or has more whole digits than are read, is not one; fraction
-## digits beyond those read are ignored.
-expect {
-	decimal("12", 1) == Ok({ value: 12, exact: Bool.True })
-		and decimal("-2.5", 1) == Ok({ value: -3, exact: Bool.False })
-		and decimal("+.25", 50) == Ok({ value: 13, exact: Bool.False })
-		and decimal("1.5", 50) == Ok({ value: 75, exact: Bool.True })
-		and decimal("", 1) == Err(NotNumber)
-		and decimal("1.2.3", 1) == Err(NotNumber)
-		and decimal("1e3", 1) == Err(NotNumber)
-		and decimal("1234567890123456", 1) == Err(NotNumber)
-		and decimal("863.9999999999999", 1) == Ok({ value: 864, exact: Bool.False })
-		and decimal("1.0000000000000000", 1) == Ok({ value: 1, exact: Bool.True })
 }
 
 ## Markup compatibility is applied first: an alternative is read as the

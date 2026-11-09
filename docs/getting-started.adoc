@@ -264,6 +264,21 @@ that carries no document meaning, and reports what it dropped, as
 * `GoBackBookmark`: the `_GoBack` bookmark, which marks the last edit, with
   its end.
 
+Reading also repairs the few attribute values that real producers write and
+the schema does not allow, so that what a document holds, and therefore what
+it writes, is schema-valid, and reports each repair where it is made:
+
+* `Rounded({ part, element, attribute, value })`: a page, paragraph or table
+  measure written with a fraction where the schema wants a whole number, as
+  Google Docs exports write `w:w="10470.0"` for a table's width and
+  `w:left="863.9999999999999"` for a page margin, is read as the nearest
+  whole number, halves away from zero; `value` is the value as written.
+  A percentage such as `50%` or a measure with a unit such as `1.5in` is
+  kept as written.
+* `Defaulted({ part, element, attribute, value })`: a required attribute the
+  element leaves out is added with `value`; a page's margins without a
+  gutter, as Google Docs exports write them, get `w:gutter="0"`.
+
 Everything else is kept. A part that is not well-formed XML, breaks a
 namespace rule or exceeds a limit fails the parse with
 `XmlPartUnreadable({ part, problem })`.
@@ -274,7 +289,8 @@ content types and relationships, every part that is not XML byte for byte the
 same, and the trees of the XML parts equal by `Document.equivalent_xml`. Two
 trees are equivalent when they are equal after namespace prefixes and
 declarations, the order of attributes and whitespace-only text between
-elements are set aside, the dropped content is removed and an extension
-namespace used without being declared ignorable counts as declared; text,
+elements are set aside, the dropped content is removed, repaired attributes
+compare repaired and an extension namespace used without being declared
+ignorable counts as declared; text,
 including text whose whitespace `xml:space="preserve"` keeps, compares
 exactly.

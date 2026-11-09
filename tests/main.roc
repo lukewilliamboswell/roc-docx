@@ -25,10 +25,10 @@ import docx.Snapshot
 ##
 ## Pass-through: the fixture is parsed and written, and the written document
 ## must parse to a document equivalent to the original, without anything
-## left to drop; writing it twice, and writing what was written, must give
-## the same bytes. The expectation records what reading dropped and the
-## written package's parts and digest, so a change in what the writer
-## produces is a reviewed diff. The written documents are what the schema
+## left to drop or repair; writing it twice, and writing what was written,
+## must give the same bytes. The expectation records what reading dropped and
+## repaired and the written package's parts and digest, so a change in what
+## the writer produces is a reviewed diff. The written documents are what the schema
 ## and LibreOffice oracles read.
 ##
 ## Snapshots: the fixture's semantic snapshot, which is its own expectation
@@ -135,7 +135,7 @@ pass_through = |bytes| {
 		return Err("the written document is not equivalent to the fixture")
 	}
 	if !again.diagnostics.is_empty() {
-		return Err("the written document still has content to drop: ${Str.inspect(again.diagnostics)}")
+		return Err("the written document still has content to drop or repair: ${Str.inspect(again.diagnostics)}")
 	}
 	if Docx.to_bytes(again.document) != Ok(written) {
 		return Err("writing the written document gave different bytes")
@@ -161,6 +161,9 @@ describe = |diagnostic|
 			}
 			"dropped: ${part} ${count.to_str()} ${kind}"
 		}
+
+		Rounded({ part, element, attribute, value }) => "rounded: ${part} ${element} ${attribute} ${value}"
+		Defaulted({ part, element, attribute, value }) => "defaulted: ${part} ${element} ${attribute} ${value}"
 	}
 
 fnv1a : List(U8) -> U64

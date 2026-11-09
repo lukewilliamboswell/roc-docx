@@ -8,6 +8,7 @@ import fuzz.Fuzz
 import docx.Docx
 import docx.Document
 import zip.Zip
+import "../../tests/fixtures/gdocs/resume.docx" as gdocs_resume : List(U8)
 import "../../tests/fixtures/pandoc/basics.docx" as pandoc_basics : List(U8)
 import "../../tests/fixtures/libreoffice/basics.docx" as libreoffice_basics : List(U8)
 
@@ -20,7 +21,9 @@ import "../../tests/fixtures/libreoffice/basics.docx" as libreoffice_basics : Li
 ## Inputs are arbitrary bytes, or packages generated from a small program of
 ## bytes whose main document mixes WordprocessingML with an extension
 ## namespace, declared ignorable or not, spelled with prefixes that collide
-## with the writer's table, alternative content and the content reading drops.
+## with the writer's table, alternative content, the content reading drops
+## and, as Google Docs exports write them, measures written with a fraction
+## and page margins without a gutter, which reading repairs.
 ##
 ## Allocation ratchets, which only ever move down: parsing and writing each
 ## allocate at most linearly in the archive and the bytes it inflates, and
@@ -141,13 +144,17 @@ inflated = |bytes|
 # document, whose main part offers shapes in a namespace it does not declare
 # ignorable as an alternative and so is processed to find it needs nothing
 # declared. The undeclared example costs the small one's and processing its
-# main part.
+# main part. Repairing attributes on reading (G0.3c) added 12 to the
+# LibreOffice document, which examines its page margins for a missing gutter
+# and the names of its elements with a value holding a point; the repaired
+# example costs the small one's, its paragraphs' properties and the repairs.
 exact_ceiling : Input -> Try(U64, [NotDeclared])
 exact_ceiling = |input|
 	match input {
 		Generated(program) if program == small_program => Ok(1_189)
 		Generated(program) if program == large_program => Ok(9_273)
 		Generated(program) if program == undeclared_program => Ok(1_298)
+		Generated(program) if program == repaired_program => Ok(1_354)
 		Fixture(index) => fixtures.get(index).map_ok(|fixture| fixture.allocations).map_err(|_| NotDeclared)
 		_ => Err(NotDeclared)
 	}
@@ -167,6 +174,12 @@ large_program = List.join(List.repeat(program_unit, 64))
 undeclared_program : List(U8)
 undeclared_program = List.concat([8], small_program.drop_first(1))
 
+# The small program with every paragraph indented by measures written with a
+# fraction and the section's page margins written as a Google Docs export
+# writes them, with a fraction and without a gutter.
+repaired_program : List(U8)
+repaired_program = List.concat([23], small_program.drop_first(1))
+
 # A paragraph with save identifiers and an extension attribute holding a
 # proofing mark, a run with text and a rendered page break, an extension
 # element and an alternative; then whitespace.
@@ -175,8 +188,9 @@ program_unit = [7, 4, 3, 5, 1, 2, 6, 2, 0]
 
 fixtures : List({ name : Str, bytes : List(U8), allocations : U64 })
 fixtures = [
+	{ name: "gdocs-resume", bytes: gdocs_resume, allocations: 25_936 },
 	{ name: "pandoc-basics", bytes: pandoc_basics, allocations: 16_296 },
-	{ name: "libreoffice-basics", bytes: libreoffice_basics, allocations: 14_643 },
+	{ name: "libreoffice-basics", bytes: libreoffice_basics, allocations: 14_655 },
 ]
 
 wordprocessingml : Str
@@ -187,13 +201,18 @@ wordprocessingml = "http://schemas.openxmlformats.org/wordprocessingml/2006/main
 # WordprocessingML as `w` or `q`, and the extension namespace as `x`, `w14`
 # or `ns1`, which the writer's table or its own numbering also use; and
 # whether the extension namespace is declared ignorable, which Google Docs
-# exports leave out.
+# exports leave out; and whether paragraphs and the section carry measures
+# written with a fraction and page margins without a gutter, as Google Docs
+# exports write them.
 generated_package : List(U8) -> List(U8)
 generated_package = |program| {
 	choice = (program.first() ?? 0).to_u64()
 	w = pick(["w", "q"], choice)
 	x = pick(["x", "w14", "ns1"], choice // 2)
 	ignorable = if ((choice // 8) % 2 == 0) " mc:Ignorable='${x}'" else ""
+	repaired = (choice // 16) % 2 == 1
+	paragraph = if (repaired) "<${w}:p ${w}:rsidR='00A1' ${x}:mark='1'><${w}:pPr><${w}:ind ${w}:left='359.9999999999999' ${w}:hanging='0.5'/></${w}:pPr>" else "<${w}:p ${w}:rsidR='00A1' ${x}:mark='1'>"
+	section = if (repaired) "<${w}:sectPr><${w}:pgMar ${w}:top='1440' ${w}:right='1440.0' ${w}:bottom='1440' ${w}:left='863.9999999999999' ${w}:header='720' ${w}:footer='720'/></${w}:sectPr>" else ""
 	declarations = "xmlns:${w}='${wordprocessingml}' xmlns:${x}='urn:example:extension' xmlns:mc='http://schemas.openxmlformats.org/markup-compatibility/2006'${ignorable}"
 	var $body = List.with_capacity(program.len())
 	var $open = List.with_capacity(16)
@@ -206,7 +225,7 @@ generated_package = |program| {
 			4 => { text: "<${w}:proofErr ${w}:type='spellStart'/><${w}:bookmarkStart ${w}:id='0' ${w}:name='_GoBack'/><${w}:bookmarkEnd ${w}:id='0'/>", open: [] }
 			5 => { text: "<${w}:t>é</${w}:t>", open: [] }
 			6 => { text: "<mc:AlternateContent><mc:Choice Requires='${x}'><${x}:shape/></mc:Choice><mc:Fallback><${w}:t>f</${w}:t></mc:Fallback></mc:AlternateContent>", open: [] }
-			_ => { text: "<${w}:p ${w}:rsidR='00A1' ${x}:mark='1'>", open: ["${w}:p"] }
+			_ => { text: paragraph, open: ["${w}:p"] }
 		}
 		if byte % 8 == 2 {
 			match $open.last() {
@@ -226,7 +245,7 @@ generated_package = |program| {
 		$body = List.concat($body, "</${$open.last() ?? ""}>".to_utf8())
 		$open = List.drop_last($open, 1)
 	}
-	document = List.join(["<${w}:document ${declarations}><${w}:body>".to_utf8(), $body, "</${w}:body></${w}:document>".to_utf8()])
+	document = List.join(["<${w}:document ${declarations}><${w}:body>".to_utf8(), $body, section.to_utf8(), "</${w}:body></${w}:document>".to_utf8()])
 	Zip.create(
 		[
 			{ path: "[Content_Types].xml", content: content_types.to_utf8() },
@@ -259,6 +278,7 @@ target = Fuzz.target_with!({
 		Fuzz.example({ name: "small-document", revision: "1", make: || Generated(small_program) }),
 		Fuzz.example({ name: "large-document", revision: "1", make: || Generated(large_program) }),
 		Fuzz.example({ name: "undeclared-extension", revision: "1", make: || Generated(undeclared_program) }),
+		Fuzz.example({ name: "repaired-measures", revision: "1", make: || Generated(repaired_program) }),
 	].concat(fixtures.map_with_index(|fixture, index| Fuzz.example({ name: fixture.name, revision: "1", make: || Fixture(index) }))),
 	generator,
 	test!,

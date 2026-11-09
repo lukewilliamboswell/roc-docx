@@ -290,12 +290,16 @@ border or shading in a theme colour: it is kept whole rather than read in
 part. A grid column without a width is kept as `Preserved` in the grid.
 
 Some producers write a fraction where the schema wants a whole number:
-Google Docs exports write widths such as `w:w="10470.0"`. The reader accepts
-them and rounds to the nearest whole number, halves away from zero, and
-`Docx.read_body` returns a `Rounded({ element, attribute, value })`
-diagnostic for each beside the blocks, naming the value as the document
-wrote it. A percentage width finer than a fiftieth of a per cent is rounded
-the same way. `Docx.body` gives the same blocks without the diagnostics.
+Google Docs exports write widths such as `w:w="10470.0"`. `Docx.parse`
+repairs such widths as it reads a document, with a `Rounded` diagnostic of
+its own, so the body of a parsed document holds `Twips(10470)`. The body
+reader is lenient on its own as well: given a tree with such a width,
+`WmlRead.read_body` rounds it to the nearest whole number, halves away from
+zero, and returns a `Rounded({ element, attribute, value })` diagnostic for
+it beside the blocks, naming the value as the tree has it. A percentage
+width finer than a fiftieth of a per cent, which parsing keeps as written,
+is rounded the same way, and `Docx.read_body` reports it.
+`Docx.body` gives the same blocks without the diagnostics.
 
 Reading the body is a query: it reads the main document's tree each time it
 is asked, and a document still writes the trees it was read with, so
@@ -344,8 +348,11 @@ Every other section property, such as line numbering or page borders, stays
 in `preserved` as it was read, and so does one the model cannot hold, such
 as a page size naming a paper by its printer code. Google Docs exports write
 margins with fractions, such as `w:left="863.9999999999999"`, and leave out
-the gutter: the reader rounds the one and reads the other as zero, and
-`Docx.read_body` returns a `Rounded` or `Defaulted({ element, attribute })`
+the gutter. `Docx.parse` repairs both as it reads the document, with a
+`Rounded` or `Defaulted` diagnostic of its own, so a parsed document's
+margins are whole and have a gutter of zero. Given such a tree directly,
+the body reader rounds the one and reads the other as zero too, and
+`WmlRead.read_body` returns a `Rounded` or `Defaulted({ element, attribute })`
 diagnostic for each.
 
 == Headers and footers

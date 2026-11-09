@@ -201,6 +201,7 @@ The dropped class is small and justified: revision save identifiers (`w:rsid*`),
 * Attributes explicitly set to the schema default compare equal to absence where the schema defines a default and the package records neither; where a producer's explicit default is meaningful (toggle properties), the model records it and it round-trips.
 * Dropped-class content is removed from the original before comparison.
 * An extension namespace used without being declared ignorable compares equal to its declaration on the part's root, which the writer adds as xref:architecture.adoc#markup-compatibility-and-extensibility[Markup Compatibility and Extensibility] requires.
+* An attribute value the reader repairs compares equal to its repair, which is what the writer writes: a measure the schema types as a whole number but written with a fraction (`w:w="10470.0"`) equals the nearest whole number, halves away from zero, and a required attribute left out (a page margin's `w:gutter`) equals the value the reader supplies. The attributes repaired are named by a table grounded in the schema, and each repair is a diagnostic.
 
 The package ships this equivalence as a function, because the test harness and the fuzz targets need exactly the equivalence the package promises, and a second definition in a test would drift.
 

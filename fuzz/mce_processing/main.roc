@@ -8,6 +8,7 @@ import fuzz.Fuzz
 import docx.Mce
 import docx.XmlTree
 import zip.Zip
+import "../../tests/fixtures/gdocs/resume.docx" as gdocs_resume : List(U8)
 import "../../tests/fixtures/pandoc/basics.docx" as pandoc_basics : List(U8)
 import "../../tests/fixtures/pandoc/comments.docx" as pandoc_comments : List(U8)
 import "../../tests/fixtures/pandoc/lists.docx" as pandoc_lists : List(U8)
@@ -33,7 +34,9 @@ import "../../tests/fixtures/word/tables.docx" as word_tables : List(U8)
 ## gives. Generated trees mix understood and extension namespaces with
 ## `mc:Ignorable`, `mc:ProcessContent`, `mc:MustUnderstand`,
 ## `mc:AlternateContent` and prefixes rebound in nested elements. Every XML
-## part of every fixture document also processes without a diagnostic to an
+## part of every fixture document also processes, without a diagnostic but
+## for the extension namespaces the fixture uses without declaring them
+## ignorable, as a Google Docs export uses `w14`, to an
 ## interpreted tree with no extension or compatibility markup left, apart
 ## from the root of a part in an extension namespace, which is always kept, in
 ## agreement with the reference, while the tree it was read as, the
@@ -81,8 +84,8 @@ test! = |input| {
 							tree = XmlTree.parse(entry.content, {}) ?? crash "a fixture part does not read as namespaced XML"
 							{ value: processed, stats } = Fuzz.measure!("mce-process", || Mce.process(tree))
 							check_linear(stats, size(tree))
-							if processed.diagnostics != [] {
-								crash "a fixture part has a compatibility diagnostic"
+							if !processed.diagnostics.all(|diagnostic| is_undeclared(diagnostic, fixture.undeclared)) {
+								crash "a fixture part has a compatibility diagnostic it does not declare"
 							}
 							if extension_markup(processed.interpreted) != extension_root(tree) {
 								crash "a fixture part's interpreted tree holds extension or compatibility markup"
@@ -217,29 +220,40 @@ examples_by_program = [
 	{ program: large_program, allocations: 1_550 },
 ]
 
-# Each fixture's processing allocations, and how many elements and attributes
-# in extension or compatibility namespaces its preserved trees hold.
-fixtures : List({ name : Str, bytes : List(U8), allocations : U64, preserved : U64 })
+# Each fixture's processing allocations, how many elements and attributes in
+# extension or compatibility namespaces its preserved trees hold, and the
+# extension namespaces it uses without declaring them ignorable.
+fixtures : List({ name : Str, bytes : List(U8), allocations : U64, preserved : U64, undeclared : List(Str) })
 fixtures = [
-	{ name: "pandoc-basics", bytes: pandoc_basics, allocations: 3_546, preserved: 0 },
-	{ name: "pandoc-comments", bytes: pandoc_comments, allocations: 3_377, preserved: 0 },
-	{ name: "pandoc-lists", bytes: pandoc_lists, allocations: 4_012, preserved: 0 },
-	{ name: "pandoc-notes", bytes: pandoc_notes, allocations: 3_304, preserved: 0 },
-	{ name: "pandoc-review", bytes: pandoc_review, allocations: 3_822, preserved: 0 },
-	{ name: "pandoc-revisions", bytes: pandoc_revisions, allocations: 3_307, preserved: 0 },
-	{ name: "pandoc-tables", bytes: pandoc_tables, allocations: 3_652, preserved: 0 },
-	{ name: "libreoffice-basics", bytes: libreoffice_basics, allocations: 3_172, preserved: 14 },
-	{ name: "libreoffice-comments", bytes: libreoffice_comments, allocations: 3_121, preserved: 3 },
-	{ name: "libreoffice-lists", bytes: libreoffice_lists, allocations: 4_933, preserved: 3 },
-	{ name: "libreoffice-notes", bytes: libreoffice_notes, allocations: 3_139, preserved: 3 },
-	{ name: "libreoffice-review", bytes: libreoffice_review, allocations: 4_287, preserved: 4 },
-	{ name: "libreoffice-revisions", bytes: libreoffice_revisions, allocations: 3_040, preserved: 2 },
-	{ name: "libreoffice-tables", bytes: libreoffice_tables, allocations: 4_824, preserved: 2 },
-	{ name: "word-comments", bytes: word_comments, allocations: 3_627, preserved: 131 },
-	{ name: "word-report", bytes: word_report, allocations: 4_158, preserved: 70 },
-	{ name: "word-revisions", bytes: word_revisions, allocations: 4_066, preserved: 106 },
-	{ name: "word-tables", bytes: word_tables, allocations: 3_599, preserved: 65 },
+	{ name: "gdocs-resume", bytes: gdocs_resume, allocations: 5_675, preserved: 42, undeclared: [w14] },
+	{ name: "pandoc-basics", bytes: pandoc_basics, allocations: 3_546, preserved: 0, undeclared: [] },
+	{ name: "pandoc-comments", bytes: pandoc_comments, allocations: 3_377, preserved: 0, undeclared: [] },
+	{ name: "pandoc-lists", bytes: pandoc_lists, allocations: 4_012, preserved: 0, undeclared: [] },
+	{ name: "pandoc-notes", bytes: pandoc_notes, allocations: 3_304, preserved: 0, undeclared: [] },
+	{ name: "pandoc-review", bytes: pandoc_review, allocations: 3_822, preserved: 0, undeclared: [] },
+	{ name: "pandoc-revisions", bytes: pandoc_revisions, allocations: 3_307, preserved: 0, undeclared: [] },
+	{ name: "pandoc-tables", bytes: pandoc_tables, allocations: 3_652, preserved: 0, undeclared: [] },
+	{ name: "libreoffice-basics", bytes: libreoffice_basics, allocations: 3_172, preserved: 14, undeclared: [] },
+	{ name: "libreoffice-comments", bytes: libreoffice_comments, allocations: 3_121, preserved: 3, undeclared: [] },
+	{ name: "libreoffice-lists", bytes: libreoffice_lists, allocations: 4_933, preserved: 3, undeclared: [] },
+	{ name: "libreoffice-notes", bytes: libreoffice_notes, allocations: 3_139, preserved: 3, undeclared: [] },
+	{ name: "libreoffice-review", bytes: libreoffice_review, allocations: 4_287, preserved: 4, undeclared: [] },
+	{ name: "libreoffice-revisions", bytes: libreoffice_revisions, allocations: 3_040, preserved: 2, undeclared: [] },
+	{ name: "libreoffice-tables", bytes: libreoffice_tables, allocations: 4_824, preserved: 2, undeclared: [] },
+	{ name: "word-comments", bytes: word_comments, allocations: 3_627, preserved: 131, undeclared: [] },
+	{ name: "word-report", bytes: word_report, allocations: 4_158, preserved: 70, undeclared: [] },
+	{ name: "word-revisions", bytes: word_revisions, allocations: 4_066, preserved: 106, undeclared: [] },
+	{ name: "word-tables", bytes: word_tables, allocations: 3_599, preserved: 65, undeclared: [] },
 ]
+
+# Whether a diagnostic reports one of these namespaces used without being
+# declared ignorable.
+is_undeclared : Mce.Diagnostic, List(Str) -> Bool
+is_undeclared = |diagnostic, namespaces|
+	match diagnostic {
+		UndeclaredExtension({ namespace, at: _ }) => namespaces.contains(namespace)
+		_ => Bool.False
+	}
 
 w : Str
 w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"

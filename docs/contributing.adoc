@@ -198,6 +198,27 @@ Word records the signed-in account as the last editor whatever its user name
 setting says; the script replaces that one property with the seed's fictional
 editor and copies every other archive entry unchanged.
 
+The Google Docs fixture under `tests/fixtures/gdocs/` is Google Docs' own
+export of a résumé of placeholder text with comments, written by hand in
+Google Docs and downloaded as a Word document. Google Docs stamps the
+exporting account's name on comments and revisions and embeds the fonts the
+document uses, so `oracle/scrub_gdocs_fixture.py` makes every author
+fictional and removes the embedded fonts with their relationships, then
+checks that no part names the maintainer, that every relationship resolves
+and that LibreOffice converts the result. It is run by a maintainer, never by
+`check` or CI, on an export the maintainer made:
+
+[source,sh]
+----
+python3 -I oracle/scrub_gdocs_fixture.py ~/Downloads/Resume.docx
+----
+
+The export is what makes the fixture worth having: it declares an extension
+namespace it does not mark ignorable, writes decimal values where the schema
+wants whole numbers and leaves out a required attribute, so the schema oracle
+reports its parts as accepted deviations while the package's pass-through of
+it must validate.
+
 The oracle adapters under `oracle/` are deliberately Python: an independent
 implementation cannot share the package's mistakes. When an oracle disagrees
 with the package, find the cause. A finding that is known to be wrong or out
