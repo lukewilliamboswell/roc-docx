@@ -320,8 +320,10 @@ the thread, which is a comment's own index unless it is a reply.
 `format`), `author`, `date` and the `text` they change.
 
 | `sections`
-| Page width, height, orientation and margins in twips, and the default
-header and footer text.
+| Page width, height, orientation and margins in twips, and the text of the
+header and footer on the section's odd, even and first pages: the even
+pages' differ only where the document has different odd and even pages, and
+the first page's only where the section has a title page.
 
 | `properties`
 | The core properties: title, subject, creator, keywords, description, last

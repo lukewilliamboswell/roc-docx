@@ -24,6 +24,7 @@ import "../../tests/fixtures/libreoffice/review.docx" as libreoffice_review : Li
 import "../../tests/fixtures/libreoffice/revisions.docx" as libreoffice_revisions : List(U8)
 import "../../tests/fixtures/libreoffice/tables.docx" as libreoffice_tables : List(U8)
 import "../../tests/fixtures/word/comments.docx" as word_comments : List(U8)
+import "../../tests/fixtures/word/pages.docx" as word_pages : List(U8)
 import "../../tests/fixtures/word/report.docx" as word_report : List(U8)
 import "../../tests/fixtures/word/revisions.docx" as word_revisions : List(U8)
 import "../../tests/fixtures/word/tables.docx" as word_tables : List(U8)
@@ -528,6 +529,7 @@ fixtures = [
 	{ name: "libreoffice-revisions", bytes: libreoffice_revisions, allocations: 8_401, styles: fixture_styles },
 	{ name: "libreoffice-tables", bytes: libreoffice_tables, allocations: 8_401, styles: fixture_styles },
 	{ name: "word-comments", bytes: word_comments, allocations: 2_842, styles: word_styles },
+	{ name: "word-pages", bytes: word_pages, allocations: 2_847, styles: List.concat(word_styles, ["Header", "Footer"]) },
 	{ name: "word-report", bytes: word_report, allocations: 2_842, styles: word_styles },
 	{ name: "word-revisions", bytes: word_revisions, allocations: 2_935, styles: word_styles },
 	{ name: "word-tables", bytes: word_tables, allocations: 2_847, styles: word_styles },

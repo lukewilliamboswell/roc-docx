@@ -26,6 +26,7 @@ import "../../tests/fixtures/pandoc/review.docx" as pandoc_review : List(U8)
 import "../../tests/fixtures/pandoc/revisions.docx" as pandoc_revisions : List(U8)
 import "../../tests/fixtures/pandoc/tables.docx" as pandoc_tables : List(U8)
 import "../../tests/fixtures/word/comments.docx" as word_comments : List(U8)
+import "../../tests/fixtures/word/pages.docx" as word_pages : List(U8)
 import "../../tests/fixtures/word/report.docx" as word_report : List(U8)
 import "../../tests/fixtures/word/revisions.docx" as word_revisions : List(U8)
 import "../../tests/fixtures/word/tables.docx" as word_tables : List(U8)
@@ -49,7 +50,8 @@ import "../../tests/fixtures/word/tables.docx" as word_tables : List(U8)
 ##   the attributes the schema requires of it.
 ##
 ## Inputs are every fixture, a new document from the default document
-## kit and one made by every builder, written as `Docx.to_bytes` writes what `Docx.parse` reads, and
+## kit, one made by every builder and one whose odd, even and first pages
+## have their own headers and footers, written as `Docx.to_bytes` writes what `Docx.parse` reads, and
 ## packages generated from a program of bytes whose
 ## main document, footnotes, header and comments hold bookmarks whose
 ## identifiers collide across parts and with comments', links, note references, comment ranges, pictures,
@@ -75,6 +77,7 @@ test! = |input| {
 
 		New => new_document
 		Built => built_document
+		Paged => paged_document
 	}
 	cost = check!(source)
 	allocations = cost.stats.allocs + cost.stats.reallocs
@@ -130,7 +133,7 @@ check! = |source| {
 held : Fuzz.Stats -> U64
 held = |stats| stats.peak_live_bytes - stats.entry_live_bytes
 
-Input : [Generated(List(U8)), Fixture(U64), New, Built]
+Input : [Generated(List(U8)), Fixture(U64), New, Built, Paged]
 
 generator : Fuzz.Generator(Input)
 generator = Fuzz.map(Fuzz.bytes, |bytes| Generated(bytes))
@@ -152,7 +155,8 @@ inflated = |bytes|
 # comments and Google Docs documents lost the identifiers on every other
 # paragraph and fell by 19 and 6. The new document from the default
 # document kit (G5.1) takes 2,028 and the document made by every builder
-# (G5.2) 2,777, each set when it was declared.
+# (G5.2) 2,777, and the document whose odd, even and first pages have
+# their own headers and footers (G5.5) 2,583, each set when it was declared.
 exact_ceiling : Input -> Try(U64, [NotDeclared])
 exact_ceiling = |input|
 	match input {
@@ -161,6 +165,7 @@ exact_ceiling = |input|
 		Fixture(index) => fixtures.get(index).map_ok(|fixture| fixture.allocations).map_err(|_| NotDeclared)
 		New => Ok(2_028)
 		Built => Ok(2_777)
+		Paged => Ok(2_583)
 		_ => Err(NotDeclared)
 	}
 
@@ -208,8 +213,8 @@ built_document = {
 	built = |{}| {
 		created = Docx.new_document({}) ? |_| Unbuilt
 		described = Build.properties(created, { title: Text("Notice"), creator: Text("Ada Reviewer"), created: Date("2026-05-07T09:00:00Z") }) ? |_| Unbuilt
-		headed = Build.header(described, [Build.paragraph({}, [Build.text("Notice", {})])]) ? |_| Unbuilt
-		footed = Build.footer(headed, [Build.paragraph({ alignment: Center }, [Build.page_number, Build.text(" of ", {}), Build.page_count])]) ? |_| Unbuilt
+		headed = Build.header(described, {}, [Build.paragraph({}, [Build.text("Notice", {})])]) ? |_| Unbuilt
+		footed = Build.footer(headed, {}, [Build.paragraph({ alignment: Center }, [Build.page_number, Build.text(" of ", {}), Build.page_count])]) ? |_| Unbuilt
 		noted = Build.footnote(footed, [Build.text("Source.", {})]) ? |_| Unbuilt
 		cell = |text, options| Build.cell(options, [Build.paragraph({}, [Build.text(text, {})])])
 		content = [
@@ -221,6 +226,30 @@ built_document = {
 		]
 		split = Build.new_section(Build.page_setup(Build.append(noted.document, content), { size: Letter }), { orientation: Landscape })
 		Ok(Docx.to_bytes(Build.append(split, [Build.paragraph({}, [Build.text("Schedule", {})])])) ? |_| Unbuilt)
+	}
+	built({}) ?? []
+}
+
+# A new document of two sections whose pages differ, made by the builders:
+# headers for odd and even pages and a first page and a footer for even
+# pages in the first, which turn on different odd and even pages and its
+# title page, and a first page's header of its own in the second, as it is
+# written.
+paged_document : List(U8)
+paged_document = {
+	built = |{}| {
+		created = Docx.new_document({}) ? |_| Unbuilt
+		region = |document, which, kind, text|
+			match which {
+				Header => Build.header(document, { kind: kind }, [Build.paragraph({}, [Build.text(text, {})])])
+				Footer => Build.footer(document, { kind: kind }, [Build.paragraph({}, [Build.text(text, {}), Build.page_number])])
+			}
+		odd = region(Build.append(created, [Build.paragraph({}, [Build.text("Guide", {})])]), Header, Default, "Guide") ? |_| Unbuilt
+		even = region(odd, Header, Even, "Club") ? |_| Unbuilt
+		first = region(even, Header, First, "Welcome") ? |_| Unbuilt
+		footed = region(first, Footer, Even, "Page ") ? |_| Unbuilt
+		split = Build.append(Build.new_section(footed, {}), [Build.paragraph({}, [Build.text("Routes", {})])])
+		Ok(Docx.to_bytes(region(split, Header, First, "Routes") ? |_| Unbuilt) ? |_| Unbuilt)
 	}
 	built({}) ?? []
 }
@@ -243,6 +272,7 @@ fixtures = [
 	{ name: "pandoc-revisions", bytes: pandoc_revisions, allocations: 5_954 },
 	{ name: "pandoc-tables", bytes: pandoc_tables, allocations: 6_425 },
 	{ name: "word-comments", bytes: word_comments, allocations: 6_556 },
+	{ name: "word-pages", bytes: word_pages, allocations: 6_926 },
 	{ name: "word-report", bytes: word_report, allocations: 7_432 },
 	{ name: "word-revisions", bytes: word_revisions, allocations: 6_814 },
 	{ name: "word-tables", bytes: word_tables, allocations: 6_057 },
@@ -672,6 +702,7 @@ target = Fuzz.target_with!({
 		Fuzz.example({ name: "large-document", revision: "1", make: || Generated(large_program) }),
 		Fuzz.example({ name: "new-document", revision: "1", make: || New }),
 		Fuzz.example({ name: "built-document", revision: "1", make: || Built }),
+		Fuzz.example({ name: "paged-document", revision: "1", make: || Paged }),
 	].concat(fixtures.map_with_index(|fixture, index| Fuzz.example({ name: fixture.name, revision: "1", make: || Fixture(index) }))),
 	generator,
 	test!,

@@ -14,7 +14,9 @@
 ## `Docx.replace_text`, `Docx.insert_text` and `Docx.delete_text` its text,
 ## and `Docx.insert_blocks` and `Docx.delete_blocks` its paragraphs and
 ## tables, silently or as tracked changes; `Docx.set_tracking` whether it
-## tracks changes;
+## tracks changes, and `Docx.set_different_odd_and_even` whether odd and
+## even pages have different headers and footers, which
+## `Docx.different_odd_and_even` reads;
 ## `Docx.to_bytes` writes a document as a package, its body written from the
 ## model, and `Docx.equivalent` says whether two documents write the same.
 ## What reading drops comes back as diagnostics beside the document, never
@@ -210,6 +212,14 @@ Docx :: [].{
 			Ok(found) => WmlRead.header_footer(found.tree, part_context(found, comment_ids(document)))
 			Err(NotFound) => []
 		}
+
+	## Whether a document gives odd and even pages different headers and
+	## footers, as [WmlRead.different_odd_and_even] reads it from the
+	## settings part of its main document. When it does, each section's
+	## `Even` headers and footers are for its even pages and its `Default`
+	## ones for its odd pages. A document without the part does not.
+	different_odd_and_even : Document -> Bool
+	different_odd_and_even = |document| WmlRead.different_odd_and_even(main_related_tree(document, settings_relationship))
 
 	## A document's core properties, as [WmlRead.core_properties] reads them
 	## from the part the package's core properties relationship targets. A
@@ -494,16 +504,31 @@ Docx :: [].{
 	## editor's setting: it changes no content, and the package's own edits
 	## are tracked or not by their context.
 	set_tracking : Document, [On, Off] -> Try(Document, EditError)
-	set_tracking = |document, state| {
-		main = main_part(document)?
-		match Document.related(document, main.name, settings_relationship) {
-			Ok(part) => Ok(Document.with_part(document, part.name, WmlWrite.tracking(part.tree, state), part.relationships))
-			Err(NotFound) =>
-				match state {
-					On => Ok(new_part(document, settings_relationship, WmlWrite.tracking(Text(""), On)).document)
-					Off => Ok(document)
-				}
-		}
+	set_tracking = |document, state| with_setting(document, state, WmlWrite.tracking)
+
+	## The document with different headers and footers for odd and even
+	## pages `On` or `Off`, as [WmlWrite.different_odd_and_even] sets it in
+	## the settings part of its main document; a document without settings
+	## that is to have them is given a settings part. The setting is the
+	## whole document's; each section's even headers and footers are
+	## [Document.HeaderFooter]s of kind `Even`.
+	set_different_odd_and_even : Document, [On, Off] -> Try(Document, EditError)
+	set_different_odd_and_even = |document, state| with_setting(document, state, WmlWrite.different_odd_and_even)
+}
+
+# The document with a setting `On` or `Off` in the settings part of its
+# main document, as `write` sets it in the part's tree; a document without
+# settings is given a settings part for `On`.
+with_setting : Document, [On, Off], (XmlTree.Node, [On, Off] -> XmlTree.Node) -> Try(Document, EditError)
+with_setting = |document, state, write| {
+	main = main_part(document)?
+	match Document.related(document, main.name, settings_relationship) {
+		Ok(part) => Ok(Document.with_part(document, part.name, write(part.tree, state), part.relationships))
+		Err(NotFound) =>
+			match state {
+				On => Ok(new_part(document, settings_relationship, write(Text(""), On)).document)
+				Off => Ok(document)
+			}
 	}
 }
 
@@ -1847,6 +1872,21 @@ expect {
 		and Docx.tracks_revisions(written.document)
 		and !Docx.tracks_revisions(off)
 		and Docx.set_tracking(parsed.document, Off).map_ok(|document| Docx.tracks_revisions(document)) == Ok(Bool.False)
+}
+
+## Different odd and even pages give a document without settings a settings
+## part that says so, survive writing, and turned off are gone; they leave
+## tracking as it was.
+expect {
+	parsed = Docx.parse(package_of("<w:p/>")?)?
+	on = Docx.set_different_odd_and_even(parsed.document, On)?
+	written = Docx.parse(Docx.to_bytes(on)?)?
+	off = Docx.set_different_odd_and_even(written.document, Off)?
+	!Docx.different_odd_and_even(parsed.document)
+		and Docx.different_odd_and_even(written.document)
+		and !Docx.tracks_revisions(written.document)
+		and !Docx.different_odd_and_even(off)
+		and Docx.different_odd_and_even(Docx.set_tracking(written.document, On)?)
 }
 
 ## A new document writes to the same bytes every time, and reads back as an

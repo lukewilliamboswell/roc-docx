@@ -62,8 +62,8 @@ report : () -> Try(Document, _)
 report = || {
 	created = Docx.new_document({ title: Text("Quarterly sales"), creator: Text("Iris Cole"), created: Date("2026-10-05T09:00:00Z") })?
 	described = Build.properties(created, { subject: Text("Sales from July to September 2026"), keywords: Text("sales, quarterly") })?
-	headed = Build.header(described, [Build.paragraph({ alignment: Right }, [Build.text("Harbour Lane Bakery: quarterly sales", { italic: On })])])?
-	footed = Build.footer(headed, [Build.paragraph({ alignment: Center }, [Build.text("Page ", {}), Build.page_number, Build.text(" of ", {}), Build.page_count])])?
+	headed = Build.header(described, {}, [Build.paragraph({ alignment: Right }, [Build.text("Harbour Lane Bakery: quarterly sales", { italic: On })])])?
+	footed = Build.footer(headed, {}, [Build.paragraph({ alignment: Center }, [Build.text("Page ", {}), Build.page_number, Build.text(" of ", {}), Build.page_count])])?
 	noted = Build.footnote(footed, [Build.text("Wholesale orders are left out.", {})])?
 	# A row of a table: a label, then figures aligned right, all in bold or none.
 	row = |weight, label, figures| {
@@ -105,5 +105,5 @@ report = || {
 			),
 		],
 	)
-	Build.header(detail, [Build.paragraph({ alignment: Right }, [Build.text("Harbour Lane Bakery: sales by product", { italic: On })])])
+	Build.header(detail, {}, [Build.paragraph({ alignment: Right }, [Build.text("Harbour Lane Bakery: sales by product", { italic: On })])])
 }

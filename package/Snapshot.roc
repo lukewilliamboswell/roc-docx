@@ -73,8 +73,8 @@ Snapshot :: [].{
 	## cells are not listed.
 	##
 	## The sections are those [Document.sections] finds in the body, with
-	## their page geometry in twips and the text of their default header
-	## and footer, and the properties are the document's core properties,
+	## their page geometry in twips and the text of the header and footer
+	## of their odd, even and first pages, and the properties are the document's core properties,
 	## as `sections_json` and `properties_json` describe.
 	json : Document, { path : Str, version : Str } -> Str
 	json = |document, { path, version }| {
@@ -153,6 +153,10 @@ keys = [
 	"sections.margin_right",
 	"sections.header",
 	"sections.footer",
+	"sections.header_even",
+	"sections.footer_even",
+	"sections.header_first",
+	"sections.footer_first",
 	"properties.title",
 	"properties.subject",
 	"properties.creator",
@@ -273,8 +277,12 @@ utc_text = |seconds| {
 # of the body is in, which states nothing. A section that does not give its
 # page size or margins has the contract's: a portrait Letter page, 12,240 by
 # 15,840 twips, with margins of 1,440. Its header and footer are the text of
-# its default header and footer, a section without one having the previous
-# section's, each block's text joined by line feeds as a note's is.
+# its default header and footer, each block's text joined by line feeds as a
+# note's is; its even pages' are its even header's and footer's where the
+# document has different odd and even pages, and its first page's are its
+# first header's and footer's where it has a title page, the default ones
+# where not. A section without a header or footer of a kind has the
+# previous section's of that kind.
 sections_json : Document, List(Document.Block), Tables -> List(Str)
 sections_json = |document, body, tables| {
 	unstated = { start: Unset, page_size: Unset, margins: Unset, columns: Unset, page_numbers: Unset, title_page: Unset, headers: [], footers: [], preserved: [], change: [] }
@@ -282,23 +290,42 @@ sections_json = |document, body, tables| {
 		Ok(Section(_)) => []
 		_ => [unstated]
 	}
-	var $header = Err(NoPart)
-	var $footer = Err(NoPart)
+	odd_and_even = Docx.different_odd_and_even(document)
+	var $headers = { default: Err(NoPart), even: Err(NoPart), first: Err(NoPart) }
+	var $footers = { default: Err(NoPart), even: Err(NoPart), first: Err(NoPart) }
 	var $out = List.with_capacity(2)
 	for section in List.concat(Document.sections(body), trailing) {
-		$header = default_part(section.headers, $header)
-		$footer = default_part(section.footers, $footer)
-		$out = List.append($out, section_json(section, region_text(document, $header, tables), region_text(document, $footer, tables)))
+		$headers = inherited(section.headers, $headers)
+		$footers = inherited(section.footers, $footers)
+		shown = |parts| {
+			default = region_text(document, parts.default, tables)
+			{
+				default,
+				even: if (odd_and_even) region_text(document, parts.even, tables) else default,
+				first: if (section.title_page == On) region_text(document, parts.first, tables) else default,
+			}
+		}
+		$out = List.append($out, section_json(section, shown($headers), shown($footers)))
 	}
 	$out
 }
 
-default_part : List(Document.HeaderFooter), Try(Str, [NoPart]) -> Try(Str, [NoPart])
-default_part = |references, previous|
-	match references.find_first(|reference| reference.kind == Default) {
-		Ok(reference) => Ok(reference.part)
-		Err(_) => previous
-	}
+# A section's header or footer part of each kind: the one it names, or the
+# previous section's of a kind it names none of.
+Inherited : { default : Try(Str, [NoPart]), even : Try(Str, [NoPart]), first : Try(Str, [NoPart]) }
+
+inherited : List(Document.HeaderFooter), Inherited -> Inherited
+inherited = |references, previous| {
+	of_kind = |kind, before|
+		match references.find_first(|reference| reference.kind == kind) {
+			Ok(reference) => Ok(reference.part)
+			Err(_) => before
+		}
+	{ default: of_kind(Default, previous.default), even: of_kind(Even, previous.even), first: of_kind(First, previous.first) }
+}
+
+# The text of a section's header or footer on its pages of each kind.
+Shown : { default : Str, even : Str, first : Str }
 
 region_text : Document, Try(Str, [NoPart]), Tables -> Str
 region_text = |document, part, tables|
@@ -307,7 +334,7 @@ region_text = |document, part, tables|
 		Err(NoPart) => ""
 	}
 
-section_json : Document.Section, Str, Str -> Str
+section_json : Document.Section, Shown, Shown -> Str
 section_json = |section, header, footer| {
 	(width, height, orientation) = match section.page_size {
 		Size(size) => (size.width, size.height, if (size.orientation == Landscape) "landscape" else "portrait")
@@ -317,7 +344,7 @@ section_json = |section, header, footer| {
 		Margins(margins) => (margins.top.to_str(), margins.bottom.to_str(), margins.left.to_str(), margins.right.to_str())
 		Unset => ("1440", "1440", "1440", "1440")
 	}
-	"{\"page_width\": ${width.to_str()}, \"page_height\": ${height.to_str()}, \"orientation\": \"${orientation}\", \"margin_top\": ${top}, \"margin_bottom\": ${bottom}, \"margin_left\": ${left}, \"margin_right\": ${right}, \"header\": ${quoted(header)}, \"footer\": ${quoted(footer)}}"
+	"{\"page_width\": ${width.to_str()}, \"page_height\": ${height.to_str()}, \"orientation\": \"${orientation}\", \"margin_top\": ${top}, \"margin_bottom\": ${bottom}, \"margin_left\": ${left}, \"margin_right\": ${right}, \"header\": ${quoted(header.default)}, \"footer\": ${quoted(footer.default)}, \"header_even\": ${quoted(header.even)}, \"footer_even\": ${quoted(footer.even)}, \"header_first\": ${quoted(header.first)}, \"footer_first\": ${quoted(footer.first)}}"
 }
 
 # The core properties as the snapshot's object, a property that is not
@@ -696,11 +723,18 @@ quoted = |text| {
 
 # The snapshot of a package whose main document has this body content, with
 # an external hyperlink relationship `rId1`, these notes and comments in its
-# footnotes, endnotes and comments parts, a header part, `rId4`, saying `Draft`, and through
-# `rId5` the numbering instances 3, of a numbered list, and 4, of a bulleted
-# one.
+# footnotes, endnotes and comments parts, header parts, `rId4` saying `Draft`
+# and `rId7` saying `Left`, and through `rId5` the numbering instances 3, of
+# a numbered list, and 4, of a bulleted one.
 snapshot_of : Str, { footnotes : Str, endnotes : Str, comments : Str } -> Try(Str, _)
 snapshot_of = |content, notes| {
+	document = document_of(content, notes)?
+	Ok(Snapshot.json(document, { path: "a \"b\".docx", version: "test" }))
+}
+
+# The package [snapshot_of] takes the snapshot of, read.
+document_of : Str, { footnotes : Str, endnotes : Str, comments : Str } -> Try(Document, _)
+document_of = |content, notes| {
 	relationships = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 	part = |name, kind| { name: "/word/${name}.xml", content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.${kind}+xml", relationships: [] }
 	graph = {
@@ -716,11 +750,13 @@ snapshot_of = |content, notes| {
 					{ id: "rId4", kind: "${relationships}/header", target: "/word/header1.xml", mode: Internal },
 					{ id: "rId5", kind: "${relationships}/numbering", target: "/word/numbering.xml", mode: Internal },
 					{ id: "rId6", kind: "${relationships}/comments", target: "/word/comments.xml", mode: Internal },
+					{ id: "rId7", kind: "${relationships}/header", target: "/word/header2.xml", mode: Internal },
 				],
 			},
 			part("footnotes", "footnotes"),
 			part("endnotes", "endnotes"),
 			part("header1", "header"),
+			part("header2", "header"),
 			part("numbering", "numbering"),
 			part("comments", "comments"),
 		],
@@ -735,6 +771,8 @@ snapshot_of = |content, notes| {
 			"<w:comments ${declarations}>${notes.comments}</w:comments>"
 		} else if name == "/word/header1.xml" {
 			"<w:hdr ${declarations}><w:p><w:r><w:t>Draft</w:t></w:r></w:p></w:hdr>"
+		} else if name == "/word/header2.xml" {
+			"<w:hdr ${declarations}><w:p><w:r><w:t>Left</w:t></w:r></w:p></w:hdr>"
 		} else if name == "/word/numbering.xml" {
 			level = |at, format| "<w:lvl w:ilvl='${at}'><w:numFmt w:val='${format}'/></w:lvl>"
 			"<w:numbering ${declarations}><w:abstractNum w:abstractNumId='1'>${level("0", "decimal")}${level("1", "lowerLetter")}</w:abstractNum><w:abstractNum w:abstractNumId='2'>${level("0", "bullet")}</w:abstractNum><w:num w:numId='3'><w:abstractNumId w:val='1'/></w:num><w:num w:numId='4'><w:abstractNumId w:val='2'/></w:num></w:numbering>"
@@ -742,7 +780,7 @@ snapshot_of = |content, notes| {
 			"<w:document ${declarations}><w:body>${content}</w:body></w:document>"
 		}
 	parsed = Docx.parse(Opc.to_bytes(graph, |name| Bytes(xml(name).to_utf8()))?)?
-	Ok(Snapshot.json(parsed.document, { path: "a \"b\".docx", version: "test" }))
+	Ok(parsed.document)
 }
 
 no_notes : { footnotes : Str, endnotes : Str, comments : Str }
@@ -782,7 +820,7 @@ expect {
 			"  \"comments\": [],",
 			"  \"revisions\": [\n    {\"kind\": \"deletion\", \"author\": \"A\", \"date\": \"\", \"text\": \"gone\"},\n    {\"kind\": \"insertion\", \"author\": \"A\", \"date\": \"\", \"text\": \"\\n\"}\n  ],",
 			"  \"sections\": [",
-			"    {\"page_width\": 12240, \"page_height\": 15840, \"orientation\": \"portrait\", \"margin_top\": 1440, \"margin_bottom\": 1440, \"margin_left\": 1440, \"margin_right\": 1440, \"header\": \"\", \"footer\": \"\"}",
+			"    {\"page_width\": 12240, \"page_height\": 15840, \"orientation\": \"portrait\", \"margin_top\": 1440, \"margin_bottom\": 1440, \"margin_left\": 1440, \"margin_right\": 1440, \"header\": \"\", \"footer\": \"\", \"header_even\": \"\", \"footer_even\": \"\", \"header_first\": \"\", \"footer_first\": \"\"}",
 			"  ],",
 			"  \"properties\": {\"title\": \"\", \"subject\": \"\", \"creator\": \"\", \"keywords\": \"\", \"description\": \"\", \"last_modified_by\": \"\", \"created\": \"\", \"modified\": \"\"}",
 			"}",
@@ -945,13 +983,28 @@ expect {
 	ended = |properties| "<w:p><w:pPr><w:sectPr>${properties}</w:sectPr></w:pPr></w:p>"
 	first = ended("<w:headerReference w:type='default' r:id='rId4'/><w:pgSz w:w='11906' w:h='16838'/><w:pgMar w:top='720' w:right='1440' w:bottom='-720' w:left='1800' w:header='0' w:footer='0' w:gutter='0'/>")
 	second = ended("<w:pgSz w:w='16838' w:h='11906' w:orient='landscape'/>")
-	section = |geometry| "{${geometry}, \"header\": \"Draft\", \"footer\": \"\"}"
+	section = |geometry| "{${geometry}, \"header\": \"Draft\", \"footer\": \"\", \"header_even\": \"Draft\", \"footer_even\": \"\", \"header_first\": \"Draft\", \"footer_first\": \"\"}"
 	sections = [
 		section("\"page_width\": 11906, \"page_height\": 16838, \"orientation\": \"portrait\", \"margin_top\": 720, \"margin_bottom\": -720, \"margin_left\": 1800, \"margin_right\": 1440"),
 		section("\"page_width\": 16838, \"page_height\": 11906, \"orientation\": \"landscape\", \"margin_top\": 1440, \"margin_bottom\": 1440, \"margin_left\": 1440, \"margin_right\": 1440"),
 		section("\"page_width\": 12240, \"page_height\": 15840, \"orientation\": \"portrait\", \"margin_top\": 1440, \"margin_bottom\": 1440, \"margin_left\": 1440, \"margin_right\": 1440"),
 	]
 	snapshot_of("${first}${second}<w:p><w:r><w:t>after</w:t></w:r></w:p>", no_notes).map_ok(|json| json.contains("  \"sections\": [\n    ${Str.join_with(sections, ",\n    ")}\n  ],")) == Ok(Bool.True)
+}
+
+## A section's even pages show its even header where the document has
+## different odd and even pages and its default header where not, and its
+## first page its first header where it has a title page; a section without
+## a header of a kind has the previous section's of that kind.
+expect {
+	ended = |properties| "<w:p><w:pPr><w:sectPr>${properties}</w:sectPr></w:pPr></w:p>"
+	first = ended("<w:headerReference w:type='default' r:id='rId4'/><w:headerReference w:type='even' r:id='rId7'/><w:headerReference w:type='first' r:id='rId7'/><w:titlePg/>")
+	second = ended("<w:titlePg/>")
+	read = document_of("${first}${second}<w:p><w:r><w:t>after</w:t></w:r></w:p>", no_notes)?
+	section = |even, first_page| "{\"page_width\": 12240, \"page_height\": 15840, \"orientation\": \"portrait\", \"margin_top\": 1440, \"margin_bottom\": 1440, \"margin_left\": 1440, \"margin_right\": 1440, \"header\": \"Draft\", \"footer\": \"\", \"header_even\": \"${even}\", \"footer_even\": \"\", \"header_first\": \"${first_page}\", \"footer_first\": \"\"}"
+	listed = |sections| "  \"sections\": [\n    ${Str.join_with(sections, ",\n    ")}\n  ],"
+	Snapshot.json(read, { path: "", version: "" }).contains(listed([section("Draft", "Left"), section("Draft", "Left"), section("Draft", "Draft")]))
+		and Snapshot.json(Docx.set_different_odd_and_even(read, On)?, { path: "", version: "" }).contains(listed([section("Left", "Left"), section("Left", "Left"), section("Left", "Draft")]))
 }
 
 ## Comments are listed in the order their anchors begin, with their author,

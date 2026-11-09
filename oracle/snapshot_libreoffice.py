@@ -27,7 +27,12 @@ Rules this adapter applies, each because of how LibreOffice represents a documen
   displays.
 - A list's kind is the kind of its list style at the item's level.
 - A section is a run of body content on one page style; its header and footer
-  are that page style's default header and footer.
+  are that page style's default header and footer. Its even pages' are the
+  page style's left header and footer, which LibreOffice gives a page style
+  only where the document has different odd and even pages, and its first
+  page's are the page style's first-page header and footer, which it gives
+  only where the section has a title page; a page style without one shows
+  the default header or footer there.
 - A page style with a header or footer holds it inside the page margin: the
   page's top margin is the header's distance from the edge, and the header's
   height, its spacing included, reaches down to the body. The snapshot's top
@@ -68,6 +73,7 @@ KEYS = [
     "sections.page_width", "sections.page_height", "sections.orientation",
     "sections.margin_top", "sections.margin_bottom", "sections.margin_left", "sections.margin_right",
     "sections.header", "sections.footer",
+    "sections.header_even", "sections.footer_even", "sections.header_first", "sections.footer_first",
     "properties.title", "properties.creator", "properties.created", "properties.modified",
 ]
 
@@ -440,7 +446,16 @@ class Document:
             "margin_left": twips(get("fo:margin-left")), "margin_right": twips(get("fo:margin-right")),
             "header": self.region_text(master.find(q("style:header"))),
             "footer": self.region_text(master.find(q("style:footer"))),
+            "header_even": self.region_text(self.shown(master, "header", "left")),
+            "footer_even": self.region_text(self.shown(master, "footer", "left")),
+            "header_first": self.region_text(self.shown(master, "header", "first")),
+            "footer_first": self.region_text(self.shown(master, "footer", "first")),
         }
+
+    def shown(self, master, region, pages):
+        """A page style's header or footer for its left or first pages, or its default one where it has none."""
+        own = master.find(q(f"style:{region}-{pages}"))
+        return own if own is not None else master.find(q(f"style:{region}"))
 
     def region_height(self, master, layout, region):
         """The height a page style's header or footer takes inside the page margin, spacing included, or none."""

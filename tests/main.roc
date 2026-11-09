@@ -45,7 +45,8 @@ import docx.XmlTree
 ## Generated: documents built from the model rather than read, for content
 ## the fixtures do not hold together, such as every kind of tracked change,
 ## a new document from the default document kit, and documents made by the
-## builders, one on a single page and one of two sections, and the example
+## builders, one on a single page, one of two sections and one whose odd,
+## even and first pages have their own headers and footers, and the example
 ## gallery's letter, agreement, minutes and report. Each is written under
 ## `.roc-docx/generated/`, must read back as what it was built from, without
 ## anything to drop or repair, and pass through as a fixture does; its
@@ -434,13 +435,16 @@ generated = [
 	{ name: "agreement", build: || authored(agreement_document) },
 	{ name: "minutes", build: || authored(minutes_document) },
 	{ name: "report", build: || authored(report_document) },
+	{ name: "pages", build: || authored(pages_document) },
 ]
 
 # A document made by the builders, written and passed through as a fixture
 # is, which must read back equivalent to what was built; its report adds
 # what it reads back: its text by line, its footnotes, its sections' pages
-# and their headers' and footers' text, its fields, its properties, its
-# comments and its tracked changes, and whether it tracks changes.
+# and their headers' and footers' text, a title page and the headers and
+# footers for even and first pages, whether odd and even pages differ, its
+# fields, its properties, its comments and its tracked changes, and whether
+# it tracks changes.
 authored : (() -> Try(Document, Str)) -> Try({ written : List(U8), report : Str, document : Document }, Str)
 authored = |build| {
 	made = build()?
@@ -461,6 +465,8 @@ authored = |build| {
 		Docx.text(read).split_on("\n").map(|line| "text: ${Str.inspect(line)}"),
 		Docx.footnotes(read).map(|note| "footnote: ${Str.inspect(note.kind)} ${note_text(note)}"),
 		Docx.sections(read).map(|section| "section: ${Str.inspect(section.start)} ${Str.inspect(section.page_size)} ${Str.inspect(section.margins)} header ${region(section.headers)} footer ${region(section.footers)}"),
+		Docx.sections(read).map_with_index(|section, index| pages(read, section, index)).join(),
+		if (Docx.different_odd_and_even(read)) ["pages: odd and even differ"] else [],
 		Docx.sections(read).map(|section| List.concat(section.headers, section.footers)).join().map(|reference| Document.fields(Docx.header_footer(read, reference.part))).join().map(|field| "field: ${Str.inspect(field.code)} ${Str.inspect(field.result)}"),
 		["properties: ${Str.inspect((properties.title, properties.subject, properties.creator, properties.created, properties.modified))}"],
 		Docx.comments(read).comments.map(|entry| "comment: ${entry.id.to_str()} ${entry.comment.author} ${Str.inspect(entry.comment.parent)} ${Str.inspect(entry.comment.date)} on ${Str.inspect(entry.anchor)} ${Str.inspect(entry.comment.content.map(block_text))}"),
@@ -468,6 +474,17 @@ authored = |build| {
 		if (Docx.tracks_revisions(read)) ["tracking: on"] else [],
 	])
 	Ok({ written: passed.written, report: Str.concat(passed.report, Str.join_with(lines.map(|line| "${line}\n"), "")), document: read })
+}
+
+# What a section, the one at `index`, says of its pages beyond its default
+# header and footer: whether it has a title page, and its headers and
+# footers for even pages and its first page with their text.
+pages : Document, Document.Section, U64 -> List(Str)
+pages = |read, section, index| {
+	titled = if (section.title_page == On) ["section ${index.to_str()}: title page"] else []
+	region = |which, references|
+		references.drop_if(|reference| reference.kind == Default).map(|reference| "section ${index.to_str()}: ${which} ${Str.inspect(reference.kind)} ${Str.inspect(Docx.header_footer(read, reference.part).map(block_text))}")
+	List.join([titled, region("header", section.headers), region("footer", section.footers)])
 }
 
 # A block's text: a paragraph's, or a table's cells' paragraphs.
@@ -487,8 +504,8 @@ every_builder : () -> Try(Document, Str)
 every_builder = || {
 	created = Docx.new_document({}) ? |problem| "the kit refuses its properties: ${Str.inspect(problem)}"
 	described = Build.properties(created, { title: Text("Tenancy notice"), subject: Text("Rent"), creator: Text("Ada Reviewer"), created: Date(stamp.written), modified: Date(stamp.written) }) ? |problem| "the properties are refused: ${Str.inspect(problem)}"
-	headed = Build.header(described, [Build.paragraph({ alignment: Right }, [Build.text("Tenancy notice", { italic: On })])]) ? |problem| "the header does not write: ${Str.inspect(problem)}"
-	footed = Build.footer(headed, [Build.paragraph({ alignment: Center }, [Build.text("Page ", {}), Build.page_number, Build.text(" of ", {}), Build.page_count])]) ? |problem| "the footer does not write: ${Str.inspect(problem)}"
+	headed = Build.header(described, {}, [Build.paragraph({ alignment: Right }, [Build.text("Tenancy notice", { italic: On })])]) ? |problem| "the header does not write: ${Str.inspect(problem)}"
+	footed = Build.footer(headed, {}, [Build.paragraph({ alignment: Center }, [Build.text("Page ", {}), Build.page_number, Build.text(" of ", {}), Build.page_count])]) ? |problem| "the footer does not write: ${Str.inspect(problem)}"
 	noted = Build.footnote(footed, [Build.text("As agreed on signing.", {})]) ? |problem| "the footnote does not write: ${Str.inspect(problem)}"
 	cell = |text, options| Build.cell(options, [Build.paragraph({}, [Build.text(text, {})])])
 	content = [
@@ -530,9 +547,30 @@ every_builder = || {
 two_sections : () -> Try(Document, Str)
 two_sections = || {
 	created = Docx.new_document({ title: Text("Schedule"), creator: Text("Ada Reviewer"), created: Date(stamp.written) }) ? |problem| "the kit refuses its properties: ${Str.inspect(problem)}"
-	headed = Build.header(Build.append(created, [Build.paragraph({ style: Heading(1) }, [Build.text("Notice", {})])]), [Build.paragraph({}, [Build.text("Notice", {})])]) ? |problem| "the header does not write: ${Str.inspect(problem)}"
+	headed = Build.header(Build.append(created, [Build.paragraph({ style: Heading(1) }, [Build.text("Notice", {})])]), {}, [Build.paragraph({}, [Build.text("Notice", {})])]) ? |problem| "the header does not write: ${Str.inspect(problem)}"
 	split = Build.append(Build.new_section(headed, { orientation: Landscape, left: 1080, right: 1080 }), [Build.paragraph({ style: Heading(2) }, [Build.text("Schedule", {})])])
-	Ok(Build.footer(split, [Build.paragraph({}, [Build.text("Schedule of rent", {})])]) ? |problem| "the footer does not write: ${Str.inspect(problem)}")
+	Ok(Build.footer(split, {}, [Build.paragraph({}, [Build.text("Schedule of rent", {})])]) ? |problem| "the footer does not write: ${Str.inspect(problem)}")
+}
+
+# A handbook of two sections whose pages differ: the first with a title
+# page, its own first-page header, empty, and footer, and headers and
+# footers for odd and even pages, without page numbers, whose results
+# LibreOffice calculates and the package does not; the second with a title page and a first-page header
+# of its own, its other headers and footers the first section's.
+pages_document : () -> Try(Document, Str)
+pages_document = || {
+	created = Docx.new_document({ title: Text("Staff handbook"), creator: Text("Iris Cole"), created: Date(stamp.written) }) ? |problem| "the kit refuses its properties: ${Str.inspect(problem)}"
+	plain = |text| Build.paragraph({}, [Build.text(text, {})])
+	turned = |text| Build.paragraph({ page_break_before: On }, [Build.text(text, {})])
+	written = Build.append(created, [Build.paragraph({ style: Heading(1) }, [Build.text("Staff handbook", {})]), plain("Harbour Lane Bakery"), turned("Opening hours"), turned("Ovens and safety")])
+	headed = Build.header(written, {}, [Build.paragraph({ alignment: Right }, [Build.text("Staff handbook", { italic: On })])]) ? |problem| "the header does not write: ${Str.inspect(problem)}"
+	even_headed = Build.header(headed, { kind: Even }, [Build.paragraph({}, [Build.text("Harbour Lane Bakery", { italic: On })])]) ? |problem| "the even header does not write: ${Str.inspect(problem)}"
+	first_headed = Build.header(even_headed, { kind: First }, []) ? |problem| "the first header does not write: ${Str.inspect(problem)}"
+	footed = Build.footer(first_headed, {}, [Build.paragraph({ alignment: Right }, [Build.text("Harbour Lane Bakery", {})])]) ? |problem| "the footer does not write: ${Str.inspect(problem)}"
+	even_footed = Build.footer(footed, { kind: Even }, [Build.paragraph({ alignment: Left }, [Build.text("Staff handbook", {})])]) ? |problem| "the even footer does not write: ${Str.inspect(problem)}"
+	first_footed = Build.footer(even_footed, { kind: First }, [Build.paragraph({ alignment: Center }, [Build.text("Issued November 2026", {})])]) ? |problem| "the first footer does not write: ${Str.inspect(problem)}"
+	split = Build.append(Build.new_section(first_footed, {}), [Build.paragraph({ style: Heading(1) }, [Build.text("Recipes", {})]), turned("Sourdough")])
+	Ok(Build.header(split, { kind: First }, [Build.paragraph({ alignment: Center }, [Build.text("Part two: recipes", { bold: On })])]) ? |problem| "the second section's header does not write: ${Str.inspect(problem)}")
 }
 
 # The example gallery's documents, as `examples/letter`, `examples/agreement`,
@@ -636,8 +674,8 @@ report_document = || {
 	failed = |problem| "the report does not build: ${Str.inspect(problem)}"
 	created = Docx.new_document({ title: Text("Quarterly sales"), creator: Text("Iris Cole"), created: Date("2026-10-05T09:00:00Z") }) ? failed
 	described = Build.properties(created, { subject: Text("Sales from July to September 2026"), keywords: Text("sales, quarterly") }) ? failed
-	headed = Build.header(described, [Build.paragraph({ alignment: Right }, [Build.text("Harbour Lane Bakery: quarterly sales", { italic: On })])]) ? failed
-	footed = Build.footer(headed, [Build.paragraph({ alignment: Center }, [Build.text("Page ", {}), Build.page_number, Build.text(" of ", {}), Build.page_count])]) ? failed
+	headed = Build.header(described, {}, [Build.paragraph({ alignment: Right }, [Build.text("Harbour Lane Bakery: quarterly sales", { italic: On })])]) ? failed
+	footed = Build.footer(headed, {}, [Build.paragraph({ alignment: Center }, [Build.text("Page ", {}), Build.page_number, Build.text(" of ", {}), Build.page_count])]) ? failed
 	noted = Build.footnote(footed, [Build.text("Wholesale orders are left out.", {})]) ? failed
 	row = |weight, label, figures| {
 		text = |words| Build.text(words, { bold: if (weight == Bold) On else Unset })
@@ -678,7 +716,7 @@ report_document = || {
 			),
 		],
 	)
-	Ok(Build.header(detail, [Build.paragraph({ alignment: Right }, [Build.text("Harbour Lane Bakery: sales by product", { italic: On })])]) ? failed)
+	Ok(Build.header(detail, {}, [Build.paragraph({ alignment: Right }, [Build.text("Harbour Lane Bakery: sales by product", { italic: On })])]) ? failed)
 }
 
 # The span of the first `phrase` in `text`.

@@ -30,7 +30,7 @@
           "revisions.kind", "revisions.author", "revisions.date", "revisions.text",
           "sections.page_width", "sections.page_height", "sections.orientation",
           "sections.margin_top", "sections.margin_bottom", "sections.margin_left", "sections.margin_right",
-          "sections.header", "sections.footer",
+          "sections.header", "sections.footer", "sections.header_even", "sections.footer_even", "sections.header_first", "sections.footer_first",
           "properties.title", "properties.subject", "properties.creator", "properties.keywords",
           "properties.description", "properties.last_modified_by", "properties.created", "properties.modified"
         ]
@@ -127,7 +127,7 @@
     },
     "section": {
       "type": "object",
-      "required": ["page_width", "page_height", "orientation", "margin_top", "margin_bottom", "margin_left", "margin_right", "header", "footer"],
+      "required": ["page_width", "page_height", "orientation", "margin_top", "margin_bottom", "margin_left", "margin_right", "header", "footer", "header_even", "footer_even", "header_first", "footer_first"],
       "additionalProperties": false,
       "properties": {
         "page_width": { "type": "integer", "minimum": 0 },
@@ -138,7 +138,11 @@
         "margin_left": { "type": "integer" },
         "margin_right": { "type": "integer" },
         "header": { "description": "The default header's paragraphs joined by LF, or empty; a section without a default header has the previous section's. A field contributes its result.", "type": "string" },
-        "footer": { "description": "The default footer's paragraphs joined by LF, or empty.", "type": "string" }
+        "footer": { "description": "The default footer's paragraphs joined by LF, or empty.", "type": "string" },
+        "header_even": { "description": "The header of the section's even pages: where the document has different odd and even pages, the even header's paragraphs joined by LF, or empty, a section without an even header having the previous section's; otherwise the same as header.", "type": "string" },
+        "footer_even": { "description": "The footer of the section's even pages, as header_even says for the header.", "type": "string" },
+        "header_first": { "description": "The header of the section's first page: where the section has a title page, the first-page header's paragraphs joined by LF, or empty, a section without a first-page header having the previous section's; otherwise the same as header.", "type": "string" },
+        "footer_first": { "description": "The footer of the section's first page, as header_first says for the header.", "type": "string" }
       }
     },
     "properties": {

@@ -3,7 +3,7 @@
   "notes": [
     "An oracle finding that is known to be wrong or out of the package's control, recorded with its cause so a lane can report it separately from a pass.",
     "Fields: oracle (schema | libreoffice | pandoc), document (a glob over the repository path), part, message_pattern (a regular expression every message of the finding must match), cause, reference, reviewed_on.",
-    "A snapshot disagreement names the oracle that is wrong and has key (the snapshot key, such as notes.text, or blocks.runs for run formatting) in place of part; its message_pattern matches the comparison's message, which reads `<first value> against <second value>` with values as JSON.",
+    "A snapshot disagreement names the oracle that is wrong and has key (the snapshot key, such as notes.text, or blocks.runs for run formatting, or a glob over keys, such as sections.footer*) in place of part; its message_pattern matches the comparison's message, which reads `<first value> against <second value>` with values as JSON.",
     "Nothing is accepted without a cause, and an entry is removed when the upstream fix lands."
   ],
   "deviations": [
@@ -55,18 +55,27 @@
     {
       "oracle": "libreoffice",
       "document": "*/word/report.docx",
-      "key": "sections.footer",
+      "key": "sections.footer*",
       "message_pattern": "^\"Page 2 of 2\" against \"Page 1 of 2\"$",
-      "cause": "Both sections' footers hold a PAGE field whose result Word last calculated as 1. The package never evaluates fields and reports that result; LibreOffice recalculates PAGE on import, and its Flat ODT export gives each page style's footer the number of the first page in that style, 2 for the second section. A page number in a footer is a different value on every page, not a fact of the footer. The review cases write the fixture with comments added as .roc-docx/review/word/report.docx, whose footers are the same.",
+      "cause": "Both sections' footers hold a PAGE field whose result Word last calculated as 1. The package never evaluates fields and reports that result; LibreOffice recalculates PAGE on import, and its Flat ODT export gives each page style's footer the number of the first page in that style, 2 for the second section. A page number in a footer is a different value on every page, not a fact of the footer, so the same holds for the footer the section's even and first pages show, which is the default footer in this document. The review cases write the fixture with comments added as .roc-docx/review/word/report.docx, whose footers are the same.",
       "reference": "https://docs.oasis-open.org/office/OpenDocument/v1.3/os/part3-schema/OpenDocument-v1.3-os-part3-schema.html#element-text_page-number (text:page-number displays the current page number)",
       "reviewed_on": "2026-11-09"
     },
     {
       "oracle": "libreoffice",
+      "document": "*/word/pages.docx",
+      "key": "sections.footer*",
+      "message_pattern": "^\"(Routes, page|Page) [0-9]+\" against \"(Routes, page|Page) 1\"$",
+      "cause": "The default and even footers of both sections hold a PAGE field whose result Word last calculated as 1. The package never evaluates fields and reports that result; LibreOffice recalculates PAGE on import, and its Flat ODT export gives each page style's footer and left footer a page number of its own laying out (3 and 2 in the first section, 5 and 0 in the second). A page number is a value of each page, not a fact of the footer; the footers' other text, every header and the first-page footers agree. The review and redline cases write the fixture edited, with the same footers.",
+      "reference": "https://docs.oasis-open.org/office/OpenDocument/v1.3/os/part3-schema/OpenDocument-v1.3-os-part3-schema.html#element-text_page-number (text:page-number displays the current page number)",
+      "reviewed_on": "2026-11-10"
+    },
+    {
+      "oracle": "libreoffice",
       "document": ".roc-docx/generated/report.docx",
-      "key": "sections.footer",
+      "key": "sections.footer*",
       "message_pattern": "^\"Page [12] of 2\" against \"Page 1 of 1\"$",
-      "cause": "The report example's footer holds a PAGE and a NUMPAGES field, which the builders write with the result 1, because the package lays out no pages. The report has two pages, the second a landscape section after a section break showing the first section's footer. LibreOffice recalculates both fields on import, and its Flat ODT export gives each page style's footer the number of the first page in that style and the page count, 2. As for word/report.docx, a page number in a footer is a value of each page, not a fact of the footer.",
+      "cause": "The report example's footer holds a PAGE and a NUMPAGES field, which the builders write with the result 1, because the package lays out no pages. The report has two pages, the second a landscape section after a section break showing the first section's footer. LibreOffice recalculates both fields on import, and its Flat ODT export gives each page style's footer the number of the first page in that style and the page count, 2. As for word/report.docx, a page number in a footer is a value of each page, not a fact of the footer, and so of the footer its even and first pages show, which is the default one.",
       "reference": "https://docs.oasis-open.org/office/OpenDocument/v1.3/os/part3-schema/OpenDocument-v1.3-os-part3-schema.html#element-text_page-count (text:page-count displays the number of pages in the document)",
       "reviewed_on": "2026-11-10"
     },

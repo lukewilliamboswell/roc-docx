@@ -85,9 +85,11 @@ is a paragraph in the footnote text style starting with its number. A
 document without footnotes is given a footnotes part with the separator
 lines drawn above the notes.
 
-`Build.header` and `Build.footer` give the final section the header or
-footer of every page, from blocks as the body's are, in a part of their own
-that is added with its relationship; giving one again replaces it.
+`Build.header` and `Build.footer` give the final section a header or
+footer, from blocks as the body's are, in a part of their own that is added
+with its relationship; giving one again replaces it. With `{}` it is for
+every page. A header or footer ends with a paragraph, so an empty one is
+given an empty paragraph.
 `Build.page_number` and `Build.page_count` are fields for the page's number
 and the number of pages, which Word and LibreOffice calculate as they lay
 the document out:
@@ -101,6 +103,28 @@ Until a word processor calculates them, the package reads each field's
 result as 1. Each of these three fails with `NoMainDocument` for a document
 without a main document part, or with the writer's error for content that
 names a note or comment the document does not have.
+
+=== Odd, even and first pages
+
+A book-like document often puts a different header on left and right
+pages, and leaves the first page of a section blank or gives it a title of
+its own. The options' `kind` says which pages a header or footer is for:
+`Default`, the default, `Even` for even pages, or `First` for the section's
+first page:
+
+[source,roc]
+----
+include::../tests/manual.roc[tag=odd-even-first,indent=0]
+----
+
+An `Even` header or footer turns on different odd and even pages, which is
+a setting of the whole document, as `Docx.set_different_odd_and_even`
+turns it on; the `Default` ones are then for odd pages, and a section with
+no `Even` one of its own shows the previous section's on its even pages. A
+`First` one turns on the section's title page, so its first page shows it
+instead of the `Default` one. A new section starts without a title page and
+without headers and footers of its own, showing the previous section's
+until it is given its own, of any kind.
 
 == Pages and sections
 

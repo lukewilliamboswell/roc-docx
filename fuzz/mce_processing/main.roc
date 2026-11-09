@@ -24,6 +24,7 @@ import "../../tests/fixtures/libreoffice/review.docx" as libreoffice_review : Li
 import "../../tests/fixtures/libreoffice/revisions.docx" as libreoffice_revisions : List(U8)
 import "../../tests/fixtures/libreoffice/tables.docx" as libreoffice_tables : List(U8)
 import "../../tests/fixtures/word/comments.docx" as word_comments : List(U8)
+import "../../tests/fixtures/word/pages.docx" as word_pages : List(U8)
 import "../../tests/fixtures/word/report.docx" as word_report : List(U8)
 import "../../tests/fixtures/word/revisions.docx" as word_revisions : List(U8)
 import "../../tests/fixtures/word/tables.docx" as word_tables : List(U8)
@@ -241,6 +242,7 @@ fixtures = [
 	{ name: "libreoffice-revisions", bytes: libreoffice_revisions, allocations: 3_040, preserved: 2, undeclared: [] },
 	{ name: "libreoffice-tables", bytes: libreoffice_tables, allocations: 4_824, preserved: 2, undeclared: [] },
 	{ name: "word-comments", bytes: word_comments, allocations: 3_627, preserved: 131, undeclared: [] },
+	{ name: "word-pages", bytes: word_pages, allocations: 3_738, preserved: 59, undeclared: [] },
 	{ name: "word-report", bytes: word_report, allocations: 4_158, preserved: 70, undeclared: [] },
 	{ name: "word-revisions", bytes: word_revisions, allocations: 4_066, preserved: 106, undeclared: [] },
 	{ name: "word-tables", bytes: word_tables, allocations: 3_599, preserved: 65, undeclared: [] },

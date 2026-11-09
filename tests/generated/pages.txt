@@ -1,0 +1,34 @@
+written: 6497 bytes, FNV-1a 64 9f0ea42788dfa5e7
+part: /_rels/.rels 442 bytes application/vnd.openxmlformats-package.relationships+xml
+part: /word/document.xml 1427 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml
+part: /word/_rels/document.xml.rels 1577 bytes application/vnd.openxmlformats-package.relationships+xml
+part: /docProps/core.xml 468 bytes application/vnd.openxmlformats-package.core-properties+xml
+part: /word/styles.xml 5865 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml
+part: /word/numbering.xml 3569 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml
+part: /word/settings.xml 381 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml
+part: /word/fontTable.xml 296 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.fontTable+xml
+part: /word/header1.xml 246 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml
+part: /word/header2.xml 215 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml
+part: /word/header3.xml 148 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml
+part: /word/footer1.xml 230 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml
+part: /word/footer2.xml 224 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml
+part: /word/footer3.xml 232 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml
+part: /word/header4.xml 250 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml
+text: "Staff handbook"
+text: "Harbour Lane Bakery"
+text: "Opening hours"
+text: "Ovens and safety"
+text: "Recipes"
+text: "Sourdough"
+text: ""
+section: Unset Size({ height: 16838, orientation: Portrait, width: 11906 }) Margins({ bottom: 1440, footer: 708, gutter: 0, header: 708, left: 1440, right: 1440, top: 1440 }) header ["Staff handbook"] footer ["Harbour Lane Bakery"]
+section: NextPage Size({ height: 16838, orientation: Portrait, width: 11906 }) Margins({ bottom: 1440, footer: 708, gutter: 0, header: 708, left: 1440, right: 1440, top: 1440 }) header none footer none
+section 0: title page
+section 0: header Even ["Harbour Lane Bakery"]
+section 0: header First [""]
+section 0: footer Even ["Staff handbook"]
+section 0: footer First ["Issued November 2026"]
+section 1: title page
+section 1: header First ["Part two: recipes"]
+pages: odd and even differ
+properties: (Text("Staff handbook"), Unset, Text("Iris Cole"), Date("2026-05-07T09:00:00Z"), Unset)

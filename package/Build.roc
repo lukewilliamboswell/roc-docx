@@ -102,6 +102,16 @@ Build :: [].{
 		start : [NextPage, Continuous, EvenPage, OddPage] ?? NextPage,
 	}
 
+	## Which pages of a section a header or footer is for, as
+	## [Document.HeaderFooter] names them: `Default`, every page the others
+	## do not take; `Even`, the even pages, which gives the whole document
+	## different headers and footers for odd and even pages, so that the
+	## `Default` ones are for the odd pages; or `First`, the section's first
+	## page, which gives the section a title page.
+	HeaderFooter := {
+		kind : [Default, Even, First] ?? Default,
+	}
+
 	## What a document says about itself, as [Document.CoreProperties] holds
 	## it: each property given replaces the document's, and each left
 	## `Unset` keeps it. Dates are in the W3C date and time format, such as
@@ -291,17 +301,22 @@ Build :: [].{
 		Ok({ document: Document.with_part(with_part, part.name, written.tree, written.relationships), reference })
 	}
 
-	## The document with `content` as the header of every page of its final
-	## section, written into the header part the section has for them or a
-	## new one. A section after it without a header of its own has this one,
+	## The document with `content` as the header of the pages of its final
+	## section that `options` names, every page with `{}`, written into the
+	## header part the section has for them or a new one. An even pages'
+	## header turns on different odd and even pages, as
+	## [Docx.set_different_odd_and_even] does, and a first page's turns on
+	## the section's title page. A header ends with a paragraph, as Word
+	## writes one, so an empty one is given an empty paragraph. A section
+	## after it without a header of its own for the same pages has this one,
 	## as Word and LibreOffice lay it out.
-	header : Document, List(Document.Block) -> Try(Document, Error)
-	header = |document, content| region(document, content, Header)
+	header : Document, HeaderFooter, List(Document.Block) -> Try(Document, Error)
+	header = |document, options, content| region(document, content, Header, options.kind)
 
-	## The document with `content` as the footer of every page of its final
-	## section, as [Build.header] gives it a header.
-	footer : Document, List(Document.Block) -> Try(Document, Error)
-	footer = |document, content| region(document, content, Footer)
+	## The document with `content` as the footer of the pages of its final
+	## section that `options` names, as [Build.header] gives it a header.
+	footer : Document, HeaderFooter, List(Document.Block) -> Try(Document, Error)
+	footer = |document, options, content| region(document, content, Footer, options.kind)
 
 	## The document with its final section's page set as `setup` says; the
 	## section keeps its headers, footers and everything else it states.
@@ -417,10 +432,11 @@ with_setup = |section, setup| {
 	{ ..section, start, page_size, margins }
 }
 
-# The document with `content` as its final section's default header or
-# footer.
-region : Document, List(Document.Block), [Header, Footer] -> Try(Document, Build.Error)
-region = |document, content, which| {
+# The document with `content` as its final section's header or footer for
+# the pages `pages` names; even pages turn on different odd and even pages,
+# and a first page the section's title page.
+region : Document, List(Document.Block), [Header, Footer], [Default, Even, First] -> Try(Document, Build.Error)
+region = |document, content, which, pages| {
 	main = main_part(document)?
 	(kind, local, root) = match which {
 		Header => (header_relationship, "header", "hdr")
@@ -431,7 +447,7 @@ region = |document, content, which| {
 		Header => final.headers
 		Footer => final.footers
 	}
-	existing = match listed.find_first(|reference| reference.kind == Default) {
+	existing = match listed.find_first(|reference| reference.kind == pages) {
 		Ok(reference) if Document.xml_part(document, reference.part).is_ok() => Ok(reference.part)
 		_ => Err(NotFound)
 	}
@@ -443,13 +459,23 @@ region = |document, content, which| {
 		}
 	}
 	part = Document.xml_part(with_part, name) ? |_| NoMainDocument
-	written = WmlWrite.header_footer(w(root, [], []), content, part_context(with_part, main.name, part.relationships))?
-	referenced = List.append(listed.drop_if(|reference| reference.kind == Default), { kind: Default, part: name })
-	section = match which {
-		Header => { ..final, headers: referenced }
-		Footer => { ..final, footers: referenced }
+	ended = match content.last() {
+		Ok(Paragraph(_)) => content
+		_ => List.append(content, empty_paragraph)
 	}
-	Ok(Document.with_body(Document.with_part(with_part, name, written.tree, written.relationships), List.append(body, Section(section))))
+	written = WmlWrite.header_footer(w(root, [], []), ended, part_context(with_part, main.name, part.relationships))?
+	referenced = List.append(listed.drop_if(|reference| reference.kind == pages), { kind: pages, part: name })
+	titled = if (pages == First) { ..final, title_page: On } else final
+	section = match which {
+		Header => { ..titled, headers: referenced }
+		Footer => { ..titled, footers: referenced }
+	}
+	with_region = Document.with_body(Document.with_part(with_part, name, written.tree, written.relationships), List.append(body, Section(section)))
+	if pages == Even {
+		Ok(Docx.set_different_odd_and_even(with_region, On) ? |_| NoMainDocument)
+	} else {
+		Ok(with_region)
+	}
 }
 
 # The name of a new part beside the main document, as Word names its parts:
@@ -718,6 +744,53 @@ expect {
 	}
 }
 
+## An even pages' header and footer are new parts the final section names
+## as `Even` beside its default ones, and they turn on different odd and
+## even pages, which headers for every page leave off.
+expect {
+	match paged(Even) {
+		Ok({ before, read }) => {
+			parts = Docx.sections(read).map(|section| (section.headers, section.footers, section.title_page))
+			parts == [([{ kind: Default, part: "/word/header1.xml" }, { kind: Even, part: "/word/header2.xml" }], [{ kind: Even, part: "/word/footer1.xml" }], Unset)]
+				and !Docx.different_odd_and_even(before)
+				and Docx.different_odd_and_even(read)
+				and Docx.header_footer(read, "/word/header2.xml").map(block_text) == ["Even"]
+		}
+
+		Err(_) => Bool.False
+	}
+}
+
+## A first page's header and footer are new parts the final section names
+## as `First`, and they give the section a title page but leave odd and
+## even pages alike.
+expect {
+	match paged(First) {
+		Ok({ before: _, read }) => {
+			parts = Docx.sections(read).map(|section| (section.headers, section.footers, section.title_page))
+			parts == [([{ kind: Default, part: "/word/header1.xml" }, { kind: First, part: "/word/header2.xml" }], [{ kind: First, part: "/word/footer1.xml" }], On)]
+				and !Docx.different_odd_and_even(read)
+				and Docx.header_footer(read, "/word/footer1.xml").map(block_text) == ["First"]
+		}
+
+		Err(_) => Bool.False
+	}
+}
+
+## Bookmarks in the body, an even pages' header and a first page's footer
+## take identifiers from the one space the whole document is written in, so
+## no two parts give a bookmark the same number.
+expect {
+	marked = |name| Build.paragraph({}, [BookmarkStart(name), Build.text(name, {}), BookmarkEnd(name)])
+	created = Docx.new_document({}) ? |_| Unbuilt
+	body = Build.append(created, [marked("body")])
+	even = Build.header(body, { kind: Even }, [marked("even")]) ? |_| Unbuilt
+	first = Build.footer(even, { kind: First }, [marked("first")]) ? |_| Unbuilt
+	bytes = Docx.to_bytes(first) ? |_| Unbuilt
+	ids = bookmark_ids(bytes, ["/word/document.xml", "/word/header1.xml", "/word/footer1.xml"])
+	ids.len() == 3 and Set.from_list(ids).len() == 3
+}
+
 ## Properties given replace the document's and those left out stay; a date
 ## that is not one is refused.
 expect {
@@ -754,11 +827,24 @@ headed : {} -> Try(Document, [Unbuilt])
 headed = |{}| {
 	created = Docx.new_document({}) ? |_| Unbuilt
 	page = [Build.paragraph({ alignment: Center }, [Build.text("Page ", {}), Build.page_number, Build.text(" of ", {}), Build.page_count])]
-	with_header = Build.header(created, [Build.paragraph({}, [Build.text("Lease", {})])]) ? |_| Unbuilt
-	blank = Build.footer(with_header, []) ? |_| Unbuilt
-	with_footer = Build.footer(blank, page) ? |_| Unbuilt
-	split = Build.footer(Build.new_section(with_footer, {}), [Build.paragraph({}, [Build.text("Annex", {})])]) ? |_| Unbuilt
+	with_header = Build.header(created, {}, [Build.paragraph({}, [Build.text("Lease", {})])]) ? |_| Unbuilt
+	blank = Build.footer(with_header, {}, []) ? |_| Unbuilt
+	with_footer = Build.footer(blank, {}, page) ? |_| Unbuilt
+	split = Build.footer(Build.new_section(with_footer, {}), {}, [Build.paragraph({}, [Build.text("Annex", {})])]) ? |_| Unbuilt
 	Ok(round_trip(split) ? |_| Unbuilt)
+}
+
+# A new document with a header for every page, then a header and a footer
+# for the pages `pages` names, written and read back; and the document
+# before them.
+paged : [Default, Even, First] -> Try({ before : Document, read : Document }, [Unbuilt])
+paged = |pages| {
+	created = Docx.new_document({}) ? |_| Unbuilt
+	before = Build.header(created, {}, [Build.paragraph({}, [Build.text("Every", {})])]) ? |_| Unbuilt
+	label = if (pages == Even) "Even" else "First"
+	with_header = Build.header(before, { kind: pages }, [Build.paragraph({}, [Build.text(label, {})])]) ? |_| Unbuilt
+	with_footer = Build.footer(with_header, { kind: pages }, [Build.paragraph({}, [Build.text(label, {})])]) ? |_| Unbuilt
+	Ok({ before, read: round_trip(with_footer) ? |_| Unbuilt })
 }
 
 # A new document's properties replaced in part and read back, and a date
@@ -770,6 +856,35 @@ propertied = |{}| {
 	read = Docx.core_properties(round_trip(given) ? |_| Unbuilt)
 	Ok({ read, refused: Build.properties(created, { created: Date("10 November") }).map_ok(|_| {}) })
 }
+
+# The identifiers of the bookmarks that start in the named parts of a
+# written package, in order.
+bookmark_ids : List(U8), List(Str) -> List(Str)
+bookmark_ids = |bytes, names|
+	match Opc.open(bytes, {}) {
+		Ok(opened) =>
+			names.fold(
+				[],
+				|found, name|
+					match Opc.part_bytes(opened, name) {
+						Ok(content) => List.concat(found, starts(XmlTree.parse(content, {}) ?? Text("")))
+						Err(_) => found
+					},
+			)
+
+		Err(_) => []
+	}
+
+starts : XmlTree.Node -> List(Str)
+starts = |node|
+	match node {
+		Element(element) => {
+			own = if (element.name.local == "bookmarkStart") element.attributes.keep_if(|found| found.name.local == "id").map(|found| found.value) else []
+			element.children.fold(own, |found, child| List.concat(found, starts(child)))
+		}
+
+		Text(_) => []
+	}
 
 # A block's text, a paragraph's or none.
 block_text : Document.Block -> Str

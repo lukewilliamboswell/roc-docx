@@ -48,7 +48,7 @@ The modelled subset is chosen for business documents:
 [cols="1,3",options="header"]
 |===
 |Area |Modelled
-|Structure |Body, paragraphs, runs, text, tabs, line/page/column breaks, symbols, soft/non-breaking hyphens, sections with page size, margins, orientation, columns, page-number settings, headers and footers (default, first, even)
+|Structure |Body, paragraphs, runs, text, tabs, line/page/column breaks, symbols, soft/non-breaking hyphens, sections with page size, margins, orientation, columns, page-number settings, headers and footers (default, first, even), title pages, and the document setting that gives odd and even pages different headers and footers
 |Character formatting |Bold, italic, underline (styles), strikethrough, superscript/subscript, caps, small caps, colour, highlight, font size, font names, language, character style, hidden text
 |Paragraph formatting |Paragraph style, alignment, indentation, spacing, keep-with-next, keep-lines, page-break-before, widow control, outline level, borders, shading, tabs, numbering reference
 |Styles |Document defaults, paragraph, character, table and numbering styles with inheritance, and effective-property resolution for the modelled property set

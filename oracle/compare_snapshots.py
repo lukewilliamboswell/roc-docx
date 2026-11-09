@@ -162,7 +162,7 @@ def load_deviations():
 
 def accepted(deviations, a, b, key, message):
     oracles = {a["producer"]["name"], b["producer"]["name"]}
-    return any(d["oracle"] in oracles and fnmatch.fnmatch(a["document"], d["document"]) and d["key"] == key
+    return any(d["oracle"] in oracles and fnmatch.fnmatch(a["document"], d["document"]) and fnmatch.fnmatchcase(key, d["key"])
                and re.search(d["message_pattern"], message) for d in deviations)
 
 

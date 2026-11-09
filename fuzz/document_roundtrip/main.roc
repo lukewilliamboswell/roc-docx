@@ -19,10 +19,12 @@ import docx.XmlTree
 ## before their starts, simple and complex fields, tracked insertions holding
 ## runs, kept comment ranges whose identifiers bookmarks must avoid, nested
 ## tables with row and cell properties, sections in a paragraph's
-## properties, in a cell and at the body's end, and tracked changes of
+## properties, in a cell and at the body's end, with headers and footers
+## for every page, even pages and a first page, and tracked changes of
 ## paragraph marks, of paragraph, run, table, row, cell and section
 ## properties and of rows and cells. The body is written by
-## `WmlWrite.document` into a package, which `Docx.parse` must read back as
+## `WmlWrite.document` into a package, with an empty part for each header
+## and footer it names, which `Docx.parse` must read back as
 ## exactly the blocks written; `Docx.to_bytes` must then give the same bytes
 ## twice, and bytes that read back as an equivalent document that writes the
 ## same bytes again.
@@ -67,11 +69,15 @@ round_trip! = |program| {
 	written = result ?? crash "a generated body did not write"
 	check_linear(stats, size(written.tree))
 	main = XmlTree.render(written.tree) ?? crash "a written body did not render"
+	regions = written.relationships.keep_if(|relationship| relationship.kind == header_relationship or relationship.kind == footer_relationship)
 	graph = {
 		relationships: [{ id: "rId1", kind: Opc.officedocument_relationship, target: "/word/document.xml", mode: Internal }],
-		parts: [{ name: "/word/document.xml", content_type: main_type, relationships: written.relationships }],
+		parts: List.concat(
+			[{ name: "/word/document.xml", content_type: main_type, relationships: written.relationships }],
+			regions.map(|relationship| { name: relationship.target, content_type: if (relationship.kind == header_relationship) header_type else footer_type, relationships: [] }),
+		),
 	}
-	bytes = Opc.to_bytes(graph, |_| Bytes(main)) ?? crash "a written body did not package"
+	bytes = Opc.to_bytes(graph, |name| if (name == "/word/document.xml") Bytes(main) else Bytes(empty_region(name))) ?? crash "a written body did not package"
 	parsed = Docx.parse(bytes) ?? crash "a written document did not parse"
 	if Docx.body(parsed.document) != content {
 		crash "a written body read back differently"
@@ -155,6 +161,26 @@ main_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.docu
 
 wordprocessingml : Str
 wordprocessingml = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+
+header_relationship : Str
+header_relationship = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header"
+
+footer_relationship : Str
+footer_relationship = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer"
+
+header_type : Str
+header_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"
+
+footer_type : Str
+footer_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"
+
+# A header or footer part of one empty paragraph, a footer where its name
+# says so.
+empty_region : Str -> List(U8)
+empty_region = |name| {
+	root = if (name.contains("footer")) "ftr" else "hdr"
+	"<w:${root} xmlns:w=\"${wordprocessingml}\"><w:p/></w:${root}>".to_utf8()
+}
 
 context : WmlWrite.Context
 context = { relationships: [], footnotes: [], endnotes: [], comments: [] }
@@ -301,12 +327,20 @@ table = |variant, position| {
 section : U64 -> Document.Section
 section = |variant| section_of(variant, if (variant % 3 == 2) [{ author: "Ada", date: Date(stamp), preserved: [], previous: section_of(0, Unset) }] else [])
 
+# Variants 0 to 2 name no header or footer, so the declared bodies, whose
+# sections are variant 0, write none; variant 3 names headers and footers of
+# every kind.
 section_of : U64, change -> Document.SectionOf(change)
 section_of = |variant, change|
-	match variant % 3 {
+	match variant % 4 {
 		0 => { start: NextPage, page_size: Size({ width: 11906, height: 16838, orientation: Portrait }), margins: Margins({ top: 1440, right: 1440, bottom: 1440, left: 1800, header: 708, footer: 708, gutter: 0 }), columns: Equal({ count: 1, space: 720, separator: NoLine }), page_numbers: Unset, title_page: Unset, headers: [], footers: [], preserved: [], change }
 		1 => { start: Continuous, page_size: Size({ width: 16838, height: 11906, orientation: Landscape }), margins: Margins({ top: -720, right: 720, bottom: 720, left: 720, header: 360, footer: 360, gutter: 100 }), columns: Equal({ count: 2, space: 360, separator: Line }), page_numbers: PageNumbers({ format: Format("lowerRoman"), start: Start(3) }), title_page: On, headers: [], footers: [], preserved: [], change }
-		_ => { start: Unset, page_size: Unset, margins: Unset, columns: Unequal({ widths: [{ width: 4000, space: 500 }, { width: 5000, space: 0 }], separator: NoLine }), page_numbers: PageNumbers({ format: Unset, start: Unset }), title_page: Off, headers: [], footers: [], preserved: [], change }
+		2 => { start: Unset, page_size: Unset, margins: Unset, columns: Unequal({ widths: [{ width: 4000, space: 500 }, { width: 5000, space: 0 }], separator: NoLine }), page_numbers: PageNumbers({ format: Unset, start: Unset }), title_page: Off, headers: [], footers: [], preserved: [], change }
+		_ => {
+			headers = [{ kind: Default, part: "/word/header1.xml" }, { kind: Even, part: "/word/header2.xml" }, { kind: First, part: "/word/header1.xml" }]
+			footers = [{ kind: First, part: "/word/footer1.xml" }, { kind: Even, part: "/word/footer1.xml" }]
+			{ start: OddPage, page_size: Unset, margins: Unset, columns: Unset, page_numbers: Unset, title_page: On, headers, footers, preserved: [], change }
+		}
 	}
 
 plain_row : change -> Document.RowPropertiesOf(change)

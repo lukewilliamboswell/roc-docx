@@ -297,16 +297,16 @@ WmlRead :: [].{
 	## tree whose root is not WordprocessingML settings, or that has none, or
 	## whose value is not one the schema allows, does not.
 	tracks_revisions : XmlTree.Node -> Bool
-	tracks_revisions = |tree|
-		match tree {
-			Element(root) if is_w(root.name, "settings") =>
-				match root.children.find_first(|child| is_element(child, "trackRevisions")) {
-					Ok(Element(element)) => on_off(element) == Ok(On)
-					_ => Bool.False
-				}
+	tracks_revisions = |tree| setting_on(tree, "trackRevisions")
 
-			_ => Bool.False
-		}
+	## Whether a settings part's tree says that odd and even pages have
+	## different headers and footers: its first `w:evenAndOddHeaders` is on,
+	## read as [WmlRead.tracks_revisions] reads tracking. When they do, a
+	## section's `Even` headers and footers are for its even pages and its
+	## `Default` ones for its odd pages; when they do not, `Default` ones
+	## are for every page and `Even` ones are not shown.
+	different_odd_and_even : XmlTree.Node -> Bool
+	different_odd_and_even = |tree| setting_on(tree, "evenAndOddHeaders")
 
 	## Something the reader accepted that the schema does not allow: a number
 	## the schema wants whole written with a fraction, such as the width
@@ -358,6 +358,19 @@ WmlRead :: [].{
 	alignment : Str -> Try(Document.Alignment, [CannotHold])
 	alignment = |value| paragraph_alignment(value)
 }
+
+# Whether the first setting named `local` of a settings part's tree is on.
+setting_on : XmlTree.Node, Str -> Bool
+setting_on = |tree, local|
+	match tree {
+		Element(root) if is_w(root.name, "settings") =>
+			match root.children.find_first(|child| is_element(child, local)) {
+				Ok(Element(element)) => on_off(element) == Ok(On)
+				_ => Bool.False
+			}
+
+		_ => Bool.False
+	}
 
 # What reading a part looks up: its relationships and its bookmarks' names by
 # identifier, each note's and comment's place by identifier, and the names of
@@ -3295,6 +3308,17 @@ expect {
 		and !WmlRead.tracks_revisions(settings("<w:trackRevisions w:val='false'/>"))
 		and !WmlRead.tracks_revisions(settings(""))
 		and !WmlRead.tracks_revisions(Text(""))
+}
+
+## A settings part gives odd and even pages different headers and footers
+## when its `w:evenAndOddHeaders` is on.
+expect {
+	settings = |content| XmlTree.parse("<w:settings xmlns:w='${wordprocessingml}'>${content}</w:settings>".to_utf8(), {}) ?? Text("")
+	WmlRead.different_odd_and_even(settings("<w:defaultTabStop w:val='720'/><w:evenAndOddHeaders/>"))
+		and WmlRead.different_odd_and_even(settings("<w:evenAndOddHeaders w:val='1'/>"))
+		and !WmlRead.different_odd_and_even(settings("<w:evenAndOddHeaders w:val='off'/>"))
+		and !WmlRead.different_odd_and_even(settings("<w:trackRevisions/>"))
+		and !WmlRead.different_odd_and_even(Text(""))
 }
 
 ## Table, row and cell properties the model holds are read and the rest are

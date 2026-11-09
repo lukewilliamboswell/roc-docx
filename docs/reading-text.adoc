@@ -413,6 +413,17 @@ include::../tests/manual.roc[tag=headers-footers,indent=0]
 A section without a header or footer of a kind has the previous section's.
 A reference to a part the package does not have stays in `preserved`.
 
+Which of them a page shows depends on two settings. A section's `First`
+header and footer are shown on its first page only when its `title_page`
+is `On`. `Even` ones are shown on even pages only when the document gives
+odd and even pages different headers and footers, which is the whole
+document's setting, not a section's: `Docx.different_odd_and_even` says
+whether it does, and then the `Default` ones are for odd pages. Without the
+setting, `Default` ones are on every page and `Even` ones are kept but not
+shown. `Docx.set_different_odd_and_even(document, On)` turns the setting on
+and `Off` turns it off, in the document's settings part, giving a document
+without one a settings part; nothing else in the document changes.
+
 == Document properties
 
 `Docx.core_properties` gives what a document says about itself, read from

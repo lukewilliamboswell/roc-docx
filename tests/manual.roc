@@ -74,6 +74,7 @@ main! = |_args| {
 		{ name: "new-document", outcome: done(new_lease({})) },
 		{ name: "build", outcome: done(tenancy_notice({})) },
 		{ name: "footer", outcome: done(footer_added(Docx.new_document({})?)) },
+		{ name: "odd-even-first", outcome: done(pages_headed(Docx.new_document({})?)) },
 		{ name: "section", outcome: done(Ok(annexed(Docx.new_document({})?))) },
 		{ name: "styles-writer", outcome: done(Ok(styles_tree({ paragraph: Document.no_paragraph_properties, run: Document.no_run_properties }, []))) },
 	]
@@ -510,9 +511,24 @@ tenancy_notice = |{}| {
 footer_added : Document -> Try(Document, _)
 footer_added = |document| {
 	# tag::footer[]
-	footed = Build.footer(document, [Build.paragraph({ alignment: Center }, [Build.text("Page ", {}), Build.page_number, Build.text(" of ", {}), Build.page_count])])?
+	footed = Build.footer(document, {}, [Build.paragraph({ alignment: Center }, [Build.text("Page ", {}), Build.page_number, Build.text(" of ", {}), Build.page_count])])?
 	# end::footer[]
 	Ok(footed)
+}
+
+pages_headed : Document -> Try(Document, _)
+pages_headed = |document| {
+	# tag::odd-even-first[]
+	title = Build.paragraph({}, [Build.text("Staff handbook", {})])
+	odd = Build.header(document, {}, [title])?
+	even = Build.header(odd, { kind: Even }, [Build.paragraph({}, [Build.text("Harbour Lane Bakery", {})])])?
+	headed = Build.header(even, { kind: First }, [])?
+	# end::odd-even-first[]
+	if Docx.different_odd_and_even(headed) {
+		Ok(headed)
+	} else {
+		Err(NotOddAndEven)
+	}
 }
 
 annexed : Document -> Document

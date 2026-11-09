@@ -343,29 +343,15 @@ WmlWrite :: [].{
 	## as it was. A tree whose root is not WordprocessingML settings gives
 	## a new settings part's.
 	tracking : XmlTree.Node, [On, Off] -> XmlTree.Node
-	tracking = |shell, state| {
-		root = match shell {
-			Element(found) if is_w(found.name, "settings") => found
-			_ => { name: { namespace: Uri(wordprocessingml), local: "settings", prefix: Prefix("w") }, bindings: [], attributes: [], children: [] }
-		}
-		children = root.children.drop_if(|child| is_element_named(child, "trackRevisions"))
-		tree : XmlTree.Node
-		tree = match state {
-			Off => Element({ ..root, children })
-			On => {
-				var $at = 0.U64
-				var $index = 0.U64
-				for child in children {
-					$index = $index + 1
-					if settings_before_tracking.any(|local| is_element_named(child, local)) {
-						$at = $index
-					}
-				}
-				Element({ ..root, children: List.join([children.sublist({ start: 0, len: $at }), [element("trackRevisions", [], [])], children.drop_first($at)]) })
-			}
-		}
-		tree
-	}
+	tracking = |shell, state| setting(shell, "trackRevisions", settings_before_tracking, state)
+
+	## A settings part's tree with different headers and footers for odd
+	## and even pages on or off, the inverse of
+	## [WmlRead.different_odd_and_even]: its `w:evenAndOddHeaders` set as
+	## [WmlWrite.tracking] sets `w:trackRevisions`, in the place the schema's
+	## sequence gives it.
+	different_odd_and_even : XmlTree.Node, [On, Off] -> XmlTree.Node
+	different_odd_and_even = |shell, state| setting(shell, "evenAndOddHeaders", settings_before_odd_and_even, state)
 
 	## The tree of a styles part: `defaults`, the document's default
 	## paragraph and run properties, and `styles` in order. Each style is
@@ -402,6 +388,39 @@ WmlWrite :: [].{
 	core_properties : Document.CoreProperties -> XmlTree.Node
 	core_properties = |properties| core_properties_tree(properties)
 }
+
+# A settings part's tree without its settings named `local`, and for `On`
+# with one after the last of the settings named in `before`; every other
+# child as it was. A tree whose root is not WordprocessingML settings gives
+# a new settings part's.
+setting : XmlTree.Node, Str, List(Str), [On, Off] -> XmlTree.Node
+setting = |shell, local, before, state| {
+	root = match shell {
+		Element(found) if is_w(found.name, "settings") => found
+		_ => { name: { namespace: Uri(wordprocessingml), local: "settings", prefix: Prefix("w") }, bindings: [], attributes: [], children: [] }
+	}
+	children = root.children.drop_if(|child| is_element_named(child, local))
+	tree : XmlTree.Node
+	tree = match state {
+		Off => Element({ ..root, children })
+		On => {
+			var $at = 0.U64
+			var $index = 0.U64
+			for child in children {
+				$index = $index + 1
+				if before.any(|name| is_element_named(child, name)) {
+					$at = $index
+				}
+			}
+			Element({ ..root, children: List.join([children.sublist({ start: 0, len: $at }), [element(local, [], [])], children.drop_first($at)]) })
+		}
+	}
+	tree
+}
+
+# The settings the schema's sequence puts before `w:evenAndOddHeaders`.
+settings_before_odd_and_even : List(Str)
+settings_before_odd_and_even = List.concat(settings_before_tracking, ["trackRevisions", "doNotTrackMoves", "doNotTrackFormatting", "documentProtection", "autoFormatOverride", "styleLockTheme", "styleLockQFSet", "defaultTabStop", "autoHyphenation", "consecutiveHyphenLimit", "hyphenationZone", "doNotHyphenateCaps", "showEnvelope", "summaryLength", "clickAndTypeStyle", "defaultTableStyle"])
 
 # The settings the schema's sequence puts before `w:trackRevisions`.
 settings_before_tracking : List(Str)
@@ -2526,4 +2545,18 @@ expect {
 		and rendered(WmlWrite.tracking(settings("<w:defaultTabStop w:val='720'/>"), On)).ends_with("${open}<w:trackRevisions/><w:defaultTabStop w:val=\"720\"/></w:settings>")
 		and rendered(WmlWrite.tracking(settings("<w:trackRevisions/><w:defaultTabStop w:val='720'/>"), Off)).ends_with("${open}<w:defaultTabStop w:val=\"720\"/></w:settings>")
 		and rendered(WmlWrite.tracking(Text(""), On)).ends_with("${open}<w:trackRevisions/></w:settings>")
+}
+
+## Different odd and even pages put `w:evenAndOddHeaders` after the
+## settings the schema puts before it, such as the default tab stop, and
+## before the rest, such as compatibility settings; turning them off
+## removes it.
+expect {
+	settings = |inner| XmlTree.parse("<w:settings xmlns:w='${wordprocessingml}'>${inner}</w:settings>".to_utf8(), {}) ?? Text("")
+	rendered = |tree| Str.from_utf8(XmlTree.render(tree) ?? []) ?? ""
+	open = "<w:settings xmlns:w=\"${wordprocessingml}\">"
+	on = WmlWrite.different_odd_and_even(settings("<w:trackRevisions/><w:defaultTabStop w:val='720'/><w:evenAndOddHeaders w:val='0'/><w:compat/>"), On)
+	rendered(on).ends_with("${open}<w:trackRevisions/><w:defaultTabStop w:val=\"720\"/><w:evenAndOddHeaders/><w:compat/></w:settings>")
+		and rendered(WmlWrite.different_odd_and_even(on, Off)).ends_with("${open}<w:trackRevisions/><w:defaultTabStop w:val=\"720\"/><w:compat/></w:settings>")
+		and rendered(WmlWrite.different_odd_and_even(settings("<w:compat/>"), On)).ends_with("${open}<w:evenAndOddHeaders/><w:compat/></w:settings>")
 }

@@ -2,6 +2,7 @@
 
     make_word_fixtures.py            write a seed package for each fixture, open and save it in Word,
                                      and copy Word's output into tests/fixtures/word/
+    make_word_fixtures.py NAME...    the same for the named fixtures only, leaving the others as they are
 
 macOS only, with Microsoft Word installed; a maintainer task that neither
 `check` nor CI runs. Word's scripting dictionary cannot reply to or resolve a
@@ -81,8 +82,8 @@ PART_KINDS = {
     "people.xml": (MS_REL["people"], WML_TYPE.format("people")),
     "footnotes.xml": (f"{REL}/footnotes", WML_TYPE.format("footnotes")),
     "endnotes.xml": (f"{REL}/endnotes", WML_TYPE.format("endnotes")),
-    "header1.xml": (f"{REL}/header", WML_TYPE.format("header")),
-    "footer1.xml": (f"{REL}/footer", WML_TYPE.format("footer")),
+    **{f"header{n}.xml": (f"{REL}/header", WML_TYPE.format("header")) for n in range(1, 5)},
+    **{f"footer{n}.xml": (f"{REL}/footer", WML_TYPE.format("footer")) for n in range(1, 5)},
 }
 
 
@@ -539,11 +540,61 @@ def report_fixture():
                    media=[("bands.png", png(16, 8))]), expected
 
 
+# --------------------------------------------------------------------- pages
+
+def pages_fixture():
+    def reference(region, kind, number):
+        return f'<w:{region}Reference w:type="{kind}" r:id="{rel_id(f"{region}{number}.xml")}"/>'
+
+    def region(root, text, props=""):
+        return xml(root, para(text, props))
+
+    def turned(text):
+        return para(run(text), "<w:pageBreakBefore/>")
+
+    def styled(name):
+        return f'<w:pStyle w:val="{name}"/>'
+
+    page = run("Page ") + field("PAGE", "1")
+    first = (reference("header", "default", 1) + reference("header", "even", 2) + reference("header", "first", 3)
+             + reference("footer", "default", 1) + reference("footer", "even", 2) + reference("footer", "first", 3))
+    second = reference("header", "first", 4) + reference("footer", "even", 4)
+    titled = "<w:titlePg/>"
+    body = "".join([
+        heading("Field Guide"),
+        para(run("Northwind Rambling Club")),
+        turned("Planning a walk"),
+        turned("Weather and kit"),
+        para(run("Routes follow in the second part."), section(first).replace("</w:sectPr>", titled + "</w:sectPr>")),
+        heading("Routes"),
+        turned("The ridge loop"),
+    ])
+    parts = {
+        "styles.xml": STYLES,
+        "settings.xml": settings(notes="<w:evenAndOddHeaders/>"),
+        "header1.xml": region("w:hdr", run("Field Guide"), styled("Header") + '<w:jc w:val="right"/>'),
+        "header2.xml": region("w:hdr", run("Northwind Rambling Club"), styled("Header")),
+        "header3.xml": region("w:hdr", "", styled("Header")),
+        "header4.xml": region("w:hdr", run("Part two: routes"), styled("Header") + '<w:jc w:val="center"/>'),
+        "footer1.xml": region("w:ftr", page, styled("Footer") + '<w:jc w:val="right"/>'),
+        "footer2.xml": region("w:ftr", page, styled("Footer")),
+        "footer3.xml": region("w:ftr", run("Issued May 2026"), styled("Footer") + '<w:jc w:val="center"/>'),
+        "footer4.xml": region("w:ftr", run("Routes, page ") + field("PAGE", "1"), styled("Footer")),
+    }
+    expected = {
+        "word/settings.xml": ["w:evenAndOddHeaders"],
+        "word/document.xml": ["w:headerReference@w:type=even", "w:headerReference@w:type=first",
+                              "w:footerReference@w:type=even", "w:footerReference@w:type=first", "w:titlePg"],
+    }
+    return package("Field Guide", document(body, section(second).replace("</w:sectPr>", titled + "</w:sectPr>")), parts), expected
+
+
 FIXTURES = {
     "comments": comments_fixture,
     "revisions": revisions_fixture,
     "tables": tables_fixture,
     "report": report_fixture,
+    "pages": pages_fixture,
 }
 
 
@@ -673,7 +724,10 @@ def private_strings():
     return sorted(names - {""})
 
 
-def main():
+def main(names):
+    unknown = [name for name in names if name not in FIXTURES]
+    if unknown:
+        sys.exit(f"no fixture named {', '.join(unknown)}; the fixtures are {', '.join(FIXTURES)}")
     if sys.platform != "darwin" or not pathlib.Path("/Applications/Microsoft Word.app").exists():
         sys.exit("Microsoft Word for macOS is required")
     version = osascript('tell application "Microsoft Word" to return version')
@@ -687,6 +741,8 @@ def main():
     failures = []
     try:
         for name, build in FIXTURES.items():
+            if names and name not in names:
+                continue
             files, expected = build()
             seed = WORK / "seed" / f"{name}.docx"
             with zipfile.ZipFile(seed, "w", zipfile.ZIP_DEFLATED) as archive:
@@ -709,6 +765,6 @@ def main():
 
 
 if __name__ == "__main__":
-    if sys.argv[1:]:
+    if any(argument.startswith("-") for argument in sys.argv[1:]):
         sys.exit(__doc__)
-    sys.exit(main())
+    sys.exit(main(sys.argv[1:]))

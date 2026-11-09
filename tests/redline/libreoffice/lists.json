@@ -2,7 +2,7 @@
   "schema": "roc-docx-snapshot/1",
   "producer": {"name": "roc-docx", "version": "working tree"},
   "document": ".roc-docx/redline/libreoffice/lists.docx",
-  "keys": ["blocks.kind", "blocks.level", "blocks.list", "blocks.text", "blocks.rows", "blocks.runs.bold", "blocks.runs.italic", "blocks.runs.underline", "blocks.runs.strike", "blocks.runs.superscript", "blocks.runs.subscript", "blocks.runs.link", "notes.kind", "notes.text", "comments.author", "comments.date", "comments.text", "comments.anchor", "comments.thread", "comments.resolved", "revisions.kind", "revisions.author", "revisions.date", "revisions.text", "sections.page_width", "sections.page_height", "sections.orientation", "sections.margin_top", "sections.margin_bottom", "sections.margin_left", "sections.margin_right", "sections.header", "sections.footer", "properties.title", "properties.subject", "properties.creator", "properties.keywords", "properties.description", "properties.last_modified_by", "properties.created", "properties.modified"],
+  "keys": ["blocks.kind", "blocks.level", "blocks.list", "blocks.text", "blocks.rows", "blocks.runs.bold", "blocks.runs.italic", "blocks.runs.underline", "blocks.runs.strike", "blocks.runs.superscript", "blocks.runs.subscript", "blocks.runs.link", "notes.kind", "notes.text", "comments.author", "comments.date", "comments.text", "comments.anchor", "comments.thread", "comments.resolved", "revisions.kind", "revisions.author", "revisions.date", "revisions.text", "sections.page_width", "sections.page_height", "sections.orientation", "sections.margin_top", "sections.margin_bottom", "sections.margin_left", "sections.margin_right", "sections.header", "sections.footer", "sections.header_even", "sections.footer_even", "sections.header_first", "sections.footer_first", "properties.title", "properties.subject", "properties.creator", "properties.keywords", "properties.description", "properties.last_modified_by", "properties.created", "properties.modified"],
   "blocks": [
     {"kind": "paragraph", "level": 0, "list": "", "text": "Revised Meeting Agenda (as agreed)", "runs": [{"text": "Revised Meeting Agenda (as agreed)", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
     {"kind": "paragraph", "level": 0, "list": "", "text": "Both parties confirm this amendment.", "runs": [{"text": "Both parties confirm this amendment.", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
@@ -33,7 +33,7 @@
     {"kind": "deletion", "author": "Morgan Reviewer", "date": "2026-11-10T10:00:00Z", "text": "Agenda"}
   ],
   "sections": [
-    {"page_width": 12240, "page_height": 15840, "orientation": "portrait", "margin_top": 1440, "margin_bottom": 1440, "margin_left": 1440, "margin_right": 1440, "header": "", "footer": ""}
+    {"page_width": 12240, "page_height": 15840, "orientation": "portrait", "margin_top": 1440, "margin_bottom": 1440, "margin_left": 1440, "margin_right": 1440, "header": "", "footer": "", "header_even": "", "footer_even": "", "header_first": "", "footer_first": ""}
   ],
   "properties": {"title": "Board Meeting Agenda", "subject": "", "creator": "", "keywords": "", "description": "", "last_modified_by": "", "created": "2023-11-14T22:13:20Z", "modified": "2023-11-14T22:13:20Z"}
 }
