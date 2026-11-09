@@ -6,13 +6,13 @@
 ## regard to ASCII case, as the conventions require. An opened package keeps
 ## the archive and an index of its parts, and inflates a part when it is asked
 ## for. Relationships are parsed from the source part's `_rels` part on demand
-## and their targets are resolved against the source part. Element names in
-## the package parts are matched as written and unprefixed, which is how every
-## producer writes them; namespace-aware matching arrives with the XML kernel
-## slice.
+## and their targets are resolved against the source part. Both kinds of
+## package part are read as namespaced XML within the XML bounds of `Limits`,
+## and their elements are matched by namespace and local name, whatever
+## prefix a producer wrote them with.
 import zip.Zip
-import parser.Xml
 import Limits
+import XmlTree
 
 Opc :: [].{
 
@@ -22,13 +22,15 @@ Opc :: [].{
 	Part : { name : Str, content_type : Str, size : U64 }
 
 	## An opened package: the archive bytes and its parts with an index by
-	## name, the relationship parts inflated and the rest as they are stored.
-	## `[Content_Types].xml` is consumed to label the parts and is not one of
-	## them.
+	## name, the relationship parts inflated and the rest as they are stored,
+	## and the limits it was opened with, which bound reading its
+	## relationships. `[Content_Types].xml` is consumed to label the parts and
+	## is not one of them.
 	Package :: {
 		archive : List(U8),
 		parts : List(Located),
 		index : Dict(Str, U64),
+		limits : Limits,
 	}
 
 	## One relationship of a source part. An internal target is an absolute
@@ -81,17 +83,15 @@ Opc :: [].{
 		PartSizeMismatch({ name : Str, declared : U64 }),
 	]
 
-	## Where a part's XML is malformed: one-based line and column, and the
-	## parser's message.
-	XmlProblem : { line : U64, column : U64, message : Str }
-
 	## An attribute a package part must have and does not.
 	AttributeLocation : { part : Str, element : Str, attribute : Str }
 
 	## Why a package cannot be opened: the ZIP layer's own archive errors, two
 	## parts with the same name, a part whose content is not the size its
 	## entry declares, the limit that was exceeded, or what is wrong with
-	## `[Content_Types].xml`.
+	## `[Content_Types].xml`: XML that cannot be read, from bytes that are not
+	## UTF-8 to an exceeded XML bound, a root that is not the content types
+	## namespace's `Types`, or an entry without its attributes.
 	OpenError : [
 		InvalidSignature,
 		TruncatedArchive,
@@ -105,8 +105,7 @@ Opc :: [].{
 		PartTooLarge({ name : Str, bytes : U64 }),
 		PackageTooLarge(U64),
 		MissingContentTypes,
-		ContentTypesNotUtf8,
-		ContentTypesNotXml(XmlProblem),
+		ContentTypesNotXml(XmlTree.ReadError),
 		ContentTypesRootIsNotTypes,
 		MissingAttribute(AttributeLocation),
 		NoContentType(Str),
@@ -124,10 +123,11 @@ Opc :: [].{
 		PartSizeMismatch({ name : Str, declared : U64 }),
 	]
 
+	## Why a part's relationships cannot be read: their relationship part is
+	## missing, its XML cannot be read, or a relationship lacks an attribute.
 	RelationshipsError : [
 		MissingPart(Str),
-		RelationshipsNotUtf8(Str),
-		RelationshipsNotXml({ part : Str, problem : XmlProblem }),
+		RelationshipsNotXml({ part : Str, problem : XmlTree.ReadError }),
 		MissingAttribute(AttributeLocation),
 	]
 
@@ -180,7 +180,7 @@ Opc :: [].{
 			$names = $names.insert(key)
 		}
 		types_entry = entries.find_first(|entry| ascii_lowercase(entry.path) == content_types_key) ? |_| MissingContentTypes
-		types = index_content_types(parse_content_types(inflate(bytes, types_entry) ? from_zip)?)
+		types = parse_content_types(inflate(bytes, types_entry) ? from_zip, limits)?
 		var $parts = List.with_capacity(entries.len())
 		var $index = Dict.with_capacity(entries.len())
 		for entry in entries {
@@ -193,7 +193,7 @@ Opc :: [].{
 				$parts = List.append($parts, { part: { name, content_type, size: entry.uncompressed_size }, entry, content })
 			}
 		}
-		Ok({ archive: bytes, parts: $parts, index: $index })
+		Ok({ archive: bytes, parts: $parts, index: $index, limits })
 	}
 
 	## Every part, in archive order.
@@ -246,31 +246,30 @@ Opc :: [].{
 			Inflated(content) => content
 			Deferred => return Err(MissingPart(rels_name))
 		}
-		text = Str.from_utf8(bytes) ? |_| RelationshipsNotUtf8(rels_name)
-		xml = Xml.parse_str(text) ? |err| match err {
-			InvalidXml(problem) => RelationshipsNotXml({ part: rels_name, problem })
-		}
+		root = XmlTree.parse(bytes, pkg.limits) ? |problem| RelationshipsNotXml({ part: rels_name, problem })
 		var $found = List.with_capacity(8)
-		for node in xml.root.children_named("Relationship") {
-			id = attribute(node, { part: rels_name, element: "Relationship", attribute: "Id" })?
-			kind = attribute(node, { part: rels_name, element: "Relationship", attribute: "Type" })?
-			target = attribute(node, { part: rels_name, element: "Relationship", attribute: "Target" })?
-			mode = match node.attribute("TargetMode") {
-				Ok("External") => External
-				_ => Internal
+		for node in children_of(root) {
+			if is_named(node, relationships_namespace, "Relationship") {
+				id = attribute(node, { part: rels_name, element: "Relationship", attribute: "Id" })?
+				kind = attribute(node, { part: rels_name, element: "Relationship", attribute: "Type" })?
+				target = attribute(node, { part: rels_name, element: "Relationship", attribute: "Target" })?
+				mode = match attribute(node, { part: rels_name, element: "Relationship", attribute: "TargetMode" }) {
+					Ok("External") => External
+					_ => Internal
+				}
+				resolved = match mode {
+					External => target
+					Internal => resolve_target(source, target)
+				}
+				$found = List.append($found, { id, kind, target: resolved, mode })
 			}
-			resolved = match mode {
-				External => target
-				Internal => resolve_target(source, target)
-			}
-			$found = List.append($found, { id, kind, target: resolved, mode })
 		}
 		Ok($found)
 	}
 
 	## The main document part: the target of the package's `officeDocument`
 	## relationship, wherever the producer placed it.
-	main_document : Package -> Try(Part, [MissingPart(Str), RelationshipsNotUtf8(Str), RelationshipsNotXml({ part : Str, problem : XmlProblem }), MissingAttribute(AttributeLocation), NoMainDocument])
+	main_document : Package -> Try(Part, [MissingPart(Str), RelationshipsNotXml({ part : Str, problem : XmlTree.ReadError }), MissingAttribute(AttributeLocation), NoMainDocument])
 	main_document = |pkg| {
 		rels = Opc.relationships(pkg, "/")?
 		rel = rels.find_first(|candidate| candidate.kind == Opc.officedocument_relationship) ? |_| NoMainDocument
@@ -705,7 +704,7 @@ content_types_xml = |order| {
 		}
 	}
 	var $xml = Str.with_capacity(256 + 160 * order.len())
-	$xml = Str.concat($xml, "${xml_declaration}<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">")
+	$xml = Str.concat($xml, "${xml_declaration}<Types xmlns=\"${content_types_namespace}\">")
 	for default in $defaults {
 		$xml = Str.concat($xml, "<Default Extension=\"${escape(default.extension)}\" ContentType=\"${escape(default.content_type)}\"/>")
 	}
@@ -729,7 +728,7 @@ is_extension = |extension|
 relationships_xml : Str, List(Opc.Relationship) -> Str
 relationships_xml = |source, relationships| {
 	var $xml = Str.with_capacity(160 + 200 * relationships.len())
-	$xml = Str.concat($xml, "${xml_declaration}<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">")
+	$xml = Str.concat($xml, "${xml_declaration}<Relationships xmlns=\"${relationships_namespace}\">")
 	for rel in relationships {
 		{ target, mode } = match rel.mode {
 			Internal => { target: relative_target(source, rel.target), mode: "" }
@@ -787,56 +786,35 @@ content_types_path = "[Content_Types].xml"
 content_types_key : Str
 content_types_key = "[content_types].xml"
 
-# [Content_Types].xml: defaults by extension, overrides by part name.
-ContentTypes : {
-	defaults : List({ extension : Str, content_type : Str }),
-	overrides : List({ part_name : Str, content_type : Str }),
-}
-
-parse_content_types : List(U8) -> Try(ContentTypes, Opc.OpenError)
-parse_content_types = |bytes| {
-	text = Str.from_utf8(bytes) ? |_| ContentTypesNotUtf8
-	xml = Xml.parse_str(text) ? |err| match err {
-		InvalidXml(problem) => ContentTypesNotXml(problem)
-	}
-	if xml.root.name() != Ok("Types") {
-		return Err(ContentTypesRootIsNotTypes)
-	}
-	var $defaults = List.with_capacity(8)
-	for node in xml.root.children_named("Default") {
-		extension = attribute(node, { part: content_types_path, element: "Default", attribute: "Extension" })?
-		content_type = attribute(node, { part: content_types_path, element: "Default", attribute: "ContentType" })?
-		$defaults = List.append($defaults, { extension: ascii_lowercase(extension), content_type })
-	}
-	var $overrides = List.with_capacity(8)
-	for node in xml.root.children_named("Override") {
-		part_name = attribute(node, { part: content_types_path, element: "Override", attribute: "PartName" })?
-		content_type = attribute(node, { part: content_types_path, element: "Override", attribute: "ContentType" })?
-		$overrides = List.append($overrides, { part_name, content_type })
-	}
-	Ok({ defaults: $defaults, overrides: $overrides })
-}
-
-# The content types keyed for lookup: overrides by part name and defaults by
-# extension, both in lower case, with the first of any repeated key winning.
+# [Content_Types].xml keyed for lookup: overrides by part name and defaults
+# by extension, both in lower case, with the first of any repeated key
+# winning.
 IndexedContentTypes : { defaults : Dict(Str, Str), overrides : Dict(Str, Str) }
 
-index_content_types : ContentTypes -> IndexedContentTypes
-index_content_types = |types| {
-	var $defaults = Dict.with_capacity(types.defaults.len())
-	for default in types.defaults {
-		if !$defaults.contains(default.extension) {
-			$defaults = $defaults.insert(default.extension, default.content_type)
+parse_content_types : List(U8), Limits -> Try(IndexedContentTypes, Opc.OpenError)
+parse_content_types = |bytes, limits| {
+	root = XmlTree.parse(bytes, limits) ? ContentTypesNotXml
+	if !is_named(root, content_types_namespace, "Types") {
+		return Err(ContentTypesRootIsNotTypes)
+	}
+	var $defaults = Dict.with_capacity(8)
+	var $overrides = Dict.with_capacity(8)
+	for node in children_of(root) {
+		if is_named(node, content_types_namespace, "Default") {
+			extension = ascii_lowercase(attribute(node, { part: content_types_path, element: "Default", attribute: "Extension" })?)
+			content_type = attribute(node, { part: content_types_path, element: "Default", attribute: "ContentType" })?
+			if !$defaults.contains(extension) {
+				$defaults = $defaults.insert(extension, content_type)
+			}
+		} else if is_named(node, content_types_namespace, "Override") {
+			key = ascii_lowercase(attribute(node, { part: content_types_path, element: "Override", attribute: "PartName" })?)
+			content_type = attribute(node, { part: content_types_path, element: "Override", attribute: "ContentType" })?
+			if !$overrides.contains(key) {
+				$overrides = $overrides.insert(key, content_type)
+			}
 		}
 	}
-	var $overrides = Dict.with_capacity(types.overrides.len())
-	for override in types.overrides {
-		key = ascii_lowercase(override.part_name)
-		if !$overrides.contains(key) {
-			$overrides = $overrides.insert(key, override.content_type)
-		}
-	}
-	{ defaults: $defaults, overrides: $overrides }
+	Ok({ defaults: $defaults, overrides: $overrides })
 }
 
 # An override names the part; otherwise its extension selects a default. The
@@ -848,9 +826,40 @@ content_type_for = |types, name, key|
 		Err(_) => Ok(types.defaults.get(extension_of(key)) ? |_| NoContentType(name))
 	}
 
-attribute : Xml.Node, Opc.AttributeLocation -> Try(Str, [MissingAttribute(Opc.AttributeLocation)])
+content_types_namespace : Str
+content_types_namespace = "http://schemas.openxmlformats.org/package/2006/content-types"
+
+relationships_namespace : Str
+relationships_namespace = "http://schemas.openxmlformats.org/package/2006/relationships"
+
+# An element of the namespace with the local name, whatever its prefix.
+is_named : XmlTree.Node, Str, Str -> Bool
+is_named = |node, namespace, local|
+	match node {
+		Element(element) => element.name.namespace == Uri(namespace) and element.name.local == local
+		Text(_) => Bool.False
+	}
+
+# An element's children in document order; text has none.
+children_of : XmlTree.Node -> List(XmlTree.Node)
+children_of = |node|
+	match node {
+		Element(element) => element.children
+		Text(_) => []
+	}
+
+# An unprefixed attribute of an element, which is in no namespace.
+attribute : XmlTree.Node, Opc.AttributeLocation -> Try(Str, [MissingAttribute(Opc.AttributeLocation)])
 attribute = |node, location|
-	Ok(node.attribute(location.attribute) ? |_| MissingAttribute(location))
+	match node {
+		Element(element) =>
+			match element.attributes.find_first(|candidate| candidate.name.namespace == NoNamespace and candidate.name.local == location.attribute) {
+				Ok(found) => Ok(found.value)
+				Err(_) => Err(MissingAttribute(location))
+			}
+
+		Text(_) => Err(MissingAttribute(location))
+	}
 
 # `/word/document.xml` has its relationships in `/word/_rels/document.xml.rels`;
 # the package itself has them in `/_rels/.rels`.
@@ -1015,6 +1024,37 @@ expect {
 expect {
 	pkg = Opc.open(sample_archive?, {})?
 	Opc.relationships(pkg, "/")? == [{ id: "rId1", kind: Opc.officedocument_relationship, target: "/word/document.xml", mode: Internal }]
+}
+
+## Content types and relationships written with prefixes of the producer's
+## choosing are read by namespace, just as unprefixed ones are.
+expect {
+	content_types = "<ct:Types xmlns:ct='${content_types_namespace}'><ct:Default Extension='rels' ContentType='${relationships_content_type}'/><ct:Override PartName='/word/document.xml' ContentType='${main_content_type}'/></ct:Types>"
+	rels = "<pr:Relationships xmlns:pr='${relationships_namespace}'><pr:Relationship Id='rId1' Type='${Opc.officedocument_relationship}' Target='word/document.xml'/></pr:Relationships>"
+	archive = archive_of([{ path: content_types_path, content: content_types.to_utf8() }, { path: "_rels/.rels", content: rels.to_utf8() }, { path: "word/document.xml", content: sample_document.to_utf8() }], None)?
+	pkg = Opc.open(archive, {})?
+	Opc.main_document(pkg)? == { name: "/word/document.xml", content_type: main_content_type, size: sample_document.to_utf8().len() }
+}
+
+## Elements are matched by namespace: a `Types` root outside the content
+## types namespace is not the content types part, and relationships outside
+## theirs are not relationships.
+expect {
+	foreign_types = archive_of([{ path: content_types_path, content: "<Types xmlns='urn:other'/>".to_utf8() }], None)?
+	foreign_rels = archive_of([{ path: content_types_path, content: sample_content_types.to_utf8() }, { path: "_rels/.rels", content: "<Relationships xmlns='${relationships_namespace}'><Relationship xmlns='urn:other' Id='rId1' Type='t' Target='a.xml'/></Relationships>".to_utf8() }], None)?
+	open_parts(foreign_types, {}) == Err(ContentTypesRootIsNotTypes) and Opc.relationships(Opc.open(foreign_rels, {})?, "/")? == []
+}
+
+## Package parts are read within the XML bounds of the limits, and an XML
+## error names the part and where reading stopped.
+expect {
+	opened = Opc.open(sample_archive?, { max_xml_elements: 3 })
+	rels = archive_of([{ path: content_types_path, content: sample_content_types.to_utf8() }, { path: "_rels/.rels", content: "<Relationships xmlns='${relationships_namespace}'>\n<Relationship".to_utf8() }], None)?
+	broken_at_line_two = match Opc.relationships(Opc.open(rels, {})?, "/") {
+		Err(RelationshipsNotXml({ part: "/_rels/.rels", problem: MalformedXml({ message: _, line: 2, column: _ }) })) => Bool.True
+		_ => Bool.False
+	}
+	opened.map_ok(|_| {}) == Err(ContentTypesNotXml(TooManyXmlElements({ max: 3, line: 1, column: 269 }))) and broken_at_line_two
 }
 
 ## Bytes that are not an archive are an error, never a crash.

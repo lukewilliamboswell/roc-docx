@@ -79,6 +79,13 @@ running on. The other errors say what is wrong with the archive, such as
 `[Content_Types].xml`; none of them is a crash. `Opc.part_bytes` reports the
 same kinds of damage for the part it decompresses.
 
+`[Content_Types].xml` and the relationship parts are read with
+`XmlTree.parse`, described below, within the same record's XML bounds, and
+their elements are found by namespace and local name, whatever prefix the
+producer wrote. XML that cannot be read fails with the reader's located
+error inside `ContentTypesNotXml(problem)`, or inside
+`RelationshipsNotXml({ part, problem })` from `Opc.relationships`.
+
 == Write the parts to a new package
 
 `Opc.graph` reads the part graph of an opened package: every part with its
