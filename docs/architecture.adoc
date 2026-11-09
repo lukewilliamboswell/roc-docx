@@ -123,9 +123,9 @@ XML reading, namespace processing and serialization come from the pinned `roc-pa
 
 Document type declarations and external entities are rejected, as the XML parser already does. OOXML parts never need them, and accepting them would open the parser to entity expansion attacks.
 
-XML generation uses the pinned `roc-xml` package for well-formedness checking and escaping. roc-docx owns the prefix policy: a fixed, documented prefix for each namespace it emits, declared once on each part's root element, so that the same model always produces the same text.
+XML generation uses the same package's renderer, which checks names and characters and escapes text. roc-docx owns the prefix policy: a fixed, documented prefix for each namespace it emits, declared once on each part's root element, so that the same model always produces the same text.
 
-The two dependencies both report an `InvalidXml` tag with different payloads. roc-docx maps every dependency error into its own error vocabulary at the stage boundary; dependency types never appear in the public API.
+The dependencies' error tags overlap, such as `InvalidXml` from both XML layers of roc-parser and `DuplicatePath` from both directions of roc-zip, with different payloads. roc-docx maps every dependency error into its own error vocabulary at the stage boundary; dependency types never appear in the public API.
 
 === Markup Compatibility and Extensibility
 
@@ -379,7 +379,7 @@ package/Comments.roc    comment threads: join on read, split on write
 package/Revisions.roc   revision model and the accept/reject algebra
 package/Snapshot.roc    the semantic snapshot encoder
 package/Opc.roc         parts, content types, relationships, part graph
-package/XmlNs.roc       namespace resolution over the XML tree
+package/XmlTree.roc     a part's namespaced XML tree: read within limits, written with the prefix table
 package/Mce.roc         markup compatibility processing
 package/WmlRead.roc     XML trees to model
 package/WmlWrite.roc    model to XML trees, canonical order, identifiers

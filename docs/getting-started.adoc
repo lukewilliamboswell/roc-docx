@@ -77,3 +77,29 @@ running on. The other errors say what is wrong with the archive, such as
 `DuplicatePart(name)` for two parts with the same name, or with
 `[Content_Types].xml`; none of them is a crash. `Opc.part_bytes` reports the
 same kinds of damage for the part it decompresses.
+
+== A part's XML
+
+`XmlTree.parse` reads the bytes of an XML part into a tree in which every
+element and attribute is named by its namespace and local name, so
+`w:p` and `ns0:p` are the same name when both prefixes are bound to the
+WordprocessingML namespace. It takes the same limits record, whose XML bounds
+allow 1024 levels of nesting, 4,194,304 elements per part and 1024 attributes
+per element:
+
+[source,roc]
+----
+tree = XmlTree.parse(bytes, { max_xml_depth: 64 })?
+----
+
+A part that is not well-formed XML, breaks a namespace rule or exceeds a bound
+fails with a located error, such as `MalformedXml({ message, line, column })`,
+`NamespaceError({ problem, line, column })` or
+`XmlTooDeep({ max, line, column })`.
+
+`XmlTree.render` writes a tree back as a part. It does not reuse the prefixes
+the tree was read with: each namespace is written with its fixed prefix from
+`XmlTree.prefixes`, declared once on the root, so the same tree always gives
+the same bytes. Content types, relationships and document properties keep
+their namespace as the default, as producers write them. A tree with a namespace outside that table fails with
+`XmlUnwritable` naming it.

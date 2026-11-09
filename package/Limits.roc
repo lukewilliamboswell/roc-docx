@@ -1,8 +1,9 @@
 ## Resource bounds for reading untrusted packages.
 ##
-## A document can be hostile: a small archive that inflates to gigabytes, or
-## thousands of parts. Every reader checks these bounds and fails with a named
-## limit error rather than exhausting memory. The defaults are generous for
+## A document can be hostile: a small archive that inflates to gigabytes,
+## thousands of parts, or XML nested thousands of elements deep. Every reader
+## checks these bounds and fails with a named limit error rather than
+## exhausting memory. The defaults are generous for
 ## business documents. `Opc.open(bytes, {})` takes them all;
 ## `Opc.open(bytes, { max_entries: 64 })` names only what differs.
 Limits := {
@@ -15,6 +16,15 @@ Limits := {
 	## Most decompressed bytes all parts may hold together, and the most bytes
 	## an archive itself may have.
 	max_total_bytes : U64 ?? 268_435_456,
+
+	## Most elements an XML part may nest inside one another.
+	max_xml_depth : U64 ?? 1024,
+
+	## Most elements an XML part may contain.
+	max_xml_elements : U64 ?? 4_194_304,
+
+	## Most attributes, namespace declarations included, one XML element may carry.
+	max_xml_attributes : U64 ?? 1024,
 }
 
 ## The defaults keep a single part within the package total.
