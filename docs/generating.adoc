@@ -14,8 +14,10 @@ which says how a document is written.
 include::../tests/manual.roc[tag=new-document,indent=0]
 ----
 
-Its argument names the document's title, its author (`creator`), and when it
-was created and last modified (`modified`), and each can be left out:
+Its argument is the `Docx.Properties` record that `Docx.set_properties`
+takes (<<set-what-a-document-says-about-itself>>): it names the document's
+title, its author (`creator`), when it was created and last modified
+(`modified`) and any other core property, and each can be left out:
 `Docx.new_document({})` is a document without properties. The package reads
 no clock, so a document has only the dates its caller gives it, and the same
 properties always give the same bytes. A date is in the W3C date and time
@@ -149,10 +151,11 @@ include::../tests/manual.roc[tag=section,indent=0]
 
 `Build.properties` sets the document's title, subject, author (`creator`),
 keywords, description, who last modified it, its revision number and when it
-was created and last modified. A property given replaces the document's, and
-one left out keeps it; a document without core properties is given them. A
-date that is not in the W3C date and time format is refused with
-`NotADate`, as `Docx.new_document` refuses it.
+was created and last modified, as `Docx.set_properties` sets them on any
+document (<<set-what-a-document-says-about-itself>>). A property given
+replaces the document's, and one left out keeps it; a document without core
+properties is given them. A date that is not in the W3C date and time
+format is refused with `NotADate`, as `Docx.new_document` refuses it.
 
 == Examples
 

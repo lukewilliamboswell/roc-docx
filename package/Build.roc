@@ -112,22 +112,6 @@ Build :: [].{
 		kind : [Default, Even, First] ?? Default,
 	}
 
-	## What a document says about itself, as [Document.CoreProperties] holds
-	## it: each property given replaces the document's, and each left
-	## `Unset` keeps it. Dates are in the W3C date and time format, such as
-	## `2026-11-10T09:00:00Z`.
-	Properties := {
-		title : [Unset, Text(Str)] ?? Unset,
-		subject : [Unset, Text(Str)] ?? Unset,
-		creator : [Unset, Text(Str)] ?? Unset,
-		keywords : [Unset, Text(Str)] ?? Unset,
-		description : [Unset, Text(Str)] ?? Unset,
-		last_modified_by : [Unset, Text(Str)] ?? Unset,
-		revision : [Unset, Number(U64)] ?? Unset,
-		created : [Unset, Date(Str)] ?? Unset,
-		modified : [Unset, Date(Str)] ?? Unset,
-	}
-
 	## Why a document cannot be given a footnote, header or footer: it has
 	## no main document part, or the content cannot be written, as
 	## [WmlWrite.WriteError] says.
@@ -345,44 +329,11 @@ Build :: [].{
 	}
 
 	## The document with its core properties as `properties` gives them over
-	## those it has, written by [WmlWrite.core_properties]; a document
-	## without a core properties part is given one. A date that is not in the
-	## W3C date and time format is refused with `NotADate` and the date as
+	## those it has, as [Docx.set_properties] sets them; a date that is not in
+	## the W3C date and time format is refused with `NotADate` and the date as
 	## given.
-	properties : Document, Properties -> Try(Document, [NotADate(Str)])
-	properties = |document, given| {
-		current = Docx.core_properties(document)
-		chosen = |new, old|
-			match new {
-				Unset => old
-				_ => new
-			}
-		merged = {
-			title: chosen(given.title, current.title),
-			subject: chosen(given.subject, current.subject),
-			creator: chosen(given.creator, current.creator),
-			keywords: chosen(given.keywords, current.keywords),
-			description: chosen(given.description, current.description),
-			last_modified_by: chosen(given.last_modified_by, current.last_modified_by),
-			revision: chosen(given.revision, current.revision),
-			created: chosen(given.created, current.created),
-			modified: chosen(given.modified, current.modified),
-			preserved: current.preserved,
-		}
-		tree = WmlWrite.core_properties(merged)
-		read = WmlRead.core_properties(tree)
-		dated = |date, kept|
-			match date {
-				Date(written) if kept != date => Err(NotADate(written))
-				_ => Ok({})
-			}
-		dated(merged.created, read.created)?
-		dated(merged.modified, read.modified)?
-		match Document.related(document, "/", core_properties_relationship) {
-			Ok(part) => Ok(Document.with_part(document, part.name, tree, part.relationships))
-			Err(NotFound) => Ok(Document.with_new_part(document, { source: "/", kind: core_properties_relationship, name: "/docProps/core.xml", content_type: "application/vnd.openxmlformats-package.core-properties+xml" }, tree))
-		}
-	}
+	properties : Document, Docx.Properties -> Try(Document, [NotADate(Str)])
+	properties = |document, given| Docx.set_properties(document, given)
 }
 
 # The main document part.
@@ -562,9 +513,6 @@ footer_relationship = "http://schemas.openxmlformats.org/officeDocument/2006/rel
 
 comments_relationship : Str
 comments_relationship = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments"
-
-core_properties_relationship : Str
-core_properties_relationship = "http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties"
 
 wordprocessingml : Str
 wordprocessingml = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"

@@ -5,9 +5,9 @@
 ## empty paragraph on an A4 page with one-inch margins; a styles part with
 ## a minimal style set that Word and LibreOffice recognise as their own
 ## built-in styles; a numbering part with a bulleted and a numbered list of
-## nine levels each; a settings part; a font table; and core properties from
-## the caller. Nothing is taken from a clock or the host: the same
-## [Kit.New] always gives the same document.
+## nine levels each; a settings part; a font table; and a core properties
+## part that says nothing until a caller gives it properties. Nothing is
+## taken from a clock or the host: the kit is always the same document.
 ##
 ## The styles, the list definitions and the core properties are model
 ## values written by [WmlWrite.styles], [WmlWrite.numbering] and
@@ -27,36 +27,14 @@ import XmlTree
 
 Kit :: [].{
 
-	## What a new document says about itself: its title, its author
-	## (`creator`), and when it was created and last modified, each in the
-	## W3C date and time format, such as `2026-11-10T09:00:00Z`. Each is left
-	## out of the document's core properties when `Unset`; the package reads
-	## no clock, so a document has the dates its caller gives it.
-	New := {
-		title : [Unset, Text(Str)] ?? Unset,
-		creator : [Unset, Text(Str)] ?? Unset,
-		created : [Unset, Date(Str)] ?? Unset,
-		modified : [Unset, Date(Str)] ?? Unset,
-	}
-
-	## A new document with the kit's parts and the properties `new` gives,
-	## or the date it gives that is not in the W3C date and time format, as
-	## [WmlRead.core_properties] reads a date: a year, a month or a day, or a
-	## day and a time with its time zone.
-	document : New -> Try(Document, [NotADate(Str)])
-	document = |new| {
-		properties = { title: new.title, subject: Unset, creator: new.creator, keywords: Unset, description: Unset, last_modified_by: Unset, revision: Unset, created: new.created, modified: new.modified, preserved: [] }
-		core = WmlWrite.core_properties(properties)
-		read = WmlRead.core_properties(core)
-		dated = |given, kept|
-			match given {
-				Date(written) if kept != given => Err(NotADate(written))
-				_ => Ok({})
-			}
-		dated(new.created, read.created)?
-		dated(new.modified, read.modified)?
+	## A new document with the kit's parts, its core properties part saying
+	## nothing; [Docx.new_document] gives it the properties its caller names
+	## through [Docx.set_properties].
+	document : {} -> Document
+	document = |{}| {
+		core = WmlWrite.core_properties({ title: Unset, subject: Unset, creator: Unset, keywords: Unset, description: Unset, last_modified_by: Unset, revision: Unset, created: Unset, modified: Unset, preserved: [] })
 		trees = Dict.empty().insert(main_part, shell).insert(styles_part, styles_tree).insert(numbering_part, numbering_tree).insert(settings_part, settings_tree).insert(fonts_part, fonts_tree).insert(core_part, core)
-		Ok(Document.from_trees(graph, trees, body))
+		Document.from_trees(graph, trees, body)
 	}
 }
 
@@ -403,10 +381,9 @@ expect {
 		and level.map_ok(|found| (found.format, found.text)) == Ok((Number("lowerRoman"), Text("%3.")))
 }
 
-## A date that is not in the W3C date and time format is refused, and
-## nothing is taken from a clock: without dates the document has none.
+## Nothing is taken from a clock: the kit's core properties part says
+## nothing, no date included, until a caller gives it properties.
 expect {
-	refused = Kit.document({ created: Date("10 November 2026") })
-	undated = Kit.document({ title: Text("Lease") })
-	refused.is_err() and undated.is_ok()
+	core = Document.xml_part(Kit.document({}), core_part).map_ok(|part| WmlRead.core_properties(part.tree))
+	core.map_ok(|read| (read.title, read.created, read.modified, read.preserved)) == Ok((Unset, Unset, Unset, []))
 }

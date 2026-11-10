@@ -5,6 +5,8 @@ app [target] {
 }
 
 import fuzz.Fuzz
+import docx.Build
+import docx.Docx
 import docx.Document
 import docx.Styles
 import docx.XmlTree
@@ -41,15 +43,24 @@ import "../../tests/fixtures/word/tables.docx" as word_tables : List(U8)
 ## properties, and each generated property equals what a separately written
 ## walk of the description's base chains gives, toggles combined between
 ## kinds of style. Every fixture's styles part reads, and every one of its
-## styles resolves idempotently.
+## styles resolves idempotently. A document with the generated styles and
+## the paragraph and run as its body gives, through `Docx.paragraphs`, the
+## properties `Styles` resolves; and in a new document of headings, body
+## text and table cells, every paragraph and run has the properties `Styles`
+## resolves, the cells' with the table style's contribution.
 ##
 ## Allocation ratchets, which only ever move down: reading allocates at most
-## linearly in the part's bytes and resolving a paragraph and a run at most a
-## constant, and each declared example allocates no more than it did when its
+## linearly in the part's bytes and resolving a paragraph and a run not at
+## all, and each declared example allocates no more than it did when its
 ## ceiling was set. The long chain, sixteen times the short one's styles,
 ## reads with at most seventeen times the short one's allocations,
 ## requested bytes and bytes held live in the same run, and resolves its
-## last style for no more than the short chain's last. Raising a ceiling
+## last style for no more than the short chain's last. `Docx.paragraphs`
+## allocates at most linearly in the styles part's bytes and the paragraphs
+## and runs it gives, each declared body no more than its ceiling, and the
+## long body, sixteen times the short one's paragraphs, takes at most
+## seventeen times the short one's allocations, requested bytes and bytes
+## its result holds, beyond what an empty body takes. Raising a ceiling
 ## needs a cause recorded in the pull request.
 test! : Input => Fuzz.Outcome
 test! = |input|
@@ -81,6 +92,25 @@ test! = |input|
 				Err(_) => Fuzz.reject
 			}
 
+		Body(count) =>
+			match bodies.find_first(|body| body.count == count) {
+				Ok(body) => {
+					empty = body_cost!(0)
+					short = body_cost!(16)
+					cost = body_cost!(count)
+					if cost.allocations > body.allocations {
+						crash "a declared body's paragraphs allocated more than its ceiling"
+					}
+					within = |field| beyond(field(cost), field(empty)) <= 17 * beyond(field(short), field(empty))
+					if !(within(|one| one.allocations) and within(|one| one.requested_bytes) and within(|one| one.result_bytes)) {
+						crash "the long body's paragraphs cost more than seventeen times the short one's"
+					}
+					Fuzz.keep
+				}
+
+				Err(_) => Fuzz.reject
+			}
+
 		Fixture(index) =>
 			match fixtures.get(index) {
 				Ok(fixture) => {
@@ -104,7 +134,7 @@ test! = |input|
 			}
 	}
 
-Input : [Generated(List(U8)), Chain(U64), Fixture(U64)]
+Input : [Generated(List(U8)), Chain(U64), Body(U64), Fixture(U64)]
 
 generator : Fuzz.Generator(Input)
 generator = Fuzz.map(Fuzz.bytes, |program| Generated(program))
@@ -315,6 +345,19 @@ agree! = |description| {
 	if actual != expected {
 		crash "effective properties differ from a direct evaluation of the chains"
 	}
+	created = Docx.new_document({}) ?? crash "a new document could not be made"
+	styled = Document.with_part(created, "/word/styles.xml", tree, [])
+	document = Document.with_body(styled, [Paragraph({ properties: paragraph, content: [Run({ properties: run, content: [Text("a")] })] })])
+	{ value: found, stats: query_stats } = Fuzz.measure!("docx-paragraphs", || Docx.paragraphs(document))
+	check_paragraphs(query_stats, xml.to_utf8().len(), 2)
+	match found {
+		[one] =>
+			if one.properties != resolved.paragraph or one.runs.map(|formatted| formatted.properties) != [resolved.run] {
+				crash "Docx.paragraphs differs from the properties Styles resolves"
+			}
+
+		_ => crash "Docx.paragraphs did not give the body's one paragraph"
+	}
 	{}
 }
 
@@ -489,10 +532,80 @@ check_read = |stats, bytes| {
 	{}
 }
 
+# A body of `count` blocks in a new document with a header and a footnote:
+# headings, body text with a bold run, and every eighth a one-cell table of
+# the kit's table style; `Docx.paragraphs` measured, the body's, the
+# header's and the footnote's paragraphs found where they are, each
+# paragraph and run checked against what `Styles` resolves, and its
+# allocations, requested bytes and the bytes its result holds.
+body_cost! : U64 => { allocations : U64, requested_bytes : U64, result_bytes : U64 }
+body_cost! = |count| {
+	created = Docx.new_document({}) ?? crash "a new document could not be made"
+	text = |value, properties| Run({ properties, content: [Text(value)] })
+	bold = { ..Document.no_run_properties, bold: On }
+	cell_paragraph = Paragraph({ properties: Document.no_paragraph_properties, content: [text("Cell", Document.no_run_properties)] })
+	blocks = List.repeat(0, count).map_with_index(
+		|_, index|
+			if index % 8 == 7 {
+				Build.table({}, [[Build.cell({}, [cell_paragraph])]])
+			} else {
+				style = if (index % 4 == 0) Style("Heading1") else Unset
+				Paragraph({ properties: { ..Document.no_paragraph_properties, style: style }, content: [text("Clause ", Document.no_run_properties), text("text", bold)] })
+			},
+	)
+	headed = Build.header(Build.append(created, blocks), {}, [Build.paragraph({}, [Build.text("Header", {})])]) ?? crash "a header could not be added"
+	document = (Build.footnote(headed, [Build.text("Note", {})]) ?? crash "a footnote could not be added").document
+	styles = Docx.styles(document).styles
+	{ value: found, stats } = Fuzz.measure!("docx-paragraphs", || Docx.paragraphs(document))
+	check_paragraphs(stats, 0, 3 * count + 16)
+	in_body = found.keep_if(|one| one.location == Body).len()
+	in_header = found.keep_if(|one| one.location == Header("/word/header1.xml")).len()
+	in_note = found.keep_if(|one| one.location == Footnote(2)).len()
+	if in_body != (if (count == 0) 1 else count) or in_header != 1 or in_note != 1 {
+		crash "Docx.paragraphs did not give every paragraph of the body, the header and the footnote"
+	}
+	grid = Styles.inherited(styles, "TableGrid") ?? crash "the kit has no table grid style"
+	none = { table_paragraph: Document.no_paragraph_properties, table_run: Document.no_run_properties, numbering: Document.no_paragraph_properties }
+	var $index = 0.U64
+	for one in found {
+		contributions = if (one.location == Body and $index % 8 == 7) { ..none, table_paragraph: grid.paragraph, table_run: grid.run } else none
+		$index = $index + 1
+		direct = one.paragraph.properties
+		runs = one.runs.map(|formatted| Styles.effective_run(styles, { paragraph: direct, run: formatted.run.properties }, contributions))
+		if one.properties != Styles.effective_paragraph(styles, direct, contributions) or one.runs.map(|formatted| formatted.properties) != runs {
+			crash "Docx.paragraphs differs from the properties Styles resolves"
+		}
+	}
+	{ allocations: stats.allocs + stats.reallocs, requested_bytes: stats.requested_bytes, result_bytes: beyond(stats.exit_live_bytes, stats.entry_live_bytes) }
+}
+
+# Linear ceilings of `Docx.paragraphs`: reading a styles part of
+# `styles_bytes` beyond the kit's and the kit's numbering part, then each of
+# `items` paragraphs and runs it gives. A new document with a header and a
+# footnote and an empty body takes 2,794 allocations and holds 147,944
+# bytes live, nearly all of it reading the kit's styles; each block of the
+# declared bodies about 1.2 allocations, 2.6 KB requested and 1.9 KB of
+# result.
+check_paragraphs : Fuzz.Stats, U64, U64 -> {}
+check_paragraphs = |stats, styles_bytes, items| {
+	if stats.allocs + stats.reallocs > 4_096 + styles_bytes // 2 + 2 * items {
+		crash "Docx.paragraphs allocated more than linearly in the styles and the paragraphs"
+	}
+	if stats.peak_live_bytes - stats.entry_live_bytes > 262_144 + 32 * styles_bytes + 1_024 * items {
+		crash "Docx.paragraphs held more than linearly many bytes live"
+	}
+	{}
+}
+
+# How far a measure is above another, or 0: an empty body's result holds
+# fewer bytes than were live when it began.
+beyond : U64, U64 -> U64
+beyond = |measure, base| if (measure > base) measure - base else 0
+
 check_resolve : Fuzz.Stats -> {}
 check_resolve = |stats| {
-	if stats.allocs + stats.reallocs > 16 {
-		crash "resolving a paragraph and a run allocated more than a constant"
+	if stats.allocs + stats.reallocs > 0 {
+		crash "resolving a paragraph and a run allocated"
 	}
 	{}
 }
@@ -503,12 +616,21 @@ check_resolve = |stats| {
 # ratio of 15.9) and, as buffer capacities round differently, 179,945 and
 # 2,923,705 requested bytes, a ratio of 16.25, which is why the pair allows
 # a seventeenth; they hold 37,816 and 535,504 bytes live, a ratio of 14.2.
-# Resolving takes 2 allocations at any length, because each
-# style's chain is merged once when the table is read.
+# Resolving takes no allocation at any length, because each style's chain
+# is merged once when the table is read and each resolution merges its
+# levels one into the next.
 chains : List({ length : U64, allocations : U64 })
 chains = [
 	{ length: 16, allocations: 839 },
 	{ length: 256, allocations: 13_331 },
+]
+
+# Exact ceilings: the allocations of `Docx.paragraphs` over a declared body
+# of a new document, measured on nightly-2026-11-07.
+bodies : List({ count : U64, allocations : U64 })
+bodies = [
+	{ count: 16, allocations: 2_814 },
+	{ count: 256, allocations: 3_114 },
 ]
 
 # Each fixture's styles-reading allocations and the styles it resolves.
@@ -552,6 +674,8 @@ target = Fuzz.target_with!({
 	examples: [
 		Fuzz.example({ name: "short-chain", revision: "1", make: || Chain(16) }),
 		Fuzz.example({ name: "long-chain", revision: "1", make: || Chain(256) }),
+		Fuzz.example({ name: "short-body", revision: "1", make: || Body(16) }),
+		Fuzz.example({ name: "long-body", revision: "1", make: || Body(256) }),
 	].concat(fixtures.map_with_index(|fixture, index| Fuzz.example({ name: fixture.name, revision: "1", make: || Fixture(index) }))),
 	generator,
 	test!,

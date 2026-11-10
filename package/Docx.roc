@@ -6,7 +6,8 @@
 ## document kit; `Docx.body` and `Docx.text` read what its body says,
 ## `Docx.final_text`, `Docx.original_text` and `Docx.revisions` its tracked
 ## changes, `Docx.footnotes` and `Docx.endnotes` its notes, `Docx.comments`
-## its comments, `Docx.people` their authors, `Docx.fields` its fields and
+## its comments, `Docx.people` their authors, `Docx.fields` its fields,
+## `Docx.paragraphs` its paragraphs with their effective properties and
 ## `Docx.tracks_revisions` whether it tracks changes;
 ## `Docx.add_comment`, `Docx.reply`, `Docx.resolve` and
 ## `Docx.remove_comment` edit its comments; `Docx.accept`, `Docx.reject`,
@@ -14,9 +15,10 @@
 ## `Docx.replace_text`, `Docx.insert_text` and `Docx.delete_text` its text,
 ## and `Docx.insert_blocks` and `Docx.delete_blocks` its paragraphs and
 ## tables, silently or as tracked changes; `Docx.set_tracking` whether it
-## tracks changes, and `Docx.set_different_odd_and_even` whether odd and
+## tracks changes, `Docx.set_different_odd_and_even` whether odd and
 ## even pages have different headers and footers, which
-## `Docx.different_odd_and_even` reads;
+## `Docx.different_odd_and_even` reads, and `Docx.set_properties` what it
+## says about itself, which `Docx.core_properties` reads;
 ## `Docx.to_bytes` writes a document as a package, its body written from the
 ## model, `Docx.to_bytes_with` with the options it is given, and
 ## `Docx.to_chunks` and `Docx.next_chunk` a part at a time; and `Docx.equivalent` says whether two documents write the same.
@@ -99,13 +101,14 @@ Docx :: [].{
 
 	## A new document from the default document kit, as [Kit.document]
 	## builds it: an empty page, the kit's styles and lists, settings, a font
-	## table, and the title, author and dates `properties` gives as its core
-	## properties; or the date it gives that is not in the W3C date and time
-	## format. `Docx.new_document({})` is a document with no properties, and
+	## table, and the core properties `properties` gives, as
+	## [Docx.set_properties] sets them; or the date it gives that is not in
+	## the W3C date and time format. `Docx.new_document({})` is a document
+	## with no properties, and
 	## `Docx.new_document({ title: Text("Lease"), created: Date("2026-11-10T09:00:00Z") })`
 	## names only what it has.
-	new_document : Kit.New -> Try(Document, [NotADate(Str)])
-	new_document = |properties| Kit.document(properties)
+	new_document : Docx.Properties -> Try(Document, [NotADate(Str)])
+	new_document = |properties| Docx.set_properties(Kit.document({}), properties)
 
 	## Write a document as the bytes of a `.docx`. The main document part is
 	## written from the model, as [Docx.body] reads it, by
@@ -298,6 +301,65 @@ Docx :: [].{
 	## has none.
 	custom_properties : Document -> List(Document.CustomProperty)
 	custom_properties = |document| WmlRead.custom_properties(properties_tree(document, custom_properties_relationship))
+
+	## Where in a document a paragraph is: its body; the footnote or endnote at
+	## this place among [Docx.footnotes] or [Docx.endnotes], which is how a
+	## note reference names it; or the header or footer part of this name, as
+	## a section's [Document.HeaderFooter] names it.
+	Location : [Body, Footnote(U64), Endnote(U64), Header(Str), Footer(Str)]
+
+	## A paragraph of a document with its effective properties, as
+	## [Docx.paragraphs] gives it: where it is; the paragraph as the model
+	## holds it, with its direct properties; the properties that apply to it
+	## once its styles, its list level, the style of the table it is in and
+	## the document's defaults are taken into account, as
+	## [Styles.effective_paragraph] resolves them; and the runs of its current
+	## text in order, each with its effective properties.
+	FormattedParagraph : { location : Docx.Location, paragraph : Document.Paragraph, properties : Document.ParagraphProperties, runs : List(Docx.FormattedRun) }
+
+	## A run of a paragraph's current text with its effective properties: the
+	## run as the model holds it, with its direct properties, and the
+	## properties that apply to it once its character style, its
+	## paragraph's style, the style of the table it is in and the
+	## document's defaults are taken into account, as [Styles.effective_run]
+	## resolves them.
+	FormattedRun : { run : Document.Run, properties : Document.RunProperties }
+
+	## The paragraphs of a document, each with its effective properties and
+	## the runs of its current text with theirs: the body's in reading order,
+	## then each footnote's and each endnote's in order, then each header's and
+	## footer's in the order the main document relates to them. Every
+	## paragraph is there on its own, those in tables and content controls
+	## included, a paragraph whose mark is deleted too. A paragraph resolves
+	## through [Docx.styles], the list level its effective numbering reference
+	## names in [Docx.numbering], and in a table the paragraph and run
+	## properties [Styles.table_properties] gives the innermost table's style.
+	## The runs are those whose text [Document.paragraph_text] counts, inside
+	## hyperlinks, fields, insertions and moves here, not deletions or moves
+	## away. What reading the styles and numbering did not take as written,
+	## those queries give beside their tables.
+	paragraphs : Document -> List(Docx.FormattedParagraph)
+	paragraphs = |document| {
+		formatting = { styles: Docx.styles(document).styles, numbering: Docx.numbering(document).numbering, table: no_table_style, location: Body }
+		notes_of = |listed, location| listed.map_with_index(|note, index| { blocks: note.content, location: location(index) })
+		regions = match Document.related(document, "/", Opc.officedocument_relationship) {
+			Ok(main) => main.relationships
+			Err(NotFound) => []
+		}
+		in_regions = regions.keep_oks(
+			|relationship|
+				if relationship.mode == Internal and relationship.kind == header_relationship {
+					Ok({ blocks: Docx.header_footer(document, relationship.target), location: Header(relationship.target) })
+				} else if relationship.mode == Internal and relationship.kind == footer_relationship {
+					Ok({ blocks: Docx.header_footer(document, relationship.target), location: Footer(relationship.target) })
+				} else {
+					Err(NotARegion)
+				},
+		)
+		parts = List.join([[{ blocks: Docx.body(document), location: Body }], notes_of(Docx.footnotes(document), |index| Footnote(index)), notes_of(Docx.endnotes(document), |index| Endnote(index)), in_regions])
+		blocks = parts.fold(0, |sum, part| sum + part.blocks.len())
+		parts.fold(List.with_capacity(blocks), |found, part| formatted_blocks(found, part.blocks, { ..formatting, location: part.location }))
+	}
 
 	## A document's numbering table, read from the numbering part of its main
 	## document by [Numbering.read], with what reading did not take as
@@ -572,7 +634,133 @@ Docx :: [].{
 	## [Document.HeaderFooter]s of kind `Even`.
 	set_different_odd_and_even : Document, [On, Off] -> Try(Document, EditError)
 	set_different_odd_and_even = |document, state| with_setting(document, state, WmlWrite.different_odd_and_even)
+
+	## What a document says about itself, given to [Docx.set_properties]:
+	## each property given replaces the document's, and each left `Unset`
+	## keeps it, as [Document.CoreProperties] names them. Dates are in the
+	## W3C date and time format, such as `2026-11-10T09:00:00Z`.
+	Properties := {
+		title : [Unset, Text(Str)] ?? Unset,
+		subject : [Unset, Text(Str)] ?? Unset,
+		creator : [Unset, Text(Str)] ?? Unset,
+		keywords : [Unset, Text(Str)] ?? Unset,
+		description : [Unset, Text(Str)] ?? Unset,
+		last_modified_by : [Unset, Text(Str)] ?? Unset,
+		revision : [Unset, Number(U64)] ?? Unset,
+		created : [Unset, Date(Str)] ?? Unset,
+		modified : [Unset, Date(Str)] ?? Unset,
+	}
+
+	## The document with its core properties as `properties` gives them over
+	## those [Docx.core_properties] reads, written by
+	## [WmlWrite.core_properties] into the part the package's core
+	## properties relationship targets, and every other property that part
+	## holds kept; a document without the part is given one. A date that
+	## does not read back as given, because it is not in the W3C date and
+	## time format, is refused with `NotADate` and the date as given.
+	set_properties : Document, Docx.Properties -> Try(Document, [NotADate(Str)])
+	set_properties = |document, given| {
+		current = Docx.core_properties(document)
+		chosen = |new, old|
+			match new {
+				Unset => old
+				_ => new
+			}
+		merged = {
+			title: chosen(given.title, current.title),
+			subject: chosen(given.subject, current.subject),
+			creator: chosen(given.creator, current.creator),
+			keywords: chosen(given.keywords, current.keywords),
+			description: chosen(given.description, current.description),
+			last_modified_by: chosen(given.last_modified_by, current.last_modified_by),
+			revision: chosen(given.revision, current.revision),
+			created: chosen(given.created, current.created),
+			modified: chosen(given.modified, current.modified),
+			preserved: current.preserved,
+		}
+		tree = WmlWrite.core_properties(merged)
+		read = WmlRead.core_properties(tree)
+		dated = |date, kept|
+			match date {
+				Date(written) if kept != date => Err(NotADate(written))
+				_ => Ok({})
+			}
+		dated(merged.created, read.created)?
+		dated(merged.modified, read.modified)?
+		match Document.related(document, "/", core_properties_relationship) {
+			Ok(part) => Ok(Document.with_part(document, part.name, tree, part.relationships))
+			Err(NotFound) => Ok(Document.with_new_part(document, { source: "/", kind: core_properties_relationship, name: "/docProps/core.xml", content_type: "application/vnd.openxmlformats-package.core-properties+xml" }, tree))
+		}
+	}
 }
+
+# What a paragraph resolves through: the style and numbering tables, what
+# the style of the table it is in gives, and where it is.
+Formatting : { styles : Styles, numbering : Numbering, table : { paragraph : Document.ParagraphProperties, run : Document.RunProperties }, location : Docx.Location }
+
+no_table_style : { paragraph : Document.ParagraphProperties, run : Document.RunProperties }
+no_table_style = { paragraph: Document.no_paragraph_properties, run: Document.no_run_properties }
+
+# The paragraphs of blocks with their effective properties, appended to
+# `found`.
+formatted_blocks : List(Docx.FormattedParagraph), List(Document.Block), Formatting -> List(Docx.FormattedParagraph)
+formatted_blocks = |found, blocks, formatting| blocks.fold(found, |so_far, block| formatted_block(so_far, block, formatting))
+
+formatted_block : List(Docx.FormattedParagraph), Document.Block, Formatting -> List(Docx.FormattedParagraph)
+formatted_block = |found, block, formatting|
+	match block {
+		Paragraph(paragraph) => List.append(found, formatted_paragraph(paragraph, formatting))
+		Table(table) => {
+			inner = { ..formatting, table: Styles.table_properties(formatting.styles, table.properties.style) }
+			Document.table_rows(table).fold(found, |in_rows, row| Document.row_cells(row).fold(in_rows, |in_cells, cell| formatted_blocks(in_cells, cell.content, inner)))
+		}
+
+		Container({ element: _, content }) => formatted_blocks(found, content, formatting)
+		Section(_) => found
+		CommentStart(_) => found
+		CommentEnd(_) => found
+		Preserved(_) => found
+	}
+
+# A paragraph with its effective properties, resolved once to find its
+# numbering reference and again with its list level's properties, and the
+# runs of its current text with theirs.
+formatted_paragraph : Document.Paragraph, Formatting -> Docx.FormattedParagraph
+formatted_paragraph = |paragraph, formatting| {
+	direct = paragraph.properties
+	stated = Styles.effective_paragraph(formatting.styles, direct, { table_paragraph: formatting.table.paragraph, table_run: formatting.table.run, numbering: Document.no_paragraph_properties })
+	properties = match Numbering.level(formatting.numbering, formatting.styles, stated.numbering) {
+		Ok(level) => Styles.effective_paragraph(formatting.styles, direct, { table_paragraph: formatting.table.paragraph, table_run: formatting.table.run, numbering: level.paragraph })
+		Err(_) => stated
+	}
+	runs = paragraph.content.fold(List.with_capacity(paragraph.content.len()), |found, inline| formatted_runs(found, inline, direct, formatting))
+	{ location: formatting.location, paragraph, properties, runs }
+}
+
+# The runs of an inline's current text with their effective properties,
+# appended to `found`.
+formatted_runs : List(Docx.FormattedRun), Document.Inline, Document.ParagraphProperties, Formatting -> List(Docx.FormattedRun)
+formatted_runs = |found, inline, paragraph, formatting|
+	match inline {
+		Run(run) => List.append(found, { run, properties: Styles.effective_run(formatting.styles, { paragraph, run: run.properties }, { table_paragraph: formatting.table.paragraph, table_run: formatting.table.run, numbering: Document.no_paragraph_properties }) })
+		Hyperlink({ target: _, preserved: _, content }) => content.fold(found, |so_far, inner| formatted_runs(so_far, inner, paragraph, formatting))
+		SimpleField({ code: _, preserved: _, content }) => content.fold(found, |so_far, inner| formatted_runs(so_far, inner, paragraph, formatting))
+		Container({ element: _, content }) => content.fold(found, |so_far, inner| formatted_runs(so_far, inner, paragraph, formatting))
+		Revision(revision) =>
+			if revision.kind == Deletion or revision.kind == MoveSource {
+				found
+			} else {
+				revision.content.fold(found, |so_far, inner| formatted_runs(so_far, inner, paragraph, formatting))
+			}
+
+		BookmarkStart(_) => found
+		BookmarkEnd(_) => found
+		CommentStart(_) => found
+		CommentEnd(_) => found
+		MoveStart(_) => found
+		MoveEnd(_) => found
+		Preserved(_) => found
+	}
 
 # The document with a setting `On` or `Off` in the settings part of its
 # main document, as `write` sets it in the part's tree; a document without
@@ -2127,4 +2315,113 @@ expect {
 		and Docx.revisions(by_grace).len() == 2
 		and texts(by_id) == ("new\nnew\nnew\n", 6)
 		and Docx.revisions(by_id).is_empty()
+}
+
+# A package whose main document has this body, with a styles part: a
+# default paragraph style giving 11-point text, a heading based on it that
+# keeps with the next paragraph and is bold, a bold character style, a
+# table style that centres and italicises and a default table style in
+# capitals; and a numbering part whose list keeps the lines of its
+# paragraphs together.
+styled_package_of : Str -> Try(List(U8), Opc.WriteError)
+styled_package_of = |body| {
+	kind = |name| "application/vnd.openxmlformats-officedocument.wordprocessingml.${name}+xml"
+	graph = {
+		relationships: [{ id: "rId1", kind: Opc.officedocument_relationship, target: "/word/document.xml", mode: Internal }],
+		parts: [
+			{
+				name: "/word/document.xml",
+				content_type: kind("document.main"),
+				relationships: [
+					{ id: "rId1", kind: styles_relationship, target: "/word/styles.xml", mode: Internal },
+					{ id: "rId2", kind: numbering_relationship, target: "/word/numbering.xml", mode: Internal },
+				],
+			},
+			{ name: "/word/styles.xml", content_type: kind("styles"), relationships: [] },
+			{ name: "/word/numbering.xml", content_type: kind("numbering"), relationships: [] },
+		],
+	}
+	namespace = "xmlns:w='http://schemas.openxmlformats.org/wordprocessingml/2006/main'"
+	styles = [
+		"<w:style w:type='paragraph' w:default='1' w:styleId='Normal'><w:rPr><w:sz w:val='22'/></w:rPr></w:style>",
+		"<w:style w:type='paragraph' w:styleId='Heading1'><w:basedOn w:val='Normal'/><w:pPr><w:keepNext/><w:outlineLvl w:val='0'/></w:pPr><w:rPr><w:b/></w:rPr></w:style>",
+		"<w:style w:type='character' w:styleId='Strong'><w:rPr><w:b/></w:rPr></w:style>",
+		"<w:style w:type='table' w:styleId='Grid'><w:pPr><w:jc w:val='center'/></w:pPr><w:rPr><w:i/></w:rPr></w:style>",
+		"<w:style w:type='table' w:default='1' w:styleId='Plain'><w:pPr><w:keepNext/></w:pPr><w:rPr><w:caps/></w:rPr></w:style>",
+	]
+	list = "<w:abstractNum w:abstractNumId='0'><w:lvl w:ilvl='0'><w:numFmt w:val='decimal'/><w:pPr><w:keepLines/></w:pPr></w:lvl></w:abstractNum><w:num w:numId='1'><w:abstractNumId w:val='0'/></w:num>"
+	content = |name|
+		if name == "/word/styles.xml" {
+			"<w:styles ${namespace}>${Str.join_with(styles, "")}</w:styles>"
+		} else if name == "/word/numbering.xml" {
+			"<w:numbering ${namespace}>${list}</w:numbering>"
+		} else {
+			"<w:document ${namespace}><w:body>${body}</w:body></w:document>"
+		}
+	Opc.to_bytes(graph, |name| Bytes(content(name).to_utf8()))
+}
+
+## Paragraphs come in reading order, those in tables included, each with the
+## properties its style chain, list level, table style and the defaults give
+## and the runs of its current text with theirs: a heading's bold inverted
+## by a bold character style, a list item's level keeping its lines
+## together, a table style centring and italicising its cells' text and the
+## default table style capitalising the text of a table that names none,
+## runs in a hyperlink counted and deleted runs not. Each keeps the
+## paragraph and run as the model holds them.
+expect {
+	heading = "<w:p><w:pPr><w:pStyle w:val='Heading1'/></w:pPr><w:r><w:t>Title</w:t></w:r><w:r><w:rPr><w:rStyle w:val='Strong'/></w:rPr><w:t>plain</w:t></w:r></w:p>"
+	item = "<w:p><w:pPr><w:numPr><w:ilvl w:val='0'/><w:numId w:val='1'/></w:numPr></w:pPr><w:hyperlink w:anchor='x'><w:r><w:t>item</w:t></w:r></w:hyperlink><w:del w:author='A'><w:r><w:delText>gone</w:delText></w:r></w:del></w:p>"
+	table = "<w:tbl><w:tblPr><w:tblStyle w:val='Grid'/></w:tblPr><w:tr><w:tc><w:p><w:r><w:t>cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"
+	plain = "<w:tbl><w:tr><w:tc><w:p><w:r><w:t>plain cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"
+	parsed = Docx.parse(styled_package_of("${heading}${item}${table}${plain}")?)?
+	found = Docx.paragraphs(parsed.document)
+	texts = found.map(|one| one.runs.map(|formatted| Document.inline_text(Run(formatted.run))))
+	read = match Docx.body(parsed.document).first() {
+		Ok(Paragraph(first_read)) => Ok(first_read)
+		_ => Err(Missing)
+	}
+	paragraph = |index| Ok((found.get(index) ? |_| Missing).properties)
+	run = |index, at| Ok(((found.get(index) ? |_| Missing).runs.get(at) ? |_| Missing).properties)
+	first = found.first()?
+	texts == [["Title", "plain"], ["item"], ["cell"], ["plain cell"]]
+		and found.all(|one| one.location == Body)
+		and Ok(first.paragraph) == read
+		and first.runs.map(|formatted| formatted.run.properties.style) == [Unset, Style("Strong")]
+		and (first.properties.style, first.properties.outline_level, first.properties.keep_next, first.properties.keep_lines) == (Style("Heading1"), Level(0), On, Unset)
+		and (run(0, 0)?.bold, run(0, 0)?.size, run(0, 1)?.bold, run(0, 1)?.size) == (On, HalfPoints(22), Off, HalfPoints(22))
+		and (paragraph(1)?.style, paragraph(1)?.keep_lines, paragraph(1)?.alignment) == (Style("Normal"), On, Unset)
+		and (paragraph(2)?.alignment, paragraph(2)?.keep_next, run(2, 0)?.italic, run(2, 0)?.bold, run(2, 0)?.caps) == (Aligned(Center), Unset, On, Off, Off)
+		and (paragraph(3)?.alignment, paragraph(3)?.keep_next, run(3, 0)?.italic, run(3, 0)?.caps) == (Unset, On, Off, On)
+}
+
+## The paragraphs of notes, headers and footers follow the body's, each
+## named by where it is: a footnote by its place among the footnotes, a
+## header by its part. A comment's reference is a run without text.
+expect {
+	parsed = Docx.parse(revised_parts({})?)?
+	found = Docx.paragraphs(parsed.document).map(|one| (one.location, one.runs.map(|formatted| Document.inline_text(Run(formatted.run)))))
+	found == [(Body, ["new"]), (Body, ["body", ""]), (Footnote(0), ["new"]), (Header("/word/header1.xml"), ["new"])]
+}
+
+## A document without styles or numbering has paragraphs whose effective
+## properties are their direct ones, toggles made `On` or `Off`.
+expect {
+	parsed = Docx.parse(package_of("<w:p><w:pPr><w:jc w:val='right'/></w:pPr><w:r><w:rPr><w:i/></w:rPr><w:t>a</w:t></w:r></w:p>")?)?
+	found = Docx.paragraphs(parsed.document)
+	found.map(|one| one.properties.alignment) == [Aligned(Right)]
+		and found.map(|one| one.runs.map(|formatted| (formatted.properties.italic, formatted.properties.bold))) == [[(On, Off)]]
+}
+
+## Setting properties gives a document without core properties a part that
+## holds them, which survives writing; properties left out stay, and a date
+## that does not read back as given is refused.
+expect {
+	parsed = Docx.parse(package_of("<w:p/>")?)?
+	titled = Docx.set_properties(parsed.document, { title: Text("Lease"), created: Date("2026-11-10T09:00:00Z") })?
+	written = Docx.parse(Docx.to_bytes(titled)?)?
+	described = Docx.core_properties(Docx.set_properties(written.document, { creator: Text("Grace Author") })?)
+	Docx.core_properties(parsed.document).title == Unset
+		and (described.title, described.creator, described.created, described.modified) == (Text("Lease"), Text("Grace Author"), Date("2026-11-10T09:00:00Z"), Unset)
+		and Docx.set_properties(parsed.document, { modified: Date("10 November") }).map_ok(|_| {}) == Err(NotADate("10 November"))
 }
