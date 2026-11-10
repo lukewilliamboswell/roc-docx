@@ -108,7 +108,7 @@
     {
       "id": "ms-docx",
       "title": "[MS-DOCX]: Word Extensions to the Office Open XML (.docx) File Format",
-      "revision": "to be pinned to a published version when first consumed (plan G3.2)",
+      "revision": "to be pinned to a published version when first consumed",
       "url": "https://learn.microsoft.com/en-us/openspecs/office_standards/ms-docx/",
       "retrieved_on": "2026-11-09",
       "role": "w14, w15, w16cid, w16cex and w16du extension namespaces for comments and revisions",

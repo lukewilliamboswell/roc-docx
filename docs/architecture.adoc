@@ -28,13 +28,13 @@ The implementation is defined against a pinned standards corpus, recorded with d
 * *ZIP* as the PKWARE APPNOTE 6.3 describes it, with *DEFLATE* (RFC 1951).
 * *Unicode* as the Roc `Str` type carries it.
 
-Output targets the *Transitional* namespaces and schemas. Strict-namespace documents are accepted on input by namespace mapping once a slice delivers it; they are never produced. Word writes Transitional, LibreOffice and pandoc write Transitional, and a Strict output would be the least interoperable choice available.
+Output targets the *Transitional* namespaces and schemas. Strict-namespace documents are not read yet; when they are, it will be by mapping their namespaces to the Transitional ones, and they are never produced. Word writes Transitional, LibreOffice and pandoc write Transitional, and a Strict output would be the least interoperable choice available.
 
 Standards and extension-specification updates are reviewed changes to the ledger. An oracle or validator upgrade never silently changes what the package claims to conform to.
 
 == Scope and claims
 
-The package makes four distinct, testable claims. A capability is claimed only when the implementation plan records the evidence for it.
+The package makes four distinct, testable claims. A capability is claimed only when its evidence is in the repository and runs in CI: cases checked against the oracles, and fuzz properties with their ceilings.
 
 * *Reads.* A document produced by the supported producers parses into the typed model without error, with every supported construct recovered and every unsupported construct either preserved or reported, never dropped silently.
 * *Preserves.* Parsing a document and writing it back loses no part, no modelled fact and no preserved extension. Equivalence is defined in xref:architecture.adoc#fidelity-and-preservation[Fidelity and preservation].
@@ -69,7 +69,7 @@ The package does not open the binary `.doc` format, RTF or OpenDocument; does no
 
 == Core invariants
 
-These hold for every slice and are enforced by tests, fuzz targets and the oracle lanes:
+These hold for every change and are enforced by tests, fuzz targets and the oracle lanes:
 
 . *Pure Roc, no native dependencies.* The package and all of its runtime dependencies are pure Roc. External tools are test oracles only; nothing in `package/` invokes or links them.
 . *Never crash on input.* Parsing any byte sequence returns `Ok` or a structured `Err`. Resource use is bounded by explicit limits on archive size, part count, uncompressed size, XML depth and element count, so a hostile document fails fast with a named limit error. Each limit is checked before the memory it bounds is allocated: the ZIP central directory is checked against the limits before any entry is inflated, and inflation stops at the entry's limit.
@@ -78,7 +78,7 @@ These hold for every slice and are enforced by tests, fuzz targets and the oracl
 . *Deterministic.* The package reads no clock, draws no random numbers and depends on no host state. Dates and author identities come from the caller. Identifier allocation is a pure function of the model.
 . *Facts flow forward.* Each pipeline stage consumes facts the previous stage established and never re-derives them from incidental data. The WordprocessingML reader does not re-parse XML text; the writer does not inspect bytes it emitted earlier.
 . *Typed, structured errors.* Errors and diagnostics are tag unions with locations (part name, element path, offset) and never free-text only.
-. *Linear cost.* Parsing and writing are linear in input size for the modelled constructs. Evidence of allocation behaviour is part of a slice's completion, as xref:architecture.adoc#performance-and-storage[Performance and storage] says.
+. *Linear cost.* Parsing and writing are linear in input size for the modelled constructs. Evidence of allocation behaviour is part of every change that adds or alters an operation, as xref:architecture.adoc#performance-and-storage[Performance and storage] says.
 . *Bounded working set.* Opening a package costs memory proportional to its central directory. A part is inflated only when a stage consumes it, into a buffer sized from its checked declared size. Beyond the model, reading holds one part's bytes and its parse state; writing holds one part's serialized and compressed bytes and the central directory. Measured ceilings enforce these bounds.
 
 == The package as a pipeline
@@ -241,7 +241,7 @@ The same `Document` therefore produces the same bytes on every host, which the t
 
 Documents are untrusted input. The reader enforces caps on compressed size, uncompressed size per entry and in total, entry count, part name length, XML nesting depth, element count and attribute count, each returning a named limit error. Defaults are generous for business documents and adjustable through parse options; the value a caller gives is the bound, with no cap above it, so a caller that raises a limit for documents it trusts owns that choice. Relationship targets are resolved within the package; a target that escapes the package root is an error. No content is ever interpreted as a path on the host, a URL to fetch or code to run.
 
-Fuzz targets replay these guarantees continuously; the never-crash target is the first target every slice keeps green.
+Fuzz targets replay these guarantees continuously; the never-crash target is the first target every change keeps green.
 
 == Performance and storage
 
@@ -419,7 +419,7 @@ The ZIP and DEFLATE packages are pinned from the maintainer's forks because the 
 
 The repository follows the roc-automation manual's pure-package profile: `Blueprint.roc` and `Blueprint.lock` declare and pin tooling; `package/` is the bundle; `examples/` depend on the working tree by relative path; `fuzz/`, `tests/`, `oracle/` and `scripts/` sit outside the bundle; releases go through the shared release workflow and publish an immutable bundle, an examples archive and notes. Oracle adapters are the one place a language other than Roc is used in the repository, and only because independence from the package is their purpose.
 
-Work lands on an integration branch through small reviewed pull requests and reaches `main` at gate boundaries, as the implementation plan describes.
+Work lands on `main` through small reviewed pull requests, each stating what it ran and what that reported.
 
 == Rejected alternatives
 

@@ -247,7 +247,7 @@ small_of = |input|
 # Exact ceilings: the allocations and reallocations of parsing and of
 # writing each declared document, as measured on nightly-2026-11-07 with
 # roc-zip 0.3.0-rc1 and roc-parser 6.0.0-rc.1 when the ceiling was set.
-# Writing comments and their threads from the model (G3.3) looks for the
+# Writing comments and their threads from the model looks for the
 # comments part and its threads on every write, 3 more for each example's
 # writing, and writes the comments part and the parts beside it, reading
 # which entries the model does not hold and scanning every other part for
@@ -256,7 +256,7 @@ small_of = |input|
 # comments. Reading comments as written, without processing them for
 # compatibility first, lowered parsing them by 5 and 337. Writing through
 # the write options and the emission step `to_bytes` shares with
-# `to_chunks` (G1.6) costs 2 more for each example, 3 for the Word and
+# `to_chunks` costs 2 more for each example, 3 for the Word and
 # pandoc fixtures.
 exact_ceiling : Input -> Try({ parse : U64, write : U64 }, [NotDeclared])
 exact_ceiling = |input|

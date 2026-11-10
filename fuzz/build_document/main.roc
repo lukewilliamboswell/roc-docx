@@ -552,7 +552,7 @@ span_of = |text, phrase|
 # Linear ceilings on a region's allocations: each call of a builder costs at
 # most a constant, a constructor's for each block it makes, so that a call
 # whose cost grew with the document would exceed them; writing costs at most
-# linearly in the written size. Measured on nightly-2026-11-07 (G5.4a), the
+# linearly in the written size. Measured on nightly-2026-11-07, the
 # most a chapter's two footnotes took is 157, and 222 for a document's first
 # two, as the first reads the footnotes part's separators into the model; a
 # call took at most 68 for properties, 63 for a footer, 52 for a header and
