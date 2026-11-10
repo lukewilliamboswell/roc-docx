@@ -34,6 +34,7 @@ Lint :: [].{
 			per_source,
 			Lint.consistent_urls(sources),
 			Lint.chapters_included(sources),
+			Lint.fuzz_inventory(sources),
 			Lint.manual_snippets(sources),
 			Lint.owned_loop_state(sources),
 			Lint.docx_identity(binaries),
@@ -189,6 +190,41 @@ Lint :: [].{
 					found
 				},
 		)
+	}
+
+	## The architecture's fuzz inventory names every fuzz target, a
+	## `fuzz/<name>/main.roc`, in a row of its own, and names no other.
+	fuzz_inventory : List(Source) -> List(Violation)
+	fuzz_inventory = |sources| {
+		architecture = "docs/architecture.adoc"
+		text = (sources.find_first(|source| source.path == architecture) ?? { path: "", text: "" }).text
+		inventory = match text.split_first("|Target |Property\n") {
+			Ok({ before: _, after }) =>
+				match after.split_first("|===") {
+					Ok({ before, after: _ }) => before
+					Err(NotFound) => after
+				}
+
+			Err(NotFound) => ""
+		}
+		rows = inventory.split_on("\n").keep_oks(
+			|line|
+				match line.drop_prefix("|`").split_first("` |") {
+					Ok({ before, after: _ }) if line.starts_with("|`") => Ok(before)
+					_ => Err(NotARow)
+				},
+		)
+		found_targets = sources.keep_oks(
+			|source|
+				if source.path.starts_with("fuzz/") and source.path.ends_with("/main.roc") {
+					Ok(source.path.drop_prefix("fuzz/").drop_suffix("/main.roc"))
+				} else {
+					Err(NotATarget)
+				},
+		)
+		missing = found_targets.drop_if(|name| rows.contains(name)).map(|name| { path: "fuzz/${name}/main.roc", line: 1, message: "${architecture}'s fuzz inventory names every fuzz target" })
+		stale = rows.drop_if(|name| found_targets.contains(name)).map(|name| { path: architecture, line: 1, message: "the fuzz inventory names `${name}`, which is not a target under fuzz/" })
+		List.concat(missing, stale)
 	}
 
 	## Every Roc listing in a manual chapter is included from a program that
@@ -554,6 +590,16 @@ expect {
 		"docs/orphan.adoc: a chapter opens with a single = Title",
 		"docs/orphan.adoc: docs/index.adoc includes every chapter",
 		"docs/releases/0.2.0.adoc: docs/releases.adoc includes every chapter",
+	]
+}
+
+## The fuzz inventory names every target under fuzz/ and no other.
+expect {
+	architecture = { path: "docs/architecture.adoc", text: "[cols=\"1,3\"]\n|===\n|Target |Property\n|`listed` |A rule\n|`gone` |Another\n|===\n" }
+	sources = [architecture, { path: "fuzz/listed/main.roc", text: "" }, { path: "fuzz/unlisted/main.roc", text: "" }]
+	Lint.fuzz_inventory(sources).map(|violation| "${violation.path}: ${violation.message}") == [
+		"fuzz/unlisted/main.roc: docs/architecture.adoc's fuzz inventory names every fuzz target",
+		"docs/architecture.adoc: the fuzz inventory names `gone`, which is not a target under fuzz/",
 	]
 }
 

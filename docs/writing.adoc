@@ -47,7 +47,9 @@ A tree whose root is not a WordprocessingML document is not a main document
 part, and comes back as it is. `WmlWrite.notes` writes a footnotes or
 endnotes part from its tree as read and a list of notes, and
 `WmlWrite.header_footer` a header or footer part from its tree and its
-blocks, in the same way. A note reference names its note by its place
+blocks, in the same way; `WmlWrite.note_ids` gives the identifiers the
+notes take, a note beyond the part's own taking the lowest number no note
+before it takes. A note reference names its note by its place
 among the document's footnotes or endnotes, and a comment's range or
 reference its comment by its place among the comments; one whose place the
 context does not have cannot be written, and fails with

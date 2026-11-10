@@ -552,12 +552,14 @@ span_of = |text, phrase|
 # Linear ceilings on a region's allocations: each call of a builder costs at
 # most a constant, a constructor's for each block it makes, so that a call
 # whose cost grew with the document would exceed them; writing costs at most
-# linearly in the written size. Measured on nightly-2026-11-07 (G5.4), the
-# most a call took is 174 for a footnote, 68 for properties, 63 for a
-# footer, 53 for a header and 20 for a block on average with tables of up
-# to nine rows; appending takes a reallocation now and then; page setups and
-# section breaks change the body in place and allocate nothing; writing
-# takes 0.31 to 0.45 a byte of the written parts.
+# linearly in the written size. Measured on nightly-2026-11-07 (G5.4a), the
+# most a chapter's two footnotes took is 157, and 222 for a document's first
+# two, as the first reads the footnotes part's separators into the model; a
+# call took at most 68 for properties, 63 for a footer, 52 for a header and
+# 20 for a block on average
+# with tables of up to nine rows; appending takes a reallocation now and
+# then; page setups and section breaks change the body in place and allocate
+# nothing; writing takes 0.31 to 0.45 a byte of the written parts.
 linear_allocation_ceiling : Str, U64, U64 -> U64
 linear_allocation_ceiling = |region, calls, size|
 	match region {
@@ -569,23 +571,28 @@ linear_allocation_ceiling = |region, calls, size|
 	}
 
 # Linear ceilings on the bytes a region held live beyond its entry, in its
-# calls and the written size. Every builder that changes the body may grow
-# it, holding the old list and the new while it doubles: the long
-# document's body, about 290 bytes a block, peaks at 594,736 bytes, 0.84 a
-# byte of its parts, and a block's model is larger than its markup, so a
-# body of short blocks holds several bytes a byte; sixteen allows them. The
-# constructors hold a chapter's blocks, each with its content, up to 30 KB
-# a block with a table. A footnote holds a copy of the list of notes
-# so far, 0.07 bytes a byte of the long document and up to 1.3 for a
-# document of footnotes alone, and properties a constant. Writing holds 21
-# bytes a byte of the long document and the default document kit's parts
-# beside it, 337 KB for the letter.
+# calls and the written size. Every builder that may grow the body holds
+# the old list and the new while it doubles: the long document's body,
+# about 290 bytes a block, peaks at 594,736 bytes, 0.84 a byte of its
+# parts, and a block's model is larger than its markup, so a body of short
+# blocks holds several bytes a byte; sixteen allows them. The constructors
+# hold a chapter's blocks, each with its content, up to 30 KB a block with a
+# table. A footnote holds its note's model, which the document keeps, as
+# appending holds the blocks it adds, and the list of notes while it
+# doubles: 3,460 bytes a note for a chapter of 78 footnotes, beside a
+# constant for writing the note once to check it. A header or footer holds
+# its part's tree and, as the table of parts doubles, the old table and the
+# new: at most 23,787 bytes for the long document, 0.03 a byte of its
+# parts. Properties hold a constant. Writing holds 21 bytes a byte of the
+# long document and the default document kit's parts beside it, 337 KB for
+# the letter.
 linear_memory_ceiling : Str, U64, U64 -> U64
 linear_memory_ceiling = |region, calls, size|
 	match region {
 		"docx-to-bytes" => 1_048_576 + 32 * size
-		"build-append" | "build-page-setup" | "build-new-section" | "build-header" | "build-footer" => 65_536 + 16 * size
+		"build-append" | "build-page-setup" | "build-new-section" => 65_536 + 16 * size
 		"build-constructors" => 262_144 + 65_536 * calls
+		"build-footnote" => 65_536 + 4096 * calls
 		_ => 65_536 + size
 	}
 
@@ -595,12 +602,12 @@ linear_memory_ceiling = |region, calls, size|
 exact_ceilings : Input -> Try(List((Str, U64)), [NotDeclared])
 exact_ceilings = |input|
 	match input {
-		Program(program) if program == short_document => Ok([("build-footnote", 515), ("build-constructors", 1440), ("build-append", 74), ("build-page-setup", 0), ("build-properties", 204), ("build-new-section", 0), ("build-header", 102), ("build-footer", 171), ("docx-to-bytes", 24_145)])
-		Program(program) if program == long_document => Ok([("build-footnote", 8210), ("build-constructors", 23_040), ("build-append", 1070), ("build-page-setup", 0), ("build-properties", 3264), ("build-new-section", 0), ("build-header", 1634), ("build-footer", 2701), ("docx-to-bytes", 319_033)])
+		Program(program) if program == short_document => Ok([("build-footnote", 535), ("build-constructors", 1440), ("build-append", 74), ("build-page-setup", 0), ("build-properties", 204), ("build-new-section", 0), ("build-header", 99), ("build-footer", 172), ("docx-to-bytes", 23_760)])
+		Program(program) if program == long_document => Ok([("build-footnote", 7559), ("build-constructors", 23_040), ("build-append", 1070), ("build-page-setup", 0), ("build-properties", 3264), ("build-new-section", 0), ("build-header", 1586), ("build-footer", 2704), ("docx-to-bytes", 313_659)])
 		Gallery(Letter) => Ok([("build-constructors", 72), ("build-append", 1), ("docx-to-bytes", 4518)])
 		Gallery(Agreement) => Ok([("build-constructors", 65), ("build-append", 1), ("docx-to-bytes", 6181)])
 		Gallery(Minutes) => Ok([("build-constructors", 59), ("build-append", 1), ("docx-to-bytes", 5494)])
-		Gallery(Report) => Ok([("build-properties", 70), ("build-constructors", 300), ("build-header", 53), ("build-footer", 45), ("build-footnote", 52), ("build-append", 1), ("build-new-section", 0), ("docx-to-bytes", 9001)])
+		Gallery(Report) => Ok([("build-properties", 70), ("build-constructors", 300), ("build-header", 52), ("build-footer", 45), ("build-footnote", 110), ("build-append", 1), ("build-new-section", 0), ("docx-to-bytes", 8910)])
 		_ => Err(NotDeclared)
 	}
 
@@ -614,23 +621,17 @@ growth = 16
 # How many times its short example's bytes the long one may request and
 # hold live in a region: eighteen, an eighth over the sixteen of the count,
 # as sets, dictionaries and lists that grow by doubling cross their
-# capacities, but for three regions. Appending grows the body, a list that
+# capacities, but for appending. Appending grows the body, a list that
 # requests up to about twice its final size as it grows and holds the old
 # and the new while it moves, so the long document's body, sixteen times
 # the short one's, holds 20.4 times as many bytes at its peak: thirty-two,
 # twice the count, as `fuzz/revision_algebra` allows its list of changes.
-# Adding a footnote copies the list of notes the footnotes part holds, and
-# a header after a footnote and a section break copies the document's
-# table of parts: the compiler copies a value it updates in a dictionary,
-# and the forms that would update it in place leak or crash on
-# nightly-2026-11-07. Both are shallow copies, a fixed share of a note or a
-# part, so the bytes they request grow with the square of the chapters
-# while the allocations stay the same a call: 36.4 and 37.4 times the short
-# example's, and forty allows them.
+# Footnotes are held as the model and added to in place, and headers and
+# footers add their parts without copying the table of parts: footnotes
+# request 14.8 and headers 16.1 times the short example's bytes.
 byte_ratio : Str -> U64
 byte_ratio = |region|
 	match region {
-		"build-footnote" | "build-header" => 40
 		"build-append" => 32
 		_ => 18
 	}

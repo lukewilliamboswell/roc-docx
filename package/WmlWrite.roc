@@ -198,6 +198,41 @@ WmlWrite :: [].{
 		Ok({ tree, relationships: $state.relationships, next: $state.next })
 	}
 
+	## The identifiers [WmlWrite.notes] gives `count` notes written into
+	## `shell`, in order, which a note reference names a note by: a note at
+	## a place the shell has takes the identifier of the shell's note there,
+	## and each note after them the lowest number from 0 that no note before
+	## it takes. A shell that is not a footnotes or endnotes part holds no
+	## notes.
+	note_ids : XmlTree.Node, U64 -> List(Str)
+	note_ids = |shell, count| {
+		root = match shell {
+			Element(part) if is_w(part.name, "footnotes") or is_w(part.name, "endnotes") => part
+			_ => return []
+		}
+		local = if (is_w(root.name, "footnotes")) "footnote" else "endnote"
+		var $ids = List.with_capacity(count)
+		var $used = Set.with_capacity(count)
+		for child in root.children {
+			match child {
+				Element(kept) if is_w(kept.name, local) and $ids.len() < count => {
+					id = value_of(kept.attributes, "id") ?? ""
+					$ids = List.append($ids, id)
+					$used = $used.insert(id)
+				}
+
+				_ => {}
+			}
+		}
+		var $next = 0.U64
+		while $ids.len() < count {
+			$next = free_id($used, $next)
+			$ids = List.append($ids, $next.to_str())
+			$used = $used.insert($next.to_str())
+		}
+		$ids
+	}
+
 	## The tree of a header or footer part holding `content`, and the part's
 	## relationships with any it needs added, as [WmlWrite.document] gives a
 	## main document's. `shell` is the part as it was read: its root's
@@ -2485,6 +2520,30 @@ expect {
 	rendered(WmlWrite.notes(notes_shell, notes, no_context)).ends_with("<w:footnotes xmlns:w=\"${wordprocessingml}\"><w:footnote w:type=\"separator\" w:id=\"0\"><w:p/></w:footnote><w:footnote w:id=\"1\"><w:p><w:r><w:t>a</w:t></w:r></w:p></w:footnote><w:footnote w:id=\"2\" w:type=\"continuationNotice\"/></w:footnotes>")
 		and rendered(WmlWrite.notes(notes_shell, notes.take_first(1), no_context)).ends_with("<w:footnote w:type=\"separator\" w:id=\"0\"><w:p/></w:footnote></w:footnotes>")
 		and rendered(WmlWrite.header_footer(header_shell, [paragraph([run([Tab])]), paragraph([])], no_context)).ends_with("<w:hdr xmlns:w=\"${wordprocessingml}\"><w:p><w:r><w:tab/></w:r></w:p><w:p/></w:hdr>")
+}
+
+## The identifiers notes written into a shell take are the shell's at its
+## notes' places, then the lowest numbers no note before them takes: those
+## [WmlWrite.notes] writes them with.
+expect {
+	notes_shell = XmlTree.parse("<w:footnotes xmlns:w='${wordprocessingml}'><w:footnote w:type='separator' w:id='-1'/><w:footnote w:id='0'/><w:footnote w:id='2'/></w:footnotes>".to_utf8(), {}) ?? Text("")
+	written_ids = |count|
+		match WmlWrite.notes(notes_shell, List.repeat({ kind: Note, content: [paragraph([])] }, count), no_context) {
+			Ok({ tree: Element(root), relationships: _, next: _ }) =>
+				root.children.keep_oks(
+					|child|
+						match child {
+							Element(note) => value_of(note.attributes, "id")
+							Text(_) => Err(NotFound)
+						},
+				)
+
+			_ => []
+		}
+	WmlWrite.note_ids(notes_shell, 5) == ["-1", "0", "2", "1", "3"]
+		and written_ids(5) == WmlWrite.note_ids(notes_shell, 5)
+		and written_ids(1) == WmlWrite.note_ids(notes_shell, 1)
+		and WmlWrite.note_ids(Text(""), 2) == []
 }
 
 ## Comments take the lowest identifiers no kept content uses and the body's

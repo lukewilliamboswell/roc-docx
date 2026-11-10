@@ -338,6 +338,7 @@ The fuzz inventory is part of the architecture because each target encodes a rul
 |Target |Property
 |`parse_never_crashes` |Any bytes parse to `Ok` or `Err` within the limits, and parsing is deterministic
 |`zip_opc_roundtrip` |A generated part set packages and unpacks to the same parts
+|`opc_open` |Any bytes open to a package or a structured error, the same way twice; every part reads back as the size it declares or as an error, and a part name over the limit is refused before anything is inflated
 |`xml_namespace_roundtrip` |A generated namespaced tree serializes and parses to an equivalent tree
 |`mce_processing` |MCE selection agrees with a reference implementation of the Part 3 rules on generated trees
 |`document_roundtrip` |A generated document writes and parses to an equivalent document, and writes to identical bytes twice
@@ -345,6 +346,9 @@ The fuzz inventory is part of the architecture because each target encodes a rul
 |`revision_algebra` |Accept and reject obey their laws: accept after tracked edit equals untracked edit; reject restores; final and original text agree with the untracked documents
 |`comment_anchors` |Adding, replying to, resolving and removing comments preserves text and keeps every range balanced and every identifier unique
 |`style_resolution` |Effective properties are idempotent under re-resolution and agree with a direct evaluation of the inheritance chain
+|`numbering_resolution` |List levels resolve to the format and start, or the reason they are not listed, that a direct evaluation of the numbering rules gives
+|`table_reading` |A body of generated tables reads back as written: rows with their skipped grid columns, cells with their text, spans and vertical merges, nested tables, and content controls in place, each repaired width with one diagnostic
+|`build_document` |A document built by the builders writes and reads back equivalent to what was built, and each builder costs at most a constant a call
 |===
 
 Allocation ceilings are asserted inside these targets as xref:architecture.adoc#performance-and-storage[Performance and storage] describes; nothing in CI accepts or updates a baseline.

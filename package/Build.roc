@@ -274,29 +274,27 @@ Build :: [].{
 	## reference style that shows the note's number. The note is a
 	## paragraph in the footnote text style that starts with its number and
 	## a space. A document without footnotes is given a footnotes part, with
-	## the separator lines Word and LibreOffice draw above notes.
+	## the separator lines Word and LibreOffice draw above notes. The
+	## footnotes are kept as the model from the first footnote added, as
+	## [Document.with_notes] keeps them, and added to in place when nothing
+	## else holds the document, so adding a footnote costs what the note
+	## costs; the note is written into the part, with its identifier and any
+	## relationship it needs, when the document is written.
 	footnote : Document, List(Document.Inline) -> Try({ document : Document, reference : Document.Inline }, Error)
 	footnote = |document, content| {
 		main = main_name(document)?
 		has_notes = Document.related(document, main, footnotes_relationship).is_ok()
 		with_part = if (has_notes) document else Document.with_new_part(document, { source: main, kind: footnotes_relationship, name: free_name(document, "footnotes", One), content_type: wordprocessingml_type("footnotes") }, footnotes_shell)
-		places = note_places(Document.related(with_part, main, footnotes_relationship) ? |_| NoMainDocument)
+		part = Document.related(with_part, main, footnotes_relationship) ? |_| NoMainDocument
 		mark = Run({ properties: { ..Document.no_run_properties, style: Style("FootnoteReference") }, content: [NoteMark(Footnote)] })
 		note = { kind: Note, content: [Paragraph({ properties: { ..Document.no_paragraph_properties, style: Style("FootnoteText") }, content: List.concat([mark, Build.text(" ", {})], content) })] }
-		context = part_context(with_part, main, places.relationships)
-		if places.alone and !content.any(names_a_range) {
-			written = WmlWrite.notes(places.shell, [note], context)?
-			added = match written.tree {
-				Element(one) => one.children
-				Text(_) => []
-			}
-			Ok({ document: Document.with_children_added(with_part, places.name, added, written.relationships), reference: reference_to(places.count) })
-		} else {
-			notes = Docx.footnotes(with_part)
-			tree = (Document.xml_part(with_part, places.name) ? |_| NoMainDocument).tree
-			written = WmlWrite.notes(tree, List.append(notes, note), context)?
-			Ok({ document: Document.with_part(with_part, places.name, written.tree, written.relationships), reference: reference_to(notes.len()) })
+		_ = WmlWrite.notes(w("footnotes", [], []), [note], part_context(with_part, main, part.relationships))?
+		held = match Document.notes(with_part, part.name) {
+			Ok(_) => with_part
+			Err(Whole) => Document.with_notes(with_part, part.name, Docx.footnotes(with_part))
 		}
+		place = Document.notes(held, part.name).map_ok(|notes| notes.len()) ?? 0
+		Ok({ document: Document.map_notes(held, part.name, |notes| List.append(notes, note)), reference: reference_to(place) })
 	}
 
 	## The document with `content` as the header of the pages of its final
@@ -501,69 +499,6 @@ free_name = |document, local, how_many| {
 # A reference to the footnote at `place` among a document's footnotes.
 reference_to : U64 -> Document.Inline
 reference_to = |place| Run({ properties: { ..Document.no_run_properties, style: Style("FootnoteReference") }, content: [NoteReference({ kind: Footnote, note: place })] })
-
-# A footnotes part's name and relationships; how many notes it holds,
-# which is the place a note after them takes; and its root holding only an
-# empty note whose identifier is after every note's: one more than the
-# greatest, and at least 1, after the separators Word numbers -1 and 0. A
-# note written into that shell can be added after the part's notes alone,
-# unless the part is not an element or its greatest identifier leaves none
-# after it. Only what is taken from the part's tree is kept, so the tree
-# can be added to in place.
-note_places : Document.XmlPart -> { name : Str, relationships : List(Opc.Relationship), count : U64, shell : XmlTree.Node, alone : Bool }
-note_places = |{ name, tree, relationships }|
-	match tree {
-		Element(root) => {
-			var $count = 0.U64
-			var $next = 1.I64
-			for child in root.children {
-				match child {
-					Element(element) =>
-						if is_w(element.name, "footnote") {
-							$count = $count + 1
-							for one in element.attributes {
-								if is_w(one.name, "id") {
-									match I64.from_str(one.value) {
-										Ok(number) => {
-											$next = $next.max(number.plus_saturated(1))
-										}
-
-										Err(_) => {}
-									}
-								}
-							}
-						}
-
-					Text(_) => {}
-				}
-			}
-			shell = Element({ name: root.name, bindings: root.bindings, attributes: root.attributes, children: [w("footnote", [attribute("id", $next.to_str())], [])] })
-			{ name, relationships, count: $count, shell, alone: $next < 9_223_372_036_854_775_807 }
-		}
-
-		Text(_) => { name, relationships, count: 0, shell: tree, alone: Bool.False }
-	}
-
-# Whether a name is WordprocessingML's `local`.
-is_w : XmlTree.Name, Str -> Bool
-is_w = |name, local|
-	match name.namespace {
-		Uri(uri) => uri == wordprocessingml and name.local == local
-		NoNamespace => Bool.False
-	}
-
-# Whether an inline holds a bookmark, a move's range or a tracked change,
-# whose identifiers are allocated across the document's parts.
-names_a_range : Document.Inline -> Bool
-names_a_range = |inline|
-	match inline {
-		BookmarkStart(_) | BookmarkEnd(_) | MoveStart(_) | MoveEnd(_) => Bool.True
-		Hyperlink(link) => link.content.any(names_a_range)
-		SimpleField(field_held) => field_held.content.any(names_a_range)
-		Container(container) => container.content.any(names_a_range)
-		Revision(_) => Bool.True
-		_ => Bool.False
-	}
 
 # A run's content: the text between tabs and line feeds, a tab for each tab
 # and a line break for each line feed.
@@ -783,9 +718,9 @@ expect {
 	}
 }
 
-## A footnote is added after the notes alone, taking the identifier after
-## the greatest, or, when it holds a bookmark, written with the others so
-## its bookmark's identifier is the part's own; both read back in place.
+## Footnotes added one by one, one of them holding a bookmark, are written
+## with the lowest identifiers after the separators' and read back in place
+## with their text and the bookmark.
 expect {
 	built_notes = |{}| {
 		created = Docx.new_document({}) ? |_| Unbuilt
@@ -793,11 +728,12 @@ expect {
 		second = Build.footnote(first.document, [BookmarkStart("cited"), Build.text("Marked.", {}), BookmarkEnd("cited")]) ? |_| Unbuilt
 		third = Build.footnote(second.document, [Build.text("Last.", {})]) ? |_| Unbuilt
 		body = Build.append(third.document, [Build.paragraph({}, [first.reference, second.reference, third.reference])])
-		ids = match Document.related(body, "/word/document.xml", footnotes_relationship) {
+		read = round_trip(body) ? |_| Unbuilt
+		ids = match Document.related(read, "/word/document.xml", footnotes_relationship) {
 			Ok(part) => WmlRead.note_ids(part.tree)
 			Err(NotFound) => []
 		}
-		Ok({ ids, read: round_trip(body) ? |_| Unbuilt })
+		Ok({ ids, read })
 	}
 	match built_notes({}) {
 		Ok({ ids, read }) => {

@@ -230,7 +230,8 @@ exactly as the archive stored it; the parts, their content types and their
 relationships are those of the original, with any relationship a part
 written from its model needs added, in the order `Opc.writer` fixes.
 The same document always gives the same bytes. A document holds the
-archive's bytes, the body's model and the trees of its other XML parts;
+archive's bytes, the body's model, the footnotes' model once a footnote is
+built, and the trees of its other XML parts;
 reading and writing it hold one part's bytes beyond them, and reading the
 main document holds one block's tree. `Document.from_package` reads a
 package you opened yourself, with limits of your choosing, every XML part
