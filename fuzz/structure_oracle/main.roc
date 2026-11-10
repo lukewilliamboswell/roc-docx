@@ -148,15 +148,15 @@ inflated = |bytes|
 
 # Exact ceilings: the allocations and reallocations of checking each
 # declared example, as measured on nightly-2026-11-07 when the ceiling was
-# set. Writing comments from their threads (G3.3) gives each comment's last
+# set. Writing comments from their threads gives each comment's last
 # paragraph an identifier in Word's `w14` namespace, declared ignorable on
 # the comments part, which the check reads: 15 more for the generated
 # examples, 18 for pandoc's comments and 15 for its review; the Word
 # comments and Google Docs documents lost the identifiers on every other
 # paragraph and fell by 19 and 6. The new document from the default
-# document kit (G5.1) takes 2,028 and the document made by every builder
-# (G5.2) 2,777, and the document whose odd, even and first pages have
-# their own headers and footers (G5.5) 2,583, each set when it was declared.
+# document kit takes 2,028 and the document made by every builder
+# 2,777, and the document whose odd, even and first pages have
+# their own headers and footers 2,583, each set when it was declared.
 exact_ceiling : Input -> Try(U64, [NotDeclared])
 exact_ceiling = |input|
 	match input {
