@@ -643,7 +643,9 @@ scan_node = |scan, node|
 blocks : List(Document.Block), Mode, State -> Out
 blocks = |content, mode, state| {
 	var $nodes = List.with_capacity(content.len())
-	var $state = state
+	# Owned by the loop, a record update rather than the parameter as given,
+	# so its sets and dictionaries are updated in place.
+	var $state = { ..state, next: state.next }
 	var $index = 0.U64
 	while $index < content.len() {
 		match content.get($index) {

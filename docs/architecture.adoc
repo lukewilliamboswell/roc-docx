@@ -360,6 +360,7 @@ A rule that lives only in guidance is followed until someone forgets it. Where a
 * every fuzz target declares examples and carries a measurement or ceiling;
 * every `TODO` names a GitHub issue;
 * every top-level `expect` in the package has a doc comment, so a failing test prints its name;
+* no loop in the package starts from a parameter as given when the parameter is a record holding a list, set, dictionary or string; it starts from an owned copy, a record update of the parameter, so its collections are updated in place;
 * every `.docx` outside the fixture corpus is byte-identical to a fixture, so it inherits that fixture's provenance;
 * every manual chapter opens with a title and is included by the manual's index;
 * every Roc listing in the manual is a tagged region of the compiled snippet program or an include of an example, never written out.
