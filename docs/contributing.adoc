@@ -212,11 +212,16 @@ bytes an item costs rise and fall as counts cross their capacities; where
 that carries a pair's bytes past the count ratio, the target allows a stated
 margin beside the per-item range it measured, as `fuzz/comment_anchors` does
 for writing comments, small enough that a quadratic step still fails. A list
-requests up to about twice its final size over its growth, and a small
-example's list may fit the room it starts with and never grow, so
-`fuzz/revision_algebra`, whose small examples' changes fit the list of
-changes as it starts, allows twice the count ratio in bytes. To set
-or revise a ceiling:
+that starts with fixed room requests up to about twice its final size over
+its growth, while a small example's list may fit that room and never grow,
+which carries a pair's bytes towards twice the count ratio. Where a cheap
+count of the items is at hand, the list is made at that size instead, as
+`Docx.revisions` counts the changes before it lists them. A loop that
+carries a value exactly as a parameter gave it can copy that value's
+collections at every change instead of updating them in place, which the
+pair check shows as bytes per item that grow with the document; the loops
+that accept and reject changes therefore start from a record update of the
+state they are given. To set or revise a ceiling:
 
 [source,sh]
 ----

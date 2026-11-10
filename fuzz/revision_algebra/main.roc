@@ -361,13 +361,13 @@ linear_memory_ceiling = |region, length|
 exact_ceilings : List(U8) -> Try(List((Str, U64)), [NotDeclared])
 exact_ceilings = |program|
 	if program == small_program {
-		Ok([("revisions-text", 2), ("docx-revisions", 80), ("docx-accept-all", 656), ("docx-reject-all", 600), ("docx-accept", 848), ("docx-reject", 854), ("docx-replace-text", 782), ("docx-insert-text", 776), ("docx-delete-text", 767), ("docx-insert-blocks", 417), ("docx-delete-blocks", 410)])
+		Ok([("revisions-text", 2), ("docx-revisions", 77), ("docx-accept-all", 642), ("docx-reject-all", 586), ("docx-accept", 834), ("docx-reject", 840), ("docx-replace-text", 782), ("docx-insert-text", 776), ("docx-delete-text", 767), ("docx-insert-blocks", 417), ("docx-delete-blocks", 410)])
 	} else if program == large_program {
-		Ok([("revisions-text", 4), ("docx-revisions", 1227), ("docx-accept-all", 10_076), ("docx-reject-all", 9180), ("docx-accept", 13_044), ("docx-reject", 13_214), ("docx-replace-text", 11_769), ("docx-insert-text", 11_763), ("docx-delete-text", 11_754), ("docx-insert-blocks", 5937), ("docx-delete-blocks", 5930)])
+		Ok([("revisions-text", 4), ("docx-revisions", 1217), ("docx-accept-all", 9830), ("docx-reject-all", 8934), ("docx-accept", 12_798), ("docx-reject", 12_968), ("docx-replace-text", 11_769), ("docx-insert-text", 11_763), ("docx-delete-text", 11_754), ("docx-insert-blocks", 5937), ("docx-delete-blocks", 5930)])
 	} else if program == few_changes {
-		Ok([("revisions-text", 2), ("docx-revisions", 31), ("docx-accept-all", 290), ("docx-reject-all", 286), ("docx-accept", 399), ("docx-reject", 390), ("docx-replace-text", 383), ("docx-insert-text", 377), ("docx-delete-text", 368), ("docx-insert-blocks", 228), ("docx-delete-blocks", 221)])
+		Ok([("revisions-text", 2), ("docx-revisions", 31), ("docx-accept-all", 286), ("docx-reject-all", 282), ("docx-accept", 395), ("docx-reject", 386), ("docx-replace-text", 383), ("docx-insert-text", 377), ("docx-delete-text", 368), ("docx-insert-blocks", 228), ("docx-delete-blocks", 221)])
 	} else if program == many_changes {
-		Ok([("revisions-text", 2), ("docx-revisions", 488), ("docx-accept-all", 4220), ("docx-reject-all", 4156), ("docx-accept", 5910), ("docx-reject", 5766), ("docx-replace-text", 5399), ("docx-insert-text", 5393), ("docx-delete-text", 5384), ("docx-insert-blocks", 2913), ("docx-delete-blocks", 2906)])
+		Ok([("revisions-text", 2), ("docx-revisions", 481), ("docx-accept-all", 4162), ("docx-reject-all", 4098), ("docx-accept", 5854), ("docx-reject", 5710), ("docx-replace-text", 5399), ("docx-insert-text", 5393), ("docx-delete-text", 5384), ("docx-insert-blocks", 2913), ("docx-delete-blocks", 2906)])
 	} else {
 		Err(NotDeclared)
 	}
@@ -384,15 +384,16 @@ small_of = |program|
 	}
 
 # How many times its small example's bytes requested and held live a large
-# example may take: thirty-two, twice the sixteen of the count, since a list
-# grows geometrically from a fixed capacity and so requests, over its
-# growth, up to about twice its final size, while the small example's list
-# may never have grown. The list of changes starts with room for sixteen,
-# which few-changes fills, so many-changes' 256 request 31.1 times as many
-# bytes in `docx-revisions` and hold 23.1 times; every other region takes
-# at most 17.8 times. A quadratic step costs sixteen times more again.
+# example may take: eighteen, the sixteen of the count and a margin of an
+# eighth, as `fuzz/comment_anchors` allows, since the sets, dictionaries and
+# lists that grow by doubling make an item's bytes rise and fall as counts
+# cross their capacities. The text edits take the most, 16.5 times
+# requested and 16.7 held; the list of changes is made at the size a count
+# of them gives, so `docx-revisions` takes 16.0, and accepting and
+# rejecting, whose loops own the state they carry, at most 15.8. A
+# quadratic step costs sixteen times more again.
 byte_ratio : U64
-byte_ratio = 32
+byte_ratio = 18
 
 # The small and large declared programs repeat one program, the large one
 # sixteen times as often. Each declared program begins with a plain
