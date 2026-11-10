@@ -46,6 +46,8 @@ long document a paragraph, footnote or chapter at a time costs a constant
 number of allocations a call. See [Generate a document](docs/generating.adoc)
 in the manual.
 
+- [The documentation site](https://lukewilliamboswell.github.io/roc-docx/):
+  the latest release's package URL, examples and API reference.
 - [The manual](docs/index.adoc), for application authors and contributors:
   what the package is, how to use it, the enduring
   [architecture](docs/architecture.adoc) and how to

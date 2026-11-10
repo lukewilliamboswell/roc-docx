@@ -427,6 +427,18 @@ modules `package/main.roc` exposes, and published beside the manual under
 `api/`. A module's doc comment and each of its public declarations' are
 written for application authors, as the manual is.
 
+The https://lukewilliamboswell.github.io/roc-docx/[documentation site] leads
+with the latest release, because that is what its readers use: its front
+page gives the release's package URL, its examples archive and its API
+reference, restored from the release's documentation archive, and offers a
+newer release candidate beside it. The default branch's manual, its PDF and
+its API reference are published under `unreleased/`. The `docs` workflow
+assembles the site from the working tree and the release assets, so nothing
+rendered is committed. It builds the site on every pull request, as the
+`docs` check, whose `github-pages` artifact is the site to preview, and
+deploys it from the default branch and again after every release, because a
+release changes what the site leads with.
+
 == Pull requests
 
 One change per pull request, small enough for one reviewer. The description

@@ -29,3 +29,14 @@ jobs:
       nightly-tag: ${{ inputs.nightly-tag || '' }}
       check-task: check
       setup-command: '["sudo", "apt-get", "install", "-y", "--no-install-recommends", "libxml2-utils"]'
+  # A release changes what the site leads with: once it is published, the
+  # site is built by a read-only job and deployed by one holding only the
+  # Pages permissions.
+  Site:
+    needs: Release
+    if: inputs.version != ''
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/docs.yml
