@@ -1,0 +1,43 @@
+= What roc-docx is
+
+roc-docx is a pure Roc package for Word documents in the Office Open XML
+format, the `.docx` files that Microsoft Word, LibreOffice and Google Docs
+produce. It is written for applications that handle business documents:
+contracts, agreements, letters, reports, minutes and the review cycles around
+them, where the comments and tracked changes are as important as the text.
+
+== Three jobs
+
+Read:: Open a document another tool produced and recover its content
+faithfully: text, structure, basic formatting, tables, comments with their
+authors and dates, and every tracked change.
+Modify:: Change a document and write it back without losing anything the
+application did not touch: add or resolve comments, accept or reject
+revisions, record new edits as tracked changes, fill in content.
+Generate:: Produce new documents from application data that open cleanly in
+Word and LibreOffice: headings, lists, tables, headers and footers, page
+numbers, comments and tracked changes.
+
+roc-docx understands a document as its author structured it, not as a page
+image. It does not lay out, paginate, render or convert to other formats, and
+it never contacts the network. The
+xref:architecture.adoc#scope-and-claims[scope and claims] section of the
+architecture lists the supported content and the constructs that are preserved
+but not modelled.
+
+== What you can rely on
+
+Every capability roc-docx claims is backed by evidence from independent
+oracles: the ECMA-376 schemas validate every part it writes, LibreOffice reads
+what it writes and agrees on what it reads, and pandoc produces a regenerable
+fixture corpus with known content. The package is pure Roc with pure Roc
+dependencies, it never crashes on any input, it bounds the resources a
+document may consume, and the same document always serializes to the same
+bytes.
+
+The package is not yet released. Reading a document, keeping what it does
+not model, writing it back valid, its comments and its tracked changes are
+established on the whole fixture corpus by that evidence, and so is
+generating new documents, which the same oracles check and whose builders
+cost a constant number of allocations a call however long the document
+grows.

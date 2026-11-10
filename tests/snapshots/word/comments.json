@@ -1,0 +1,31 @@
+{
+  "schema": "roc-docx-snapshot/1",
+  "producer": {"name": "roc-docx", "version": "working tree"},
+  "document": "tests/fixtures/word/comments.docx",
+  "keys": ["blocks.kind", "blocks.level", "blocks.list", "blocks.text", "blocks.rows", "blocks.runs.bold", "blocks.runs.italic", "blocks.runs.underline", "blocks.runs.strike", "blocks.runs.superscript", "blocks.runs.subscript", "blocks.runs.link", "notes.kind", "notes.text", "comments.author", "comments.date", "comments.text", "comments.anchor", "comments.thread", "comments.resolved", "revisions.kind", "revisions.author", "revisions.date", "revisions.text", "sections.page_width", "sections.page_height", "sections.orientation", "sections.margin_top", "sections.margin_bottom", "sections.margin_left", "sections.margin_right", "sections.header", "sections.footer", "sections.header_even", "sections.footer_even", "sections.header_first", "sections.footer_first", "properties.title", "properties.subject", "properties.creator", "properties.keywords", "properties.description", "properties.last_modified_by", "properties.created", "properties.modified"],
+  "blocks": [
+    {"kind": "heading", "level": 1, "list": "", "text": "Services Agreement", "runs": [{"text": "Services Agreement", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "The Provider shall perform the Services with reasonable skill and care.", "runs": [{"text": "The Provider shall perform the Services with reasonable skill and care.", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "heading", "level": 2, "list": "", "text": "Fees", "runs": [{"text": "Fees", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "The Customer shall pay the Fees within thirty days of receipt of a valid invoice.", "runs": [{"text": "The Customer shall pay the Fees within thirty days of receipt of a valid invoice.", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "heading", "level": 2, "list": "", "text": "Liability", "runs": [{"text": "Liability", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Neither party is liable for indirect or consequential loss.", "runs": [{"text": "Neither party is liable for indirect or consequential loss.", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Each party shall keep the other's information confidential.", "runs": [{"text": "Each party shall keep the other's information confidential.", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Neither party shall disclose the other's confidential information.", "runs": [{"text": "Neither party shall disclose the other's confidential information.", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []}
+  ],
+  "notes": [],
+  "comments": [
+    {"author": "Ada Reviewer", "date": "2026-05-04T09:15:00Z", "text": "Should this be best endeavours?", "anchor": "reasonable skill and care", "thread": 0, "resolved": false},
+    {"author": "Grace Author", "date": "2026-05-04T10:02:00Z", "text": "No: reasonable skill and care is the market standard.", "anchor": "reasonable skill and care", "thread": 0, "resolved": false},
+    {"author": "Ada Reviewer", "date": "2026-05-04T10:30:00Z", "text": "Agreed; leaving it as drafted.", "anchor": "reasonable skill and care", "thread": 0, "resolved": false},
+    {"author": "Grace Author", "date": "2026-05-05T08:45:00Z", "text": "Confirm the payment term with finance.", "anchor": "thirty days", "thread": 3, "resolved": true},
+    {"author": "Ada Reviewer", "date": "2026-05-05T09:10:00Z", "text": "Finance confirmed thirty days.", "anchor": "thirty days", "thread": 3, "resolved": true},
+    {"author": "Lin Editor", "date": "2026-05-06T14:20:00Z", "text": "Add a cap on indemnities here.", "anchor": "", "thread": 5, "resolved": false},
+    {"author": "Grace Author", "date": "2026-05-06T15:00:00Z", "text": "These two paragraphs repeat each other.\nMerge them before signature.", "anchor": "Each party shall keep the other's information confidential.\nNeither party shall disclose the other's confidential information.", "thread": 6, "resolved": false}
+  ],
+  "revisions": [],
+  "sections": [
+    {"page_width": 11906, "page_height": 16838, "orientation": "portrait", "margin_top": 1440, "margin_bottom": 1440, "margin_left": 1440, "margin_right": 1440, "header": "", "footer": "", "header_even": "", "footer_even": "", "header_first": "", "footer_first": ""}
+  ],
+  "properties": {"title": "Draft Services Agreement", "subject": "", "creator": "Ada Reviewer", "keywords": "", "description": "", "last_modified_by": "Grace Author", "created": "2026-11-09T11:03:00Z", "modified": "2026-11-09T11:03:00Z"}
+}

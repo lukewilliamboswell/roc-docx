@@ -1,0 +1,398 @@
+= Read a document's tracked changes
+
+This chapter reads the changes a document records under tracking: what was
+inserted, deleted or moved, which paragraph marks, table rows and cells were
+added or removed, which properties changed, by whom and when; the
+document's text with every change accepted or every change rejected; and
+whether the document tracks changes at all. It accepts and rejects changes,
+edits a document's text silently or as tracked changes, turns tracking on
+and off, and says how the changes are written. It continues from
+<<read-a-documents-text>>, whose blocks and current text it builds on.
+
+== The text before and after review
+
+`Docx.final_text` gives the body's text with every tracked change accepted,
+and `Docx.original_text` with every change rejected:
+
+[source,roc]
+----
+include::../tests/manual.roc[tag=review-texts,indent=0]
+----
+
+Both read the body the way `Docx.text` does, every paragraph's text followed
+by a line feed, and differ in what the changes leave:
+
+* In the final text, inserted text and text moved in are included, and
+  deleted text and text moved away are not. A paragraph whose mark was
+  deleted or moved away runs on into the next paragraph, and deleted table
+  rows and cells are left out.
+* In the original text, deleted text and text moved away are included, and
+  inserted text and text moved in are not. A paragraph whose mark was
+  inserted or moved in runs on into the next paragraph, and inserted table
+  rows and cells are left out.
+
+A paragraph never runs on into or out of a table cell. A deleted field
+contributes the result it last displayed, as any field does; its deleted
+instructions contribute nothing.
+
+`Docx.text` is the current text, as LibreOffice and pandoc show a document
+with its changes as they stand. It is the final text except that a deleted
+row or cell is still there, without the text deleted from it.
+
+`Revisions.text` gives the same three texts of any blocks, such as a table
+cell's, with `Current`, `Final` or `Original`.
+
+== The changes
+
+`Docx.revisions` lists the body's tracked changes in reading order,
+including those in tables, content controls, hyperlinks and fields:
+
+[source,roc]
+----
+include::../tests/manual.roc[tag=revisions,indent=0]
+----
+
+Each entry is a `Revisions.Listed` record:
+
+* `id`, the change's place among the body's changes in reading order, which
+  identifies it; the document's own numbers for its changes are not part of
+  the model;
+* `kind`: `Insertion`, `Deletion`, `MoveSource` for content moved away from
+  here, `MoveDestination` for the same content arriving elsewhere, `Merge`
+  for a cell merged with the cell above, or `Formatting` for a change of
+  properties;
+* `of`, what changed: `Content` of a paragraph, a `ParagraphMark`, a `Row`
+  or `Cell` of a table, or, for `Formatting`, the properties of a `Run`,
+  `Paragraph`, `Section`, `Table`, `Row` or `Cell`;
+* `author`, the name of the person who made the change;
+* `date`, `Date(timestamp)` or `Unset`, a `Document.Timestamp` as a
+  comment's date is, so `utc_seconds` gives the instant whatever zone the
+  document wrote;
+* `content`, the inlines the change covers: a content change's, the run a
+  run's formatting changed, or the content of a paragraph whose formatting
+  changed; the other changes cover none;
+* `move`, `Move(name)` for a move's source or destination that stands
+  inside a range of its side, naming the move, or `Unpaired`;
+* `text`, the content's text, with the changes inside it shown, so a
+  deletion's text is the text it deleted; a paragraph mark's change has a
+  line feed, the text a paragraph ends with, and a change of a section, table,
+  row or cell none;
+* `follows`, whether the change comes directly after the one listed before
+  it, nothing between them, as one change split in two does, or a change
+  that runs on over a paragraph's mark into the next paragraph.
+
+A change inside another, such as an insertion made inside text that was
+later moved, is listed after the change that holds it. A paragraph's
+formatting is listed before the changes of its content and its mark's
+changes after them; a table's formatting before its rows, a row's insertion,
+deletion and formatting before its cells, and a cell's insertion, deletion or
+merge and its formatting before its content.
+
+== Changes in the model
+
+In a paragraph's content, a tracked change is a
+`Revision({ kind, author, date, content, preserved })` inline: the change
+and the inlines it covers. `preserved` keeps the change's other attributes,
+and a date that is not a date and time, as they were read. Inside a deletion
+or a move's source, deleted text is `Text` run content and deleted field
+instructions are `FieldCode`, so deleted content reads like any other.
+
+A move is recorded twice: where the content was and where it went. Each side
+stands inside a range, `MoveStart({ side, name, author, date, preserved })`
+to `MoveEnd({ side, name })`, with `side` either `Source` or `Destination`.
+The source's and the destination's ranges share the move's name, which pairs
+them. A range's `date` is a `Document.Timestamp` itself, not `Unset` or
+`Date`, because the schema requires a move's range to say when it was made.
+
+The schema requires every change to name its author. A change without one is
+kept as a `Container` of its content rather than read with an invented
+author, and its deleted text stays `Preserved`. A move's range without a
+name, an author or a date and time, and its end, or an end that names no
+range that started, is kept as `Preserved`.
+
+A paragraph's mark, which ends it, is the subject of its own changes, held
+in its properties as `mark`: a list of `{ kind, author, date, preserved }`,
+at most one of each kind, in the order inserted, deleted, moved away, moved
+here.
+The mark's own character properties, and a change of them, stay in the
+paragraph's `preserved` properties.
+
+A table row's properties hold `inserted` and `deleted`, each
+`Tracked({ author, date, preserved })` or `Unset`, and a
+cell's properties hold `revision`: `Inserted`, `Deleted`, or `Merged` with
+the vertical merge the change made and the one it replaced.
+
+A change of properties is part of the properties it changed. The
+properties of a paragraph, run, table, row, cell and section each have a
+`change`, a list holding the change, `{ author, date, preserved, previous }`,
+when there is one, where `previous` holds the properties as they were
+before it. The properties before a change have no changes of their own:
+their `change` is `Unset`, reading leaves their `mark` empty and keeps what
+the schema does not allow there, such as a section's headers, in their
+`preserved`, and writing does not write them.
+
+A table's grid as it was before a change, which names no author, and a
+row's table property exceptions with their changes are kept as they were
+read, in the grid and the row, and written back unchanged.
+
+== Accept and reject changes
+
+`Docx.accept_all` accepts every tracked change and `Docx.reject_all` rejects
+every one, in the body, the notes, the headers and footers and the comments,
+each giving a new document:
+
+[source,roc]
+----
+include::../tests/manual.roc[tag=accept-all,indent=0]
+----
+
+The accepted document's text is the original's final text and the rejected
+document's its original text, and neither has a change left. `Docx.accept`
+and `Docx.reject` take the changes a `Revisions.Selection` selects, leaving
+the others as they are:
+
+[source,roc]
+----
+include::../tests/manual.roc[tag=select,indent=0]
+----
+
+* `All` selects every change.
+* `By(author)` selects the changes one author made.
+* `Between({ from, until })` selects the changes made from `from` up to but
+  not including `until`, both XML Schema dates and times compared as
+  instants, so a change without a date is in no range.
+* `Ids(ids)` selects the changes with these `id`s from `Docx.revisions`,
+  which lists the body's changes, so it selects none in the notes, headers,
+  footers and comments. Accepting or rejecting changes takes them out of the
+  list, so the `id`s of the changes after them change: read `Docx.revisions`
+  again before selecting by `id` once more.
+
+What accepting and rejecting do, change by change:
+
+[cols="2,3,3",options="header"]
+|===
+|Change |Accepted |Rejected
+|Inserted content, or content moved here |The content stays, without the change |The content goes
+|Deleted content, or content moved away |The content goes |The content stays, without the change
+|Changed properties |The properties stay; those before go |The properties before come back
+|Inserted paragraph mark, or one moved here |The mark stays |The paragraph joins the next
+|Deleted paragraph mark, or one moved away |The paragraph joins the next |The mark stays
+|Inserted row or cell |It stays |It goes, with its content
+|Deleted row or cell |It goes, with its content |It stays
+|Merged cell |The merge stays |The cell's vertical merge before it comes back
+|===
+
+Content that goes leaves behind the comment and bookmark boundaries and the
+comment references it held, so a comment on it keeps its place. A table left
+without rows goes too. A move's ranges go once every change in them is
+accepted or rejected.
+
+A paragraph that joins the next gives that paragraph its content, at its
+start, and the joined paragraph keeps the next paragraph's properties, since
+the mark that held its own is gone. If the mark also ended a section, the
+section's end goes with it and its text joins the next section, as in Word,
+unless the section ends the body. A paragraph with no paragraph after it to
+join before a table, the end of its cell or the end of the body stays as it
+is. These are the rules `Revisions.text` follows, so the text of an accepted
+document is always the final text, and of a rejected one the original text.
+
+The changes of each note, header, footer and comment are resolved as the
+body's are, each part on its own: a paragraph joins only the next paragraph
+of its own note, header, footer or comment. Each edit gives the document as
+`Docx.to_bytes` writes it. `Revisions.accept` and `Revisions.reject` do the
+same to any blocks.
+
+== Edit text as tracked changes
+
+`Docx.replace_text`, `Docx.insert_text` and `Docx.delete_text` change a
+document's text. Each takes a `Revisions.Context` that says how: `Untracked`
+changes the text as it stands, and `Tracked({ author, date })` records the
+edit as tracked changes by that author at that date, which the application
+gives, since the package reads no clock. The same edit is never both.
+
+[source,roc]
+----
+include::../tests/manual.roc[tag=replace-text,indent=0]
+----
+
+Tracked, the replaced text stays in the document as a deletion and the new
+text follows it as an insertion, so accepting both gives the text edited
+silently and rejecting both gives the text before the edit. Deleting text
+that was inserted earlier puts a deletion inside that insertion.
+
+An edit can run over the ends of paragraphs, and new text can end one and
+begin another:
+
+[source,roc]
+----
+include::../tests/manual.roc[tag=across-lines,indent=0]
+----
+
+* A paragraph whose line feed is in the span joins the next paragraph, which
+  keeps its own properties, as when a deleted paragraph mark is accepted;
+  tracked, the paragraph's mark is deleted. If the mark ended a section, the
+  section's end goes with it.
+* A line feed in the new text splits the paragraph it lands in. The part
+  before takes a copy of the paragraph's properties, so new paragraphs after
+  a heading are headings too, and a new mark, inserted when tracked; the
+  part after keeps the paragraph's own mark. Rejecting the inserted mark
+  joins the parts again. A hyperlink, field or change the line feed lands
+  in is split in two with the paragraph.
+
+=== Where a text edit applies
+
+A span, a `Comments.Span` as comments use, is `{ start, end }`: byte offsets
+into the current text `Docx.text` gives. Deleted text is not current text,
+so it has no width: offsets count inserted text and skip deleted text, and
+an edit leaves text already deleted as it is. `Docx.insert_text` takes one
+offset, the empty span at it, and `Docx.delete_text` replaces the span with
+nothing.
+
+* The span's characters go, and so does content with no text strictly
+  inside it, such as a picture, a note reference or a field's marks;
+  comment and bookmark boundaries and comment references stay.
+* The new text goes just after the character before the span's end, inside
+  the hyperlink, field or change that character is in unless the character
+  ends it, and with that character's run properties; where the span ends at
+  the start of a line, at the start of that paragraph, with its first run's
+  properties. A tab in the new text is a tab.
+* An edit changes no other text, so offsets before the span stay and those
+  after it move by the difference in length. Making several edits from the
+  last to the first keeps every offset taken from one text valid.
+
+A line feed in a span must end a paragraph that has a paragraph after it to
+join: a span holding the end of a table's row or cell, or the line feed of
+a paragraph followed by a table or ending its cell or the body, fails with
+`LineFeedInSpan(span)`. A span that is not within the text, ends before it
+starts, or inserts after the last line fails with `OutsideText(span)`, one
+that starts or ends inside a character with `NotACharacterBoundary(offset)`,
+and a context whose date is not a date and time with `NotADate(text)`.
+
+The `redline` example accepts one reviewer's changes and rejects another's,
+then replaces, inserts and deletes text as tracked changes, one insertion
+adding a paragraph, and writes the document with tracking on.
+
+== Insert and delete paragraphs and tables
+
+`Docx.insert_blocks` inserts blocks of the model where a paragraph or table
+begins, at a byte offset of `Docx.text` that starts a line, or at the end of
+the text, and `Docx.delete_blocks` deletes the paragraphs and tables from
+where one begins to where one ends, with its line feed. Both take a
+`Revisions.Context`. The new paragraph here is made as
+<<build-the-content>> describes:
+
+[source,roc]
+----
+include::../tests/manual.roc[tag=block-edits,indent=0]
+----
+
+Where a table begins, new blocks go before the table, not into its first
+cell; to insert into a cell, give the offset where one of its paragraphs
+begins.
+
+Tracked, a new paragraph's content is an insertion and its mark is inserted,
+and a new table's rows are inserted with their cells' content. A deleted
+paragraph's content and mark are deleted, and a deleted table's rows with
+their cells' content. Rejecting takes inserted blocks away and accepting
+takes deleted ones away, by the rules of <<accept-and-reject-changes>>, so
+accepting a tracked block edit gives the same edit made silently and
+rejecting it gives the document before:
+
+* Rejecting an inserted mark joins its paragraph into the next, so new
+  paragraphs need the paragraph they go before. At the end of the body, or
+  before a table, the mark of the paragraph before them is inserted
+  instead, as Word records a paragraph added at the end, and the last new
+  paragraph, if its properties differ from that paragraph's, records them
+  as a tracked change from them, so rejecting restores the paragraph before
+  as it was.
+* Accepting a deleted mark joins the paragraph into the next, so deleted
+  paragraphs need a paragraph directly after them, which keeps its own
+  properties and receives the comment and bookmark boundaries and comment
+  references they held. Deleted untracked, they leave the same.
+
+An insertion or deletion whose paragraphs would have no paragraph to join,
+because the paragraph before has changes of its mark, there is none, or a
+table stands between them, fails with `NoParagraphToJoin(offset)`, whether
+tracked or not, so the same edit never succeeds one way and fails the other.
+An offset where no block begins or ends fails with
+`NotABlockBoundary(offset)`.
+
+The `minutes` example takes the minutes of a meeting with the builders of
+<<generate-a-document>>, then amends them as another author with tracking
+on: it replaces and inserts text, adds a decision before a heading and
+deletes another, finding each span by the text it holds in `Docx.text` as
+the text stands before that edit:
+
+[source,roc]
+----
+include::../examples/minutes/main.roc[]
+----
+
+Run from its directory, `roc main.roc` writes `minutes.docx` and lists its
+tracked changes and its final text.
+
+== Write tracked changes
+
+`Docx.to_bytes` writes every change the model holds, as <<write-a-document>>
+writes the rest of the body, so the changes a document is read with are the
+changes it is written with. A change built in the model, such as a
+`Revision` around new runs, is written the same way:
+
+[source,roc]
+----
+include::../tests/manual.roc[tag=model-revision,indent=0]
+----
+
+`stamp` is a `Document.Timestamp`, here from `WmlRead.date_time`; the date
+and the author come from the application, never from the clock.
+
+* A content change is written as an insertion, deletion or move element
+  around its content, with its author, its date as the timestamp's
+  `written` form and the attributes it kept. Inside a deletion, text is
+  written as deleted text and field code as deleted field instructions.
+* A move's ranges are written with their name, author and date, a range's
+  end with its start's identifier.
+* A paragraph mark's changes are written first in the mark's character
+  properties, in the order inserted, deleted, moved away, moved here.
+* A row's insertion and deletion and a cell's insertion, deletion or merge
+  are written in the row's and cell's properties, where the schema puts
+  them.
+* A change of properties is written last in the properties it changed,
+  around the properties as they were before it. Those are written without
+  changes of their own and, for a section, without its headers and footers,
+  which the schema has no place for there.
+* The schema has no place for a hyperlink or a simple field inside a
+  content change. A change that covers one is written around the content
+  beside it and again inside it, around its content, so the document reads
+  back with one change before, one inside and one after, each with the same
+  kind, author and date.
+
+Each change takes an identifier from the space the document's comments and
+bookmarks share, the lowest left, in the order it is written. The tracking
+setting is written as the document's settings hold it, or as
+`Docx.set_tracking` set it.
+
+== Whether a document tracks changes
+
+`Docx.tracks_revisions` says whether the document asks its editor to record
+edits as tracked changes, as Word's Track Changes setting does:
+
+[source,roc]
+----
+include::../tests/manual.roc[tag=tracks,indent=0]
+----
+
+A document without settings does not track changes.
+
+`Docx.set_tracking` turns the setting `On` or `Off`, so that the document
+handed to a reviewer records their edits, or stops recording them:
+
+[source,roc]
+----
+include::../tests/manual.roc[tag=set-tracking,indent=0]
+----
+
+The setting is written where the schema orders it among the document's
+settings, and a document without settings that is to track changes is given
+a settings part. The setting is Word's: it changes no content, and the
+package's own edits are tracked or not by the context each one takes.

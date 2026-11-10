@@ -1,0 +1,209 @@
+= Write a document
+
+This chapter writes a document's body, notes, headers and footers from the
+model that <<read-a-documents-text>> reads, and says what the written markup
+looks like and how the identifiers in it are chosen. It continues from
+<<read-and-write-the-parts-of-a-document>>, which passes a whole document
+through.
+
+== Write the body from its model
+
+`Docx.to_bytes` writes the main document part from the model `Docx.body`
+gives, not from the markup it was read as:
+
+[source,roc]
+----
+include::../tests/manual.roc[tag=pass-through,indent=0]
+----
+
+Everything the body holds is in the model: what the model represents as
+typed values, and everything else as the XML it was read as, in its place.
+So the body that comes back when the written bytes are read is the body that
+was written, and writing that again gives the same bytes. The main document
+root keeps its declarations, its attributes and whatever it holds beside the
+body, such as a page background.
+
+The footnotes and endnotes are written from the notes `Docx.footnotes` and
+`Docx.endnotes` give, and every header and footer the main document relates
+to from the blocks `Docx.header_footer` gives, in the same canonical form as
+the body. Each note keeps the identifier and the place of the note it was
+read as, which is what note references name, and takes its kind and content
+from the model. The other parts, styles and numbering among them, are
+written from the trees they were read as, as
+<<read-and-write-the-parts-of-a-document>> describes.
+
+`WmlWrite.document` is the writer on its own. It takes the main document
+part's tree as it was read, the blocks to write into its body and a
+`WmlWrite.Context` with the part's relationships and the identifiers of
+the document's footnotes, endnotes and comments, and gives the part's tree and its relationships with any it
+needed added:
+
+[source,roc]
+----
+include::../tests/manual.roc[tag=write-body,indent=0]
+----
+
+A tree whose root is not a WordprocessingML document is not a main document
+part, and comes back as it is. `WmlWrite.notes` writes a footnotes or
+endnotes part from its tree as read and a list of notes, and
+`WmlWrite.header_footer` a header or footer part from its tree and its
+blocks, in the same way; `WmlWrite.note_ids` gives the identifiers the
+notes take, a note beyond the part's own taking the lowest number no note
+before it takes. A note reference names its note by its place
+among the document's footnotes or endnotes, and a comment's range or
+reference its comment by its place among the comments; one whose place the
+context does not have cannot be written, and fails with
+`MissingNote({ kind, note })` or `MissingComment(id)`. Each writer gives
+`next` beside the tree, the number after the last identifier it took; a
+part written as one of a document's takes the context's `reserved`
+identifiers, those `WmlWrite.kept_ids` finds in every part, and the
+previous part's `next` as `from`, as <<identifiers>> describes. Both
+default to a part written on its own.
+
+== Choose how a document is written
+
+`Docx.to_bytes` writes with the default options. `Docx.to_bytes_with`
+takes a `Docx.WriteOptions` record, in which `{}` is every default and a
+field names what differs:
+
+[source,roc]
+----
+include::../tests/manual.roc[tag=write-options,indent=0]
+----
+
+* `compression` is how hard the parts written from the model or from their
+  trees are compressed: `Fastest`, `Balanced`, the default, or `Smallest`.
+  A part copied from the document's archive, such as an image, keeps the
+  bytes it was stored with, and a part that compression would not make
+  smaller is stored as it is.
+* `extension_parts` are the parts Word's extensions add beside the
+  comments: `ExtendedComments`, which holds replies and resolved marks,
+  `CommentIdentifiers`, durable identifiers, `ExtensibleComments`, the UTC
+  dates of comments, and `People`, the identities of their authors. All
+  four are listed by default, and each is written where the document has it
+  or its comments need it, as <<read-a-documents-comments>> describes. A
+  part left out of the list is left out of the package with its
+  relationship, for a consumer that does not want it; what it held, such as
+  which comment replies to which, is then not in the written document.
+
+The same document and options always give the same bytes.
+
+== Write a part at a time
+
+A large document need not be held as one list of bytes. `Docx.to_chunks`
+starts writing it with the same options and `Docx.next_chunk` gives the
+next chunk of the archive each time it is asked, one part with the package
+parts due before it, until `Done`:
+
+[source,roc]
+----
+include::../tests/manual.roc[tag=write-chunks,indent=0]
+----
+
+Every check that can fail is made by `Docx.to_chunks`, which fails with
+the error `Docx.to_bytes_with` would give, before the first chunk; so
+`Docx.next_chunk` cannot fail, and a caller never has half a document
+written when it learns that the document cannot be. Each part is held only
+while its chunk is made, and the chunks concatenated are exactly the bytes
+`Docx.to_bytes_with` gives. The price of failing early is that each XML
+part is rendered twice, once to check it and once to emit it.
+
+== Set what a document says about itself
+
+`Docx.set_properties` gives a document the core properties
+`Docx.core_properties` reads, from a `Docx.Properties` record in which a
+property named replaces the document's and one left out keeps it:
+
+[source,roc]
+----
+include::../tests/manual.roc[tag=set-properties,indent=0]
+----
+
+The properties are the `title`, `subject`, `creator` (the author),
+`keywords`, `description`, who it was `last_modified_by`, its `revision`
+number, and when it was `created` and `modified`. The core properties part
+is written from them, keeping every other property it holds, and a document
+without the part is given one. A date is refused with `NotADate` and the
+date as given unless it reads back as written, in the W3C date and time
+format, such as `2026-11-10T09:00:00Z`. The package never reads the clock,
+so a document says when it was modified only when the caller gives the
+date. `Build.properties` is the same edit, for a document being generated.
+
+== The canonical form
+
+Producers spell the same document in many ways. The writer spells it one
+way, so that the same model always gives the same bytes and every part it
+writes is valid against the ECMA-376 Transitional schema:
+
+* The elements of a paragraph's, run's, table's, row's, cell's and section's
+  properties come in the order the schema's sequence gives them, and so do
+  the edges of borders. A property element the model keeps as it was read,
+  in `preserved`, is written at its place in that order; one the schema does
+  not name, such as an extension, stays after the kept element it followed.
+* Each element's attributes come in a fixed order.
+* A property that is on is the element alone, `<w:b/>`; one that is off says
+  `w:val="0"`. A document that wrote `true`, `on`, `1`, `false` or `off` reads
+  to the same model and is written this way.
+* Numbers are whole decimal numbers. A measure written with a fraction is
+  already whole when it is read, as <<read-and-write-the-parts-of-a-document>>
+  says, and a table width finer than the fiftieths of a per cent the model
+  holds is rounded when it is read.
+* Text says `xml:space="preserve"` exactly where its whitespace would
+  otherwise be read as layout: where it begins or ends with a space, a tab or
+  a line end, or holds a tab or a line end.
+* What the model reads as the schema's default where the document leaves it
+  out is left out: one column, 720 twips between columns and no line between
+  them, and a portrait page. Required attributes are always written, such as
+  all seven of a page's margins, and so is a line spacing's rule.
+* A table always has its properties and its grid, which the schema
+  requires, even when both are empty.
+* A section's end is written where the schema puts it: in the properties of
+  the paragraph whose mark ends it, or, for the body's last section, at the
+  end of the body. A section in a table cell, or one that no paragraph comes
+  before, is written where it stands.
+* Table property exceptions at the start of a row are written before the
+  row's properties, where the schema puts them.
+
+== Identifiers
+
+The model names what it refers to by meaning: a bookmark by its name, a
+hyperlink by its address, a note reference by its note's place, a picture by
+its image part and a header or footer by its part. The writer chooses the
+identifiers the markup needs, as a function of the model and the part's
+relationships alone:
+
+* A comment takes the lowest number from 0 up that no element kept as it
+  was read in any part, the body, a note, a header, a footer or a comment,
+  uses and no earlier comment takes, in the order of the comments, and
+  every range boundary and reference to it, in the body, a note or a
+  header, takes the same. <<read-a-documents-comments>>
+  says how the comments themselves are written.
+* A bookmark takes the lowest number that no comment, no other bookmark and
+  no element kept as it was read uses as its `w:id`, in the order the
+  bookmarks begin, so that bookmarks, comments and revisions share one space
+  of identifiers without colliding. A bookmark's end takes its start's
+  identifier. The space is the document's: no bookmark takes a number an
+  element kept in any part uses, and the parts take theirs in turn, the
+  body first, then the footnotes, the endnotes and the headers and footers
+  in the order the main document relates to them, each from the number
+  after the last the part before it took, so that no two parts share one.
+  The comments part's bookmarks avoid every identifier the other parts
+  use.
+* A hyperlink, picture, header or footer uses the part's relationship to its
+  target, in the same mode, internal or external; a header or footer needs
+  one of the header or footer kind. When the part has none, a relationship
+  is added as `rId` with the lowest number, from the count of relationships
+  up, that no relationship uses. A picture's drawing embeds that
+  relationship and takes its size from the model.
+* A note reference takes the identifier of the note at its place.
+* Word's paragraph and row identifiers, `w14:paraId` and `w14:textId`, are
+  not part of the model and are not written in the body, notes, headers or
+  footers: nothing refers to them there. The last paragraph of each comment
+  is the exception, as the parts that make comments threads name the
+  comment by it.
+
+An identifier written by the package therefore need not be the one the
+document was read with, which is why two documents are compared with
+`Docx.equivalent`: the parts written from the model are the same when each
+is written from its model, so a document and the document its written bytes
+read back as are equivalent.

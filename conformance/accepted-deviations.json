@@ -1,0 +1,137 @@
+{
+  "schema": "roc-docx-accepted-deviations/1",
+  "notes": [
+    "An oracle finding that is known to be wrong or out of the package's control, recorded with its cause so a lane can report it separately from a pass.",
+    "Fields: oracle (schema | libreoffice | pandoc), document (a glob over the repository path), part, message_pattern (a regular expression every message of the finding must match), cause, reference, reviewed_on.",
+    "A snapshot disagreement names the oracle that is wrong and has key (the snapshot key, such as notes.text, or blocks.runs for run formatting, or a glob over keys, such as sections.footer*) in place of part; its message_pattern matches the comparison's message, which reads `<first value> against <second value>` with values as JSON.",
+    "Nothing is accepted without a cause, and an entry is removed when the upstream fix lands."
+  ],
+  "deviations": [
+    {
+      "oracle": "pandoc",
+      "document": "tests/fixtures/*/*.docx",
+      "key": "notes.text",
+      "message_pattern": "^\"(.*)\" against \" \\1\"$",
+      "cause": "A footnote's first paragraph holds the reference mark and then a run with one space before the note's text. pandoc's docx reader trims spaces at the start and end of every paragraph, so its note text lacks that space; LibreOffice keeps it, as the document has it.",
+      "reference": "https://github.com/jgm/pandoc/blob/3.9.0.2/src/Text/Pandoc/Readers/Docx.hs (trimSps on paragraph content)",
+      "reviewed_on": "2026-11-09"
+    },
+    {
+      "oracle": "pandoc",
+      "document": "tests/fixtures/word/report.docx",
+      "key": "blocks.runs",
+      "message_pattern": "\"link\": \"#summary\".* against .*\"link\": \"#Summary\"",
+      "cause": "The internal link targets the bookmark Summary, which stands in a heading. pandoc's docx reader removes a heading's bookmark, maps its name to the heading's generated identifier (summary) and rewrites links to that identifier; LibreOffice keeps the bookmark name the document gives.",
+      "reference": "https://github.com/jgm/pandoc/blob/3.9.0.2/src/Text/Pandoc/Readers/Docx.hs (makeHeaderAnchor' and rewriteLink')",
+      "reviewed_on": "2026-11-09"
+    },
+    {
+      "oracle": "pandoc",
+      "document": "tests/fixtures/word/revisions.docx",
+      "key": "blocks.text",
+      "message_pattern": "^\"Payment is due monthly\\. \" against \"Payment is due monthly\\.\"$",
+      "cause": "The moved-away text begins with a space. pandoc's docx reader moves spaces at the edge of an inline container, here the deletion span it makes of the move, out of the container (smushInlines), so the space stays in pandoc's current text; LibreOffice keeps it inside the change.",
+      "reference": "https://github.com/jgm/pandoc/blob/3.9.0.2/src/Text/Pandoc/Readers/Docx/Combine.hs (smushInlines, spaceOutInlines)",
+      "reviewed_on": "2026-11-09"
+    },
+    {
+      "oracle": "pandoc",
+      "document": "tests/fixtures/word/revisions.docx",
+      "key": "blocks.runs",
+      "message_pattern": "\"text\": \"Payment is due monthly\\. \"\\}\\] against \\[.*\"text\": \"Payment is due monthly\\.\"\\}\\]$",
+      "cause": "The runs of the paragraph above: the space pandoc's docx reader moves out of the deletion span (smushInlines) stays in its last run.",
+      "reference": "https://github.com/jgm/pandoc/blob/3.9.0.2/src/Text/Pandoc/Readers/Docx/Combine.hs (smushInlines, spaceOutInlines)",
+      "reviewed_on": "2026-11-09"
+    },
+    {
+      "oracle": "pandoc",
+      "document": "tests/fixtures/word/revisions.docx",
+      "key": "revisions",
+      "message_pattern": "^10 against 13, first difference at \\[2\\]: ",
+      "cause": "pandoc's docx reader has no representation for property changes: it ignores w:rPrChange and w:pPrChange, which LibreOffice and the package list as format changes (2 of the 3 missing). It reports a paragraph-mark deletion as an empty span, which the adapter applies to the current text but cannot list as a change (the third), and does not see the inserted paragraph mark, which LibreOffice and the package count as the line feed ending the insertion before it. Its move texts lose their leading space (smushInlines). LibreOffice and the package list 13 changes, pandoc 10.",
+      "reference": "https://github.com/jgm/pandoc/blob/3.9.0.2/src/Text/Pandoc/Readers/Docx/Parse.hs (no handling of *PrChange; pChange for paragraph marks)",
+      "reviewed_on": "2026-11-10"
+    },
+    {
+      "oracle": "libreoffice",
+      "document": "*/word/report.docx",
+      "key": "sections.footer*",
+      "message_pattern": "^\"Page [12] of [23]\" against \"Page 1 of 2\"$",
+      "cause": "Both sections' footers hold a PAGE and a NUMPAGES field whose results Word last calculated as 1 and 2. The package never evaluates fields and reports those results; LibreOffice recalculates both on import, and its Flat ODT export gives each page style's footer the number of the first page in that style, 2 for the second section, and the page count of its own layout. The document is set in Aptos, which no freely available font matches in metrics, so the count depends on the font the host substitutes: 2 pages on macOS, 3 on Ubuntu 24.04 with only the fonts libreoffice-writer brings, where the wider DejaVu Sans stands in. A page number in a footer is a different value on every page and a page count a value of one layout, not facts of the footer, so the same holds for the footer the section's even and first pages show, which is the default footer in this document. The review cases write the fixture with comments added as .roc-docx/review/word/report.docx, whose footers are the same.",
+      "reference": "https://docs.oasis-open.org/office/OpenDocument/v1.3/os/part3-schema/OpenDocument-v1.3-os-part3-schema.html#element-text_page-number (text:page-number displays the current page number) and #element-text_page-count (text:page-count displays the number of pages in the document)",
+      "reviewed_on": "2026-11-10"
+    },
+    {
+      "oracle": "libreoffice",
+      "document": "*/word/pages.docx",
+      "key": "sections.footer*",
+      "message_pattern": "^\"(Routes, page|Page) [0-9]+\" against \"(Routes, page|Page) 1\"$",
+      "cause": "The default and even footers of both sections hold a PAGE field whose result Word last calculated as 1. The package never evaluates fields and reports that result; LibreOffice recalculates PAGE on import, and its Flat ODT export gives each page style's footer and left footer a page number of its own laying out (3 and 2 in the first section, 5 and 0 in the second). A page number is a value of each page, not a fact of the footer; the footers' other text, every header and the first-page footers agree. The review and redline cases write the fixture edited, with the same footers.",
+      "reference": "https://docs.oasis-open.org/office/OpenDocument/v1.3/os/part3-schema/OpenDocument-v1.3-os-part3-schema.html#element-text_page-number (text:page-number displays the current page number)",
+      "reviewed_on": "2026-11-10"
+    },
+    {
+      "oracle": "libreoffice",
+      "document": ".roc-docx/generated/report.docx",
+      "key": "sections.footer*",
+      "message_pattern": "^\"Page [12] of 2\" against \"Page 1 of 1\"$",
+      "cause": "The report example's footer holds a PAGE and a NUMPAGES field, which the builders write with the result 1, because the package lays out no pages. The report has two pages, the second a landscape section after a section break showing the first section's footer. LibreOffice recalculates both fields on import, and its Flat ODT export gives each page style's footer the number of the first page in that style and the page count, 2. As for word/report.docx, a page number in a footer is a value of each page, not a fact of the footer, and so of the footer its even and first pages show, which is the default one.",
+      "reference": "https://docs.oasis-open.org/office/OpenDocument/v1.3/os/part3-schema/OpenDocument-v1.3-os-part3-schema.html#element-text_page-count (text:page-count displays the number of pages in the document)",
+      "reviewed_on": "2026-11-10"
+    },
+    {
+      "oracle": "libreoffice",
+      "document": "tests/fixtures/gdocs/resume.docx",
+      "key": "sections.margin_*",
+      "message_pattern": "^863 against 864$",
+      "cause": "Google Docs writes the section's bottom, left and right page margins as 863.9999999999999 twips, 0.6 inch less a rounding error, where the schema allows only whole numbers. LibreOffice 24.2 converts a measure without a unit to a whole number by truncating it, to 863; LibreOffice 26.2 rounds it to the nearest, 864, as the package does. The passed-through document holds the whole number 864, so LibreOffice 24.2's reading of the original differs from its reading of that document by the same twip.",
+      "reference": "https://github.com/LibreOffice/core/blob/libreoffice-24.2.7.2/writerfilter/source/ooxml/OOXMLPropertySet.cxx (OOXMLUniversalMeasureValue: static_cast<int>(val)); rounded with std::round in https://github.com/LibreOffice/core/blob/libreoffice-26.2.3.2/sw/source/writerfilter/ooxml/OOXMLPropertySet.cxx (OOXMLValue::createUniversalMeasure)",
+      "reviewed_on": "2026-11-10"
+    },
+    {
+      "oracle": "schema",
+      "document": "tests/fixtures/gdocs/resume.docx",
+      "part": "word/document.xml",
+      "message_pattern": "attribute '\\{http://schemas\\.microsoft\\.com/office/word/2010/wordml\\}paraId': The attribute '\\{http://schemas\\.microsoft\\.com/office/word/2010/wordml\\}paraId' is not allowed\\.$|\\.mce\\.xml fails to validate$",
+      "cause": "Google Docs writes a w14:paraId on every paragraph and declares the w14 namespace without naming it in mc:Ignorable, so the Part 3 preprocessing keeps the attribute and the Transitional schema, which does not define it, rejects it. The package reads the attribute as an ignorable extension and declares it ignorable when writing; the written part validates.",
+      "reference": "ECMA-376 Part 3 (Markup Compatibility and Extensibility), the Ignorable attribute; ECMA-376 Part 4 Transitional wml.xsd (CT_P defines no w14 attributes)",
+      "reviewed_on": "2026-11-09"
+    },
+    {
+      "oracle": "schema",
+      "document": "tests/fixtures/gdocs/resume.docx",
+      "part": "word/comments.xml",
+      "message_pattern": "attribute '\\{http://schemas\\.microsoft\\.com/office/word/2010/wordml\\}paraId': The attribute '\\{http://schemas\\.microsoft\\.com/office/word/2010/wordml\\}paraId' is not allowed\\.$|\\.mce\\.xml fails to validate$",
+      "cause": "Google Docs writes a w14:paraId on every paragraph and declares the w14 namespace without naming it in mc:Ignorable, so the Part 3 preprocessing keeps the attribute and the Transitional schema, which does not define it, rejects it. The package reads the attribute as an ignorable extension and declares it ignorable when writing; the written part validates.",
+      "reference": "ECMA-376 Part 3 (Markup Compatibility and Extensibility), the Ignorable attribute; ECMA-376 Part 4 Transitional wml.xsd (CT_P defines no w14 attributes)",
+      "reviewed_on": "2026-11-09"
+    },
+    {
+      "oracle": "schema",
+      "document": "tests/fixtures/gdocs/resume.docx",
+      "part": "word/document.xml",
+      "message_pattern": "attribute '\\{http://schemas\\.openxmlformats\\.org/wordprocessingml/2006/main\\}(w|top|bottom|left|right)': '[0-9]+\\.[0-9]+' is not a valid value of the union type '\\{[^}]+\\}ST_(MeasurementOrPercent|SignedTwipsMeasure|TwipsMeasure)'\\.$|\\.mce\\.xml fails to validate$",
+      "cause": "Google Docs writes the table's width, its cells' margins and the section's page margins as decimal numbers with a fraction (w:w=\"10470.0\", w:w=\"144.0\", w:left=\"863.9999999999999\") where the schema's types allow only whole numbers, a percentage or a measure with a unit. The package reads each as the nearest whole number, halves away from zero, with a Rounded diagnostic and writes the whole number; the written part validates.",
+      "reference": "ECMA-376 Part 4 Transitional wml.xsd (CT_TblWidth, CT_PageMar, ST_MeasurementOrPercent, ST_SignedTwipsMeasure) and shared-commonSimpleTypes.xsd (ST_TwipsMeasure)",
+      "reviewed_on": "2026-11-09"
+    },
+    {
+      "oracle": "schema",
+      "document": "tests/fixtures/gdocs/resume.docx",
+      "part": "word/styles.xml",
+      "message_pattern": "attribute '\\{http://schemas\\.openxmlformats\\.org/wordprocessingml/2006/main\\}(w|top|bottom|left|right)': '[0-9]+\\.[0-9]+' is not a valid value of the union type '\\{[^}]+\\}ST_(MeasurementOrPercent|SignedTwipsMeasure|TwipsMeasure)'\\.$|\\.mce\\.xml fails to validate$",
+      "cause": "Google Docs writes the cell margins of the normal table style as decimal numbers with a fraction (w:w=\"100.0\") where the schema's types allow only whole numbers, a percentage or a measure with a unit. The package reads each as the nearest whole number, halves away from zero, with a Rounded diagnostic and writes the whole number; the written part validates.",
+      "reference": "ECMA-376 Part 4 Transitional wml.xsd (CT_TblWidth, CT_PageMar, ST_MeasurementOrPercent, ST_SignedTwipsMeasure) and shared-commonSimpleTypes.xsd (ST_TwipsMeasure)",
+      "reviewed_on": "2026-11-09"
+    },
+    {
+      "oracle": "schema",
+      "document": "tests/fixtures/gdocs/resume.docx",
+      "part": "word/document.xml",
+      "message_pattern": "element pgMar: Schemas validity error : Element '\\{http://schemas\\.openxmlformats\\.org/wordprocessingml/2006/main\\}pgMar': The attribute '\\{http://schemas\\.openxmlformats\\.org/wordprocessingml/2006/main\\}gutter' is required but missing\\.$|\\.mce\\.xml fails to validate$",
+      "cause": "Google Docs leaves the required w:gutter out of a section's page margins. The package reads the margins with a gutter of 0, the gutter Word and LibreOffice assume, with a Defaulted diagnostic, and writes it; the written part validates.",
+      "reference": "ECMA-376 Part 4 Transitional wml.xsd (CT_PageMar: gutter use=\"required\")",
+      "reviewed_on": "2026-11-09"
+    }
+  ]
+}

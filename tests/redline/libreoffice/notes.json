@@ -1,0 +1,29 @@
+{
+  "schema": "roc-docx-snapshot/1",
+  "producer": {"name": "roc-docx", "version": "working tree"},
+  "document": ".roc-docx/redline/libreoffice/notes.docx",
+  "keys": ["blocks.kind", "blocks.level", "blocks.list", "blocks.text", "blocks.rows", "blocks.runs.bold", "blocks.runs.italic", "blocks.runs.underline", "blocks.runs.strike", "blocks.runs.superscript", "blocks.runs.subscript", "blocks.runs.link", "notes.kind", "notes.text", "comments.author", "comments.date", "comments.text", "comments.anchor", "comments.thread", "comments.resolved", "revisions.kind", "revisions.author", "revisions.date", "revisions.text", "sections.page_width", "sections.page_height", "sections.orientation", "sections.margin_top", "sections.margin_bottom", "sections.margin_left", "sections.margin_right", "sections.header", "sections.footer", "sections.header_even", "sections.footer_even", "sections.header_first", "sections.footer_first", "properties.title", "properties.subject", "properties.creator", "properties.keywords", "properties.description", "properties.last_modified_by", "properties.created", "properties.modified"],
+  "blocks": [
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Revised Note (as agreed)", "runs": [{"text": "Revised Note (as agreed)", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Both parties confirm this amendment.", "runs": [{"text": "Both parties confirm this amendment.", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "heading", "level": 1, "list": "", "text": "Travel", "runs": [{"text": "Travel", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Employees may book economy travel for journeys under six hours. Longer journeys may be booked in premium economy with manager approval.", "runs": [{"text": "Employees may book economy travel for journeys under six hours. Longer journeys may be booked in premium economy with manager approval.", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Accommodation is reimbursed at the published rate for the destination.", "runs": [{"text": "Accommodation is reimbursed at the published rate for the destination.", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []}
+  ],
+  "notes": [
+    {"kind": "footnote", "text": " Journey time is measured from scheduled departure to scheduled arrival."},
+    {"kind": "footnote", "text": " Approval must be recorded before booking."},
+    {"kind": "footnote", "text": " Rates are reviewed each January and published on the intranet."}
+  ],
+  "comments": [],
+  "revisions": [
+    {"kind": "deletion", "author": "Morgan Reviewer", "date": "2026-11-10T10:00:00Z", "text": "Policy"},
+    {"kind": "insertion", "author": "Morgan Reviewer", "date": "2026-11-10T10:00:00Z", "text": "Revised"},
+    {"kind": "insertion", "author": "Morgan Reviewer", "date": "2026-11-10T10:00:00Z", "text": " (as agreed)\nBoth parties confirm this amendment."},
+    {"kind": "deletion", "author": "Morgan Reviewer", "date": "2026-11-10T10:00:00Z", "text": " policy"}
+  ],
+  "sections": [
+    {"page_width": 12240, "page_height": 15840, "orientation": "portrait", "margin_top": 1440, "margin_bottom": 1440, "margin_left": 1440, "margin_right": 1440, "header": "", "footer": "", "header_even": "", "footer_even": "", "header_first": "", "footer_first": ""}
+  ],
+  "properties": {"title": "Policy Note", "subject": "", "creator": "", "keywords": "", "description": "", "last_modified_by": "", "created": "2023-11-14T22:13:20Z", "modified": "2023-11-14T22:13:20Z"}
+}

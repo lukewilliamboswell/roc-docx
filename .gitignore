@@ -1,0 +1,7 @@
+.blueprint/
+.roc-docx/
+.roc-fuzz/
+.docs-out/
+dist/
+__pycache__/
+.DS_Store

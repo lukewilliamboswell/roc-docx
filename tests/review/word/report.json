@@ -1,0 +1,34 @@
+{
+  "schema": "roc-docx-snapshot/1",
+  "producer": {"name": "roc-docx", "version": "working tree"},
+  "document": ".roc-docx/review/word/report.docx",
+  "keys": ["blocks.kind", "blocks.level", "blocks.list", "blocks.text", "blocks.rows", "blocks.runs.bold", "blocks.runs.italic", "blocks.runs.underline", "blocks.runs.strike", "blocks.runs.superscript", "blocks.runs.subscript", "blocks.runs.link", "notes.kind", "notes.text", "comments.author", "comments.date", "comments.text", "comments.anchor", "comments.thread", "comments.resolved", "revisions.kind", "revisions.author", "revisions.date", "revisions.text", "sections.page_width", "sections.page_height", "sections.orientation", "sections.margin_top", "sections.margin_bottom", "sections.margin_left", "sections.margin_right", "sections.header", "sections.footer", "sections.header_even", "sections.footer_even", "sections.header_first", "sections.footer_first", "properties.title", "properties.subject", "properties.creator", "properties.keywords", "properties.description", "properties.last_modified_by", "properties.created", "properties.modified"],
+  "blocks": [
+    {"kind": "heading", "level": 1, "list": "", "text": "Quarterly Report", "runs": [{"text": "Quarterly Report", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "heading", "level": 2, "list": "", "text": "Summary", "runs": [{"text": "Summary", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Sales rose in every region and costs held steady.", "runs": [{"text": "Sales rose in every region and costs held steady.", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "The full figures are on the results page; see also the summary.", "runs": [{"text": "The full figures are on ", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}, {"text": "the results page", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": "https://example.com/results"}, {"text": "; see also the ", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}, {"text": "summary", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": "#Summary"}, {"text": ".", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "list_item", "level": 1, "list": "bullet", "text": "Priorities", "runs": [{"text": "Priorities", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "list_item", "level": 2, "list": "bullet", "text": "Retain customers", "runs": [{"text": "Retain customers", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "list_item", "level": 2, "list": "bullet", "text": "Open two stores", "runs": [{"text": "Open two stores", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "list_item", "level": 1, "list": "number", "text": "Hire a buyer", "runs": [{"text": "Hire a buyer", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "list_item", "level": 1, "list": "number", "text": "Review suppliers", "runs": [{"text": "Review suppliers", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "list_item", "level": 2, "list": "number", "text": "Shortlist three", "runs": [{"text": "Shortlist three", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "The second section is landscape.", "runs": [{"text": "The second section is landscape.", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Appendix: regional detail follows.", "runs": [{"text": "Appendix: regional detail follows.", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []}
+  ],
+  "notes": [
+    {"kind": "footnote", "text": " Excluding the closed Western store."},
+    {"kind": "endnote", "text": " Costs are unaudited."}
+  ],
+  "comments": [
+    {"author": "Morgan Reviewer", "date": "2026-11-10T09:00:00Z", "text": "Please give the parties' full legal names.", "anchor": "Quarterly Report", "thread": 0, "resolved": true},
+    {"author": "Lin Editor", "date": "2026-11-10T09:30:00Z", "text": "Done; both names now match the register.", "anchor": "Quarterly Report", "thread": 0, "resolved": true}
+  ],
+  "revisions": [],
+  "sections": [
+    {"page_width": 11906, "page_height": 16838, "orientation": "portrait", "margin_top": 1440, "margin_bottom": 1440, "margin_left": 1440, "margin_right": 1440, "header": "Quarterly Report: draft for review", "footer": "Page 1 of 2", "header_even": "Quarterly Report: draft for review", "footer_even": "Page 1 of 2", "header_first": "Quarterly Report: draft for review", "footer_first": "Page 1 of 2"},
+    {"page_width": 16838, "page_height": 11906, "orientation": "landscape", "margin_top": 1440, "margin_bottom": 1440, "margin_left": 1440, "margin_right": 1440, "header": "Quarterly Report: draft for review", "footer": "Page 1 of 2", "header_even": "Quarterly Report: draft for review", "footer_even": "Page 1 of 2", "header_first": "Quarterly Report: draft for review", "footer_first": "Page 1 of 2"}
+  ],
+  "properties": {"title": "Quarterly Report", "subject": "", "creator": "Ada Reviewer", "keywords": "", "description": "", "last_modified_by": "Grace Author", "created": "2026-11-09T11:03:00Z", "modified": "2026-11-09T11:03:00Z"}
+}

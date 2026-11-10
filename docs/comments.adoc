@@ -1,0 +1,293 @@
+= Read a document's comments
+
+This chapter reads the comments reviewers leave on a document: who wrote
+each one and when, what it says, the text it is about, and the thread it
+belongs to, how to add, reply to, resolve and remove them, and how they are
+written back. It continues from
+<<read-a-documents-text>>, whose blocks and current text it builds on.
+
+== The comments
+
+`Docx.comments` gives a document's comments, read from the part the main
+document's comments relationship leads to and joined with the body that
+anchors them:
+
+[source,roc]
+----
+include::../tests/manual.roc[tag=comments,indent=0]
+----
+
+Each entry is a `Comments.Anchored` record with three fields:
+
+* `comment`, a `Document.Comment`;
+* `anchor`, where the comment applies in the body;
+* `id`, the comment's place among the comments of the comments part, which
+  is how the body names it.
+
+Comments come in the order their anchors begin in the body, as a reader
+meets them; comments that start at the same place, such as a comment and its
+replies, keep the order the document gives them. Comments the body does not
+anchor come last, in the order of their part. A document without a comments
+part has no comments.
+
+== What a comment holds
+
+A `Document.Comment` has:
+
+* `author`, the name of the person who wrote it;
+* `initials`, `Initials(text)` as the document gives them, or `Unset`;
+* `date`, `Date(timestamp)` or `Unset`;
+* `content`, its paragraphs and tables as a list of blocks, read the way
+  the body's blocks are, so `Document.paragraph_text` gives a paragraph's
+  text;
+* `preserved`, the comment's other attributes, kept as they were read.
+
+A date is a `Document.Timestamp`: `written`, the date and time as the
+document writes it, such as `2026-05-04T09:15:00Z`, and `utc_seconds`, the
+instant it names in seconds since 1970-01-01T00:00:00Z. A date with an
+offset from UTC is converted; a date without a zone is taken as UTC, as
+LibreOffice and pandoc take it. Fractions of a second are left out of the
+instant and kept in what was written. A date that is not a date and time
+is `Unset`, and the attribute that held it is kept in `preserved`.
+
+The schema requires an author. A comment without one has the empty author,
+and a `Defaulted({ element: "comment", attribute: "author" })` diagnostic
+comes beside the comments.
+
+Word writes a comment's content beginning with a mark that refers back to
+the comment; it is kept as `Preserved` run content and contributes no text.
+
+== Anchors
+
+A comment's `anchor` is one of:
+
+* `Range(text)`, the current text between the start and the end of the
+  comment's range, as `Docx.text` reads it: inserted text included, deleted
+  and moved-away text not, a line feed for every paragraph that ends inside
+  the range. A range that starts and ends at one place, as Word writes a
+  comment on no text, covers the empty text. A range that never ends runs to
+  the end of the body.
+* `Point`, where the body refers to the comment without a range around the
+  reference, as Word allows.
+* `Unanchored`, when the body neither marks a range for the comment nor
+  refers to it.
+
+In the body, a range's boundaries are `CommentStart(id)` and
+`CommentEnd(id)`. They are inlines inside a paragraph, and blocks, table
+content or row content when a range starts or ends between paragraphs,
+rows or cells. The reference that shows where a comment is, usually just
+after its range, is the run content `CommentReference(id)`. Each names the
+comment by its `id`; the document's own numbers for its comments are not
+part of the model.
+
+Neither the boundaries nor the references contribute text. A boundary or
+reference that names a comment the comments part does not have, or that
+another construct has displaced, is kept as `Preserved`.
+
+== Threads
+
+A comment is a node of a thread. Besides what it says, a
+`Document.Comment` has:
+
+* `parent`, `Parent(id)` when the comment is a reply, naming the comment it
+  replies to by its place among the comments, or `Unset`;
+* `resolved`, whether the comment is marked done;
+* `durable_id`, `DurableId(number)`, the identifier that stays with the
+  comment across editing sessions, or `Unset`;
+* `utc_date`, `Date(timestamp)`, when the comment was written as Word
+  records it in UTC, or `Unset`.
+
+A thread starts at a comment without a parent, and a reply's replies follow
+their parents up to it. `resolved` is each comment's own mark, as the
+document gives it:
+
+[source,roc]
+----
+include::../tests/manual.roc[tag=threads,indent=0]
+----
+
+The comments part does not say any of this. Word keeps it in four parts
+beside it, which the reader joins with the comments: the extended comments
+part gives each comment's parent and whether it is done, the comment
+identifiers part its durable identifier, and the extensible comments part
+the UTC date for a durable identifier. Each knows a comment by the
+identifier Word gives the last paragraph of its content, which is not part
+of the model. An entry that names no comment, a parent that is not another
+comment, and a durable identifier or date that is not one are not applied.
+Each entry the model does not hold exactly as it was written, those and an
+entry an identifier's later entry replaces or one with anything else in it,
+comes back as a `NotApplied({ element, key })` diagnostic beside the
+comments, naming the entry (`commentEx`, `commentId` or
+`commentExtensible`) and the paragraph or durable identifier it names, and
+is written back as it was read.
+
+A document without these parts, as LibreOffice, Google Docs and pandoc
+write one, has the same comments with every `parent` and `durable_id` and
+`utc_date` `Unset` and none resolved.
+
+== People
+
+`Docx.people` gives the people part of a document as `people`: the
+authors of its comments and tracked changes as Word records them, each a
+`Document.Person` with:
+
+* `author`, the name the comments and changes give as their author;
+* `presence`, `Presence({ provider, user })`, the identity provider that
+  knows the author and their identifier there, or `Unset`.
+
+A presence without both a provider and an identifier is `Unset`, with a
+`NotApplied({ element: "presenceInfo", key: author })` diagnostic in
+`diagnostics`, and is written back as it was read. A document without a
+people part has no people.
+
+== Write comments
+
+`Docx.to_bytes` writes a document's comments from the model, as it writes
+its body: the comments part from the comments `Docx.comments` reads, and
+each of the extended comments, comment identifiers, extensible comments and
+people parts the document has from the threads and people. So what a
+comment says, who wrote it, when, what it replies to and whether it is
+resolved is written as the model holds it, and Word and LibreOffice show
+replies as replies and resolved comments as resolved.
+
+* Each comment is written with its author, date, initials and the other
+  attributes it kept, and its content is written as the body's blocks are,
+  in the same canonical form.
+* Comments take new identifiers, as <<write-a-document>> says, and every
+  range and reference to a comment takes its comment's.
+* The last paragraph of each comment's content is given a paragraph
+  identifier, `w14:paraId`, the lowest from `00000001` up that no other
+  part and no paragraph kept in a comment uses. The other parts name the
+  comment by it.
+* The extended comments part has an entry for each comment with a
+  paragraph: the paragraph of the comment it replies to, and whether it is
+  done. The comment identifiers part has an entry for each such comment
+  with a durable identifier, and the extensible comments part one for that
+  durable identifier with the comment's UTC date where it has one, keeping
+  whatever else the document's entry for that durable identifier held,
+  such as reactions.
+* The people part has each person with their presence.
+
+Each part keeps its root's declarations and attributes and anything it
+holds that is not one of its entries. The entries reading did not apply,
+each a `NotApplied` diagnostic, are written as they were read, before the
+written entries so that they never stand in for them, and the paragraph
+identifiers they name are not given to any comment, so they name no
+comment when the document is read again. A person keeps what else the
+document wrote for them, and the presence reading did not apply. A comment
+whose content has no paragraph cannot be named by the other parts: one
+with a thread to write, a parent, replies, the resolved mark, a durable
+identifier or a UTC date, cannot be written, and `Docx.to_bytes` fails
+with `CommentWithoutParagraph(id)`; one without is written as it is. A
+UTC date is kept by its durable identifier, so a comment without one is
+written without its UTC date.
+
+== Edit comments
+
+Four edits change a document's comments and return a new document. Each
+names a comment by its `id` from `Docx.comments`, and none changes the
+document's text:
+
+[source,roc]
+----
+include::../tests/manual.roc[tag=edit-comments,indent=0]
+----
+
+* `Docx.add_comment(document, span, new)` adds a comment around a
+  `Comments.Span` of the document's current text and gives the new document
+  and the comment's `id`.
+* `Docx.reply(document, id, new)` adds a reply to the comment `id` and
+  gives the new document and the reply's `id`.
+* `Docx.resolve(document, id)` marks the thread of the comment `id`
+  resolved: the comment its replies lead up to, and every comment in that
+  thread, as Word resolves a thread.
+* `Docx.remove_comment(document, id)` removes the comment `id` together
+  with its replies, and theirs, so that no reply is left without what it
+  replies to.
+
+A new comment or reply is a `Comments.New`, a props record:
+
+* `author`, the name of the person who writes it;
+* `content`, `Text(text)`, a paragraph for each line of `text`, or
+  `Blocks(blocks)`, paragraphs and tables of any kind;
+* `initials`, `Initials(text)` or, by default, `Unset`;
+* `date`, `Date(text)`, an XML Schema date and time such as
+  `2026-11-10T09:00:00Z`, or, by default, `Unset`.
+
+The package reads no clock, so the author and the date come from the
+application, and a comment without a date has none. A new comment is not
+resolved and has no durable identifier or UTC date. Comments are not
+tracked changes, so these edits take no revision context and record none.
+
+=== Where a new comment goes
+
+A `Comments.Span` is `{ start, end }`, byte offsets into the text
+`Docx.text` gives, so an application finds what to comment on in that text.
+Comments never change the text, so offsets taken before one comment edit
+still hold after it.
+
+The comment's range starts just before the first character of the span and
+ends just after its last, inside a hyperlink, field or tracked change where
+the character is; a run is split in two where the span starts or ends inside
+it. The reference to the comment follows the range's end in its paragraph,
+outside any hyperlink, field or change around the end. A span that ends just
+after a paragraph's line feed ends at that paragraph's end, so a span
+covering a whole paragraph's line marks the paragraph's text and not its
+line feed; a span that starts at a line feed starts at the end of its
+paragraph. A span whose start and end are the same is a comment on no text,
+as Word writes one. The new comment's anchor is then `Range(text)` with the
+text of the span.
+
+A span that is not within the text or ends before it starts fails with
+`OutsideText(span)`, and one that starts or ends inside a character with
+`NotACharacterBoundary(offset)`.
+
+=== What the edits keep
+
+A reply's range starts and ends just after its parent's, and its reference
+follows its parent's, so it covers the same text. A new comment or reply
+comes after every comment the document has, so it takes the next `id` and
+the `id`s of the others stay. Removing a comment moves the comments after it
+up to its place, so their `id`s change; read `Docx.comments` again after
+removing one. Removing a comment removes its range's boundaries and its
+reference wherever they are, in the body, the notes and the headers and
+footers, a run left holding nothing with them, and its entries in the parts
+beside the comments part.
+
+Each edit gives the document as `Docx.to_bytes` writes it, so every query
+reads the edit, and writing it gives the same bytes. A document without a
+comments part gains one, `comments.xml` beside the main document, when a
+comment is added. A reply or a resolved thread needs the extended comments
+part to be written; a document without one, as pandoc, LibreOffice and
+Google Docs write a document, gains `commentsExtended.xml` with its content
+type and relationship, so Word and LibreOffice show the reply as a reply and
+the thread as resolved. A new comment's or reply's author is added to the
+people part when the document has one and no person there has the name, as
+Word records an author who signed in to no account: with a presence whose
+provider is `None` and whose identifier is the author. A document without
+a people part, as pandoc, LibreOffice and Google Docs write one, is not
+given one.
+
+An edit fails with `NoSuchComment(id)` for an `id` the document has no
+comment at, `NotADate(text)` for a date that is not a date and time,
+`NoMainDocument` for a package without a main document, and, for a
+document whose body, notes, headers or footers cannot be written, with
+`MissingNote`, `MissingComment` or `CommentWithoutParagraph` as
+`Docx.to_bytes` reports them. These are tags of `Docx.EditError`, which
+every edit of the document's comments, changes and text shares.
+
+The `review_contract` example makes each edit on a contract and writes the
+result.
+
+The `agreement` example drafts an agreement with the builders of
+<<generate-a-document>>, then reviews it as the other party would: one
+author comments on two clauses, anchoring each comment to the phrase it is
+about, and the drafter replies to one of the comments:
+
+[source,roc]
+----
+include::../examples/agreement/main.roc[]
+----
+
+Run from its directory, `roc main.roc` writes `agreement.docx` and lists its
+comments, the reply under the comment it answers.

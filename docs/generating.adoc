@@ -1,0 +1,268 @@
+= Generate a document
+
+This chapter starts a new document instead of reading one: what a new
+document holds, how its content is built, which styles and lists it has,
+and how its properties are given. It continues from <<write-a-document>>,
+which says how a document is written.
+
+== Start a new document
+
+`Docx.new_document` builds a document from the default document kit:
+
+[source,roc]
+----
+include::../tests/manual.roc[tag=new-document,indent=0]
+----
+
+Its argument is the `Docx.Properties` record that `Docx.set_properties`
+takes (<<set-what-a-document-says-about-itself>>): it names the document's
+title, its author (`creator`), when it was created and last modified
+(`modified`) and any other core property, and each can be left out:
+`Docx.new_document({})` is a document without properties. The package reads
+no clock, so a document has only the dates its caller gives it, and the same
+properties always give the same bytes. A date is in the W3C date and time
+format: a year, a month or a day, or a day and a time with its time zone,
+such as `2026-11-10T09:00:00Z` or `2026-11-10T19:00:00+10:00`; any other is
+refused with `NotADate` and the date as given.
+
+The new document is an empty page: one empty paragraph on A4 paper, portrait,
+with one-inch margins and the header and footer half an inch from the edge
+of the page. Word and LibreOffice open it as a blank document, and it reads
+back like any other: `Docx.text` gives one empty line, `Docx.styles` the
+styles below, `Docx.numbering` the lists, and `Docx.core_properties` the
+properties it was given.
+
+== Build the content
+
+The `Build` module makes the content: paragraphs, text, list items, tables
+and links are values of the document model, and the rest, the notes,
+headers and footers, pages and properties, are added to the document. Each
+takes its content and a record of options, every option with a default, so
+`{}` asks for none:
+
+[source,roc]
+----
+include::../tests/manual.roc[tag=build,indent=0]
+----
+
+`Build.append` adds blocks at the end of the body, before the end of its
+final section; the one empty paragraph of a new document gives way to the
+first blocks appended. It extends the body in place while nothing else
+holds the document, as `Build.page_setup` and `Build.new_section` change
+it, so a long document can be built a paragraph at a time: keep only the
+document each call returns.
+
+`Build.paragraph` sets a paragraph's `style`, the normal style by default, a
+heading's with `Heading(1)` to `Heading(6)` or any style by its identifier
+with `Style("ListParagraph")`; its `alignment`, `Left`, `Center`, `Right` or
+`Justified`; and whether it starts on a new page, `page_break_before: On`.
+
+`Build.text` makes a run of text. A tab in the text is a tab and a line feed
+a line break. Its options set `bold`, `italic`, `underline` and `strike`,
+each `On`, or `Off` against what a style sets; `vertical_align`,
+`Superscript` or `Subscript`; `size` in half-points, `HalfPoints(24)` being 12
+points; `color`, `Rgb({ red: 192, green: 0, blue: 0 })`; `font`,
+`Named("Cambria")`; and a character `style`. What a run leaves `Unset`
+comes from the paragraph's style and the document's defaults.
+
+`Build.list_item` makes an item of the bulleted list, or with
+`list: Numbered` of the numbered one, at its `level` from 0, in the List
+Paragraph style; the lists are described below.
+
+`Build.link` makes a link to an address around its content; runs without a
+character style of their own take the Hyperlink style. The relationship
+that holds the address is added when the document is written.
+
+`Build.table` makes a table in the Table Grid style from rows of cells made
+by `Build.cell`. Its `widths` are its columns' in twips (1,440 to the inch),
+and without them the columns share the width of an A4 page between one-inch
+margins; its first `header_rows` rows repeat at the top of each page it runs
+onto. A cell `span`s grid columns, and is as wide as the columns it spans; a
+cell with `merge: Restart` starts a vertical merge that the cells below it
+with `merge: Continue` join. A cell ends with a paragraph, so an empty one is
+given one.
+
+== Notes, headers and footers
+
+`Build.footnote` adds a footnote and gives back the document with it and the
+reference to place in a paragraph, which shows the note's number. The note
+is a paragraph in the footnote text style starting with its number. A
+document without footnotes is given a footnotes part with the separator
+lines drawn above the notes. From the first footnote added, the document
+holds its footnotes as the model, as it holds the body, and adds each one in
+place while nothing else holds the document; a note takes its identifier,
+and any relationship its content needs, when the document is written.
+
+`Build.header` and `Build.footer` give the final section a header or
+footer, from blocks as the body's are, in a part of their own that is added
+with its relationship; giving one again replaces it. With `{}` it is for
+every page. A header or footer ends with a paragraph, so an empty one is
+given an empty paragraph.
+`Build.page_number` and `Build.page_count` are fields for the page's number
+and the number of pages, which Word and LibreOffice calculate as they lay
+the document out:
+
+[source,roc]
+----
+include::../tests/manual.roc[tag=footer,indent=0]
+----
+
+Until a word processor calculates them, the package reads each field's
+result as 1. Each of these three fails with `NoMainDocument` for a document
+without a main document part, or with the writer's error for content that
+names a note or comment the document does not have.
+
+=== Odd, even and first pages
+
+A book-like document often puts a different header on left and right
+pages, and leaves the first page of a section blank or gives it a title of
+its own. The options' `kind` says which pages a header or footer is for:
+`Default`, the default, `Even` for even pages, or `First` for the section's
+first page:
+
+[source,roc]
+----
+include::../tests/manual.roc[tag=odd-even-first,indent=0]
+----
+
+An `Even` header or footer turns on different odd and even pages, which is
+a setting of the whole document, as `Docx.set_different_odd_and_even`
+turns it on; the `Default` ones are then for odd pages, and a section with
+no `Even` one of its own shows the previous section's on its even pages. A
+`First` one turns on the section's title page, so its first page shows it
+instead of the `Default` one. A new section starts without a title page and
+without headers and footers of its own, showing the previous section's
+until it is given its own, of any kind.
+
+== Pages and sections
+
+`Build.page_setup` sets the final section's page: its `size`, `A4`,
+`Letter`, `Legal` or `Size({ width, height })` in twips; its `orientation`,
+`Portrait` or `Landscape`; its `top`, `right`, `bottom` and `left` margins
+and its `header` and `footer` distances from the edge of the page, in
+twips; and where it `start`s, `NextPage`, `Continuous`, `EvenPage` or
+`OddPage`. The defaults are the new document's page.
+
+`Build.new_section` ends the final section where the body ends, keeping its
+page, header and footer, and starts a new one with the page its setup gives.
+The new section shows the header and footer of the section before it until
+it is given its own:
+
+[source,roc]
+----
+include::../tests/manual.roc[tag=section,indent=0]
+----
+
+== Properties
+
+`Build.properties` sets the document's title, subject, author (`creator`),
+keywords, description, who last modified it, its revision number and when it
+was created and last modified, as `Docx.set_properties` sets them on any
+document (<<set-what-a-document-says-about-itself>>). A property given
+replaces the document's, and one left out keeps it; a document without core
+properties is given them. A date that is not in the W3C date and time
+format is refused with `NotADate`, as `Docx.new_document` refuses it.
+
+== Examples
+
+The `letter` example writes a letter: a new document with its title, author
+and date, each address one paragraph with a line break between its lines,
+and aligned paragraphs with bold and italic text:
+
+[source,roc]
+----
+include::../examples/letter/main.roc[]
+----
+
+Run from its directory, `roc main.roc` writes `letter.docx` and prints its
+text.
+
+The `report` example writes a report over two sections: a header with the
+title and a footer with the page number and count, a footnote, a table of
+figures with a header row and a total, and, after a section break, a
+landscape page with a wider table and a header of its own:
+
+[source,roc]
+----
+include::../examples/report/main.roc[]
+----
+
+Run from its directory, `roc main.roc` writes `report.docx` and lists its
+sections' pages, headers and footers. Word and LibreOffice number its pages
+1 and 2 of 2 as they lay it out; the package, which lays out no pages,
+reads each field's result as 1.
+
+The `agreement` example adds comments to a document it generates, as
+<<read-a-documents-comments>> describes, and the `minutes` example amends
+one as tracked changes, as <<read-a-documents-tracked-changes>> describes.
+
+== The styles
+
+The document's text is Calibri at 11 points, with 8 points after each
+paragraph and lines at 1.08 times their height, as Word sets its own
+defaults. Each style has the identifier and the name Word gives its
+built-in style, which is how Word and LibreOffice recognise it as their
+own: they show it under its name in their own language, and LibreOffice
+maps it onto its corresponding style, such as _Heading 1_ or
+_Internet link_.
+
+[cols="2,2,4",options="header"]
+|===
+|Identifier |Name |For
+|`Normal` |Normal |Every paragraph without a style of its own; the default
+|`Heading1` to `Heading6` |heading 1 to heading 6 |Headings at outline levels 1 to 6, kept with the next paragraph, followed by a normal paragraph
+|`ListParagraph` |List Paragraph |A list item, indented half an inch
+|`DefaultParagraphFont` |Default Paragraph Font |Text without a character style; the default
+|`Hyperlink` |Hyperlink |A link's text, blue and underlined
+|`TableNormal` |Normal Table |Every table without a style of its own; the default
+|`TableGrid` |Table Grid |A table with a thin line around every cell
+|`NoList` |No List |The default numbering style
+|`FootnoteText`, `EndnoteText` |footnote text, endnote text |A note's text, single-spaced at 10 points
+|`FootnoteReference`, `EndnoteReference` |footnote reference, endnote reference |A note's number, superscript
+|`CommentText` |annotation text |A comment's text, single-spaced at 10 points
+|`CommentReference` |annotation reference |Where a comment is marked in the text
+|===
+
+A paragraph or run names a style by its identifier, as
+`Document.ParagraphProperties` and `Document.RunProperties` hold it.
+
+== The lists
+
+The document has two lists, each of nine levels, the levels indented half an
+inch apiece with the bullet or number hanging a quarter inch before the
+text:
+
+* numbering instance 1 is bulleted, with a bullet, a circle and a square in turn from the
+  first level down;
+* numbering instance 2 is numbered `1.`, `a.`, `i.` in turn from the first
+  level down, each level counting from 1.
+
+A paragraph is an item of a list when its properties name the instance and
+the level, from 0 for the first, as `Document.Numbering` holds them.
+
+== The parts of a new document
+
+A new document's package has the parts a WordprocessingML package needs and
+no others: the main document, the styles, the numbering definitions, the
+settings (tab stops every half inch, and Word's current layout rather than
+an earlier version's compatibility mode), the font table, and the core
+properties, each with its relationship and content type.
+
+The styles, the list definitions and the core properties are written from
+the model by `WmlWrite.styles`, `WmlWrite.numbering` and
+`WmlWrite.core_properties`, in the canonical form <<write-a-document>>
+describes, so what they hold is what `Styles.read`, `Numbering.read` and
+`WmlRead.core_properties` read back. Each writer takes model values on its
+own and gives the part's tree:
+
+[source,roc]
+----
+include::../tests/manual.roc[tag=styles-writer,indent=0]
+----
+
+A style keeps the elements the model does not hold, such as its place in
+the style gallery or a table style's table properties, and a level and a
+numbering definition theirs, each written in the place the schema gives it.
+The settings and the font table have no model, and are built as trees. Once
+the document is built, every part but the main document is written from its
+tree, as in any document that was read.

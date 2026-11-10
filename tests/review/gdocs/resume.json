@@ -1,0 +1,20 @@
+{
+  "schema": "roc-docx-snapshot/1",
+  "producer": {"name": "roc-docx", "version": "working tree"},
+  "document": ".roc-docx/review/gdocs/resume.docx",
+  "keys": ["blocks.kind", "blocks.level", "blocks.list", "blocks.text", "blocks.rows", "blocks.runs.bold", "blocks.runs.italic", "blocks.runs.underline", "blocks.runs.strike", "blocks.runs.superscript", "blocks.runs.subscript", "blocks.runs.link", "notes.kind", "notes.text", "comments.author", "comments.date", "comments.text", "comments.anchor", "comments.thread", "comments.resolved", "revisions.kind", "revisions.author", "revisions.date", "revisions.text", "sections.page_width", "sections.page_height", "sections.orientation", "sections.margin_top", "sections.margin_bottom", "sections.margin_left", "sections.margin_right", "sections.header", "sections.footer", "sections.header_even", "sections.footer_even", "sections.header_first", "sections.footer_first", "properties.title", "properties.subject", "properties.creator", "properties.keywords", "properties.description", "properties.last_modified_by", "properties.created", "properties.modified"],
+  "blocks": [
+    {"kind": "table", "level": 0, "list": "", "text": "", "runs": [], "rows": [["Your Name\nLorem ipsum dolor sit amet, consectetuer adipiscing elit", "123 Your Street\nYour City, ST 12345\n(123) 456-7890\nno_reply@example.com"], ["EXPERIENCE\nCompany, Location — Job Title\nMONTH 20XX - PRESENT\nLorem ipsum dolor sit amet, consectetuer adipiscing elit, sed diam nonummy nibh.\nCompany, Location — Job Title\nMONTH 20XX - MONTH 20XX\nLorem ipsum dolor sit amet, consectetuer adipiscing elit, sed diam nonummy nibh.\nCompany, Location — Job Title\nMONTH 20XX - MONTH 20XX\nLorem ipsum dolor sit amet, consectetuer adipiscing elit, sed diam nonummy nibh.\nEDUCATION\nSchool Name, Location — Degree\nMONTH 20XX - MONTH 20XX\nLorem ipsum dolor sit amet, consectetuer adipiscing elit, sed diam nonummy nibh euismod tincidunt ut laoreet dolore.\nSchool Name, Location — Degree\nMONTH 20XX - MONTH 20XX\nLorem ipsum dolor sit amet, consectetuer adipiscing elit, sed diam.\nPROJECTS\nProject Name — Detail\nLorem ipsum dolor sit amet, consectetuer adipiscing elit.", "SKILLS\nLorem ipsum dolor sit amet.\nConsectetuer adipiscing elit.\nSed diam nonummy nibh euismod tincidunt.\nL​​​‌​aoreet dolore magna aliquam erat volutpat.\nAWARDS\nLorem ipsum dolor sit amet Consectetuer adipiscing elit, Sed diam nonummy\nNibh euismod tincidunt ut laoreet dolore magna aliquam erat volutpat.\nLorem ipsum dolor sit amet Consectetuer adipiscing elit, Sed diam nonummy\nNibh euismod tincidunt ut laoreet dolore magna aliquam erat volutpat.\nLANGUAGES\nLorem ipsum, Dolor sit amet, Consectetuer"]]}
+  ],
+  "notes": [],
+  "comments": [
+    {"author": "Morgan Reviewer", "date": "2026-11-10T09:00:00Z", "text": "Please give the parties' full legal names.", "anchor": "Your Name", "thread": 0, "resolved": true},
+    {"author": "Lin Editor", "date": "2026-11-10T09:30:00Z", "text": "Done; both names now match the register.", "anchor": "Your Name", "thread": 0, "resolved": true},
+    {"author": "Morgan Reviewer", "date": "2026-11-09T10:54:24Z", "text": "Anther Comment", "anchor": "AWARDS", "thread": 2, "resolved": false}
+  ],
+  "revisions": [],
+  "sections": [
+    {"page_width": 12240, "page_height": 15840, "orientation": "portrait", "margin_top": 576, "margin_bottom": 864, "margin_left": 864, "margin_right": 864, "header": "", "footer": "", "header_even": "", "footer_even": "", "header_first": "", "footer_first": ""}
+  ],
+  "properties": {"title": "", "subject": "", "creator": "", "keywords": "", "description": "", "last_modified_by": "", "created": "", "modified": ""}
+}

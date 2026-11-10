@@ -1,0 +1,33 @@
+written: 15404 bytes, FNV-1a 64 a53d723176e1c46a
+dropped: /word/document.xml 16 revision save identifiers
+dropped: /word/document.xml 4 rendered page breaks
+dropped: /word/footnotes.xml 4 revision save identifiers
+dropped: /word/endnotes.xml 4 revision save identifiers
+dropped: /word/header1.xml 2 revision save identifiers
+dropped: /word/header2.xml 2 revision save identifiers
+dropped: /word/footer1.xml 2 revision save identifiers
+dropped: /word/footer2.xml 2 revision save identifiers
+dropped: /word/header3.xml 2 revision save identifiers
+dropped: /word/footer3.xml 2 revision save identifiers
+dropped: /word/footer4.xml 2 revision save identifiers
+dropped: /word/header4.xml 2 revision save identifiers
+part: /_rels/.rels 588 bytes application/vnd.openxmlformats-package.relationships+xml
+part: /word/document.xml 2436 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml
+part: /word/_rels/document.xml.rels 2109 bytes application/vnd.openxmlformats-package.relationships+xml
+part: /docProps/app.xml 626 bytes application/vnd.openxmlformats-officedocument.extended-properties+xml
+part: /docProps/core.xml 630 bytes application/vnd.openxmlformats-package.core-properties+xml
+part: /word/footer1.xml 1348 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml
+part: /word/header4.xml 1136 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml
+part: /word/webSettings.xml 939 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.webSettings+xml
+part: /word/header2.xml 1130 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml
+part: /word/footer4.xml 1356 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml
+part: /word/settings.xml 2909 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml
+part: /word/styles.xml 32207 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml
+part: /word/header1.xml 1121 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml
+part: /word/footer3.xml 1135 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml
+part: /word/endnotes.xml 1373 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.endnotes+xml
+part: /word/theme/theme1.xml 8716 bytes application/vnd.openxmlformats-officedocument.theme+xml
+part: /word/header3.xml 1076 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml
+part: /word/footnotes.xml 1379 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml
+part: /word/footer2.xml 1369 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml
+part: /word/fontTable.xml 1752 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.fontTable+xml

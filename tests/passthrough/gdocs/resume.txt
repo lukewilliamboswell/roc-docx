@@ -1,0 +1,37 @@
+written: 8145 bytes, FNV-1a 64 12444098c33fb2bc
+dropped: /word/comments.xml 16 revision save identifiers
+rounded: /word/styles.xml top w 100.0
+rounded: /word/styles.xml left w 100.0
+rounded: /word/styles.xml bottom w 100.0
+rounded: /word/styles.xml right w 100.0
+dropped: /word/document.xml 431 revision save identifiers
+rounded: /word/document.xml tblW w 10470.0
+rounded: /word/document.xml top w 144.0
+rounded: /word/document.xml left w 144.0
+rounded: /word/document.xml bottom w 144.0
+rounded: /word/document.xml right w 144.0
+rounded: /word/document.xml top w 144.0
+rounded: /word/document.xml left w 144.0
+rounded: /word/document.xml bottom w 144.0
+rounded: /word/document.xml right w 144.0
+rounded: /word/document.xml top w 144.0
+rounded: /word/document.xml left w 144.0
+rounded: /word/document.xml bottom w 144.0
+rounded: /word/document.xml right w 144.0
+rounded: /word/document.xml top w 144.0
+rounded: /word/document.xml left w 144.0
+rounded: /word/document.xml bottom w 144.0
+rounded: /word/document.xml right w 144.0
+rounded: /word/document.xml pgMar bottom 863.9999999999999
+rounded: /word/document.xml pgMar left 863.9999999999999
+rounded: /word/document.xml pgMar right 863.9999999999999
+defaulted: /word/document.xml pgMar gutter 0
+part: /_rels/.rels 297 bytes application/vnd.openxmlformats-package.relationships+xml
+part: /word/document.xml 30077 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml
+part: /word/_rels/document.xml.rels 942 bytes application/vnd.openxmlformats-package.relationships+xml
+part: /word/theme/theme1.xml 7642 bytes application/vnd.openxmlformats-officedocument.theme+xml
+part: /word/comments.xml 3116 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml
+part: /word/settings.xml 603 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml
+part: /word/fontTable.xml 260 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.fontTable+xml
+part: /word/numbering.xml 4072 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml
+part: /word/styles.xml 4711 bytes application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml

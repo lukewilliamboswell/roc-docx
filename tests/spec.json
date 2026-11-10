@@ -1,0 +1,111 @@
+{
+  "apps": [
+    {
+      "cases": [
+        {
+          "args": [],
+          "exit_code": 0,
+          "name": "default",
+          "stderr": "",
+          "stdin": "",
+          "stdout": "Comments in agreement.docx:\n  [1] Odile Fenwick on \"every Monday\": Could deliveries move to Tuesdays?\n  [0] Odile Fenwick on \"within thirty days\": We ask for payment within fourteen days.\n    reply [2] Nora Quill on \"within thirty days\": Twenty-one days would suit us both.\n"
+        }
+      ],
+      "path": "examples/agreement/main.roc"
+    },
+    {
+      "cases": [
+        {
+          "args": [],
+          "exit_code": 0,
+          "name": "default",
+          "stderr": "",
+          "stdin": "",
+          "stdout": "Parts of review.docx:\n  /_rels/.rels  (application/vnd.openxmlformats-package.relationships+xml, 722 bytes)\n  /word/document.xml  (application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml, 5627 bytes)\n  /word/_rels/document.xml.rels  (application/vnd.openxmlformats-package.relationships+xml, 1203 bytes)\n  /word/_rels/footnotes.xml.rels  (application/vnd.openxmlformats-package.relationships+xml, 124 bytes)\n  /word/numbering.xml  (application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml, 4178 bytes)\n  /word/styles.xml  (application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml, 27124 bytes)\n  /word/footnotes.xml  (application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml, 843 bytes)\n  /word/comments.xml  (application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml, 1088 bytes)\n  /docProps/core.xml  (application/vnd.openxmlformats-package.core-properties+xml, 626 bytes)\n  /docProps/custom.xml  (application/vnd.openxmlformats-officedocument.custom-properties+xml, 212 bytes)\n  /word/settings.xml  (application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml, 1320 bytes)\n  /docProps/app.xml  (application/vnd.openxmlformats-officedocument.extended-properties+xml, 724 bytes)\n  /word/theme/theme1.xml  (application/vnd.openxmlformats-officedocument.theme+xml, 11370 bytes)\n  /word/fontTable.xml  (application/vnd.openxmlformats-officedocument.wordprocessingml.fontTable+xml, 2324 bytes)\n  /word/webSettings.xml  (application/vnd.openxmlformats-officedocument.wordprocessingml.webSettings+xml, 199 bytes)\n\nMain document: /word/document.xml\n  rId8  http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering  /word/numbering.xml\n  rId7  http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles  /word/styles.xml\n  rId6  http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings  /word/settings.xml\n  rId5  http://schemas.openxmlformats.org/officeDocument/2006/relationships/webSettings  /word/webSettings.xml\n  rId4  http://schemas.openxmlformats.org/officeDocument/2006/relationships/fontTable  /word/fontTable.xml\n  rId3  http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme  /word/theme/theme1.xml\n  rId2  http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes  /word/footnotes.xml\n  rId1  http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments  /word/comments.xml\n"
+        }
+      ],
+      "path": "examples/inspect/main.roc"
+    },
+    {
+      "cases": [
+        {
+          "args": [],
+          "exit_code": 0,
+          "name": "default",
+          "stderr": "",
+          "stdin": "",
+          "stdout": "Wrote letter.docx:\nHarbour Lane Bakery\n14 Quay Street\nPortwen\n10 November 2026\nOdile Fenwick\nOrchard Mill Supplies\n2 Mill Row\nAshcombe\nDear Ms Fenwick,\nFlour deliveries for the winter\nThank you for a year of reliable deliveries. From December we bake on Sundays too, so we would like two deliveries a week, on Mondays and Thursdays, until the end of February.\nOur agreement for the new year follows separately. Please let me know by Friday whether the new days suit you.\nYours sincerely,\nNora Quill\nOwner, Harbour Lane Bakery\n\n"
+        }
+      ],
+      "path": "examples/letter/main.roc"
+    },
+    {
+      "cases": [
+        {
+          "args": [],
+          "exit_code": 0,
+          "name": "default",
+          "stderr": "",
+          "stdin": "",
+          "stdout": "Tracked changes in minutes.docx:\n  [0] Nora Quill deleted \"7 a.m.\"\n  [1] Nora Quill inserted \"6.30 a.m.\"\n  [2] Nora Quill inserted \", in pairs\"\n  [3] Nora Quill deleted \"The old oven is sold.\"\n  [4] Nora Quill deleted a paragraph mark\n  [5] Nora Quill inserted \"A second delivery van is leased.\"\n  [6] Nora Quill inserted a paragraph mark\nFinal text:\nStaff meeting\nHeld on 3 November 2026 at the Quay Street shop.\nPresent\nNora Quill, chair\nIris Cole, secretary\nTomas Reed\nDecisions\nThe shop opens at 6.30 a.m. from December.\nWeekend shifts rotate monthly, in pairs.\nA second delivery van is leased.\nNext meeting\nThe next meeting is on 1 December 2026.\n\n"
+        }
+      ],
+      "path": "examples/minutes/main.roc"
+    },
+    {
+      "cases": [
+        {
+          "args": [],
+          "exit_code": 0,
+          "name": "default",
+          "stderr": "",
+          "stdin": "",
+          "stdout": "Tracked changes in redlined.docx, tracking on:\n  [0] Morgan Reviewer deleted text: \"Supply\"\n  [1] Morgan Reviewer inserted text: \"Revised\"\n  [2] Morgan Reviewer inserted text: \" (as agreed)\"\n  [3] Morgan Reviewer inserted a paragraph mark\n  [4] Morgan Reviewer inserted text: \"Both parties confirm this amendment.\"\n  [5] Morgan Reviewer deleted text: \" order.\"\n  [6] Lin Editor inserted text: \"This paragraph was inserted in full.\"\n  [7] Lin Editor inserted a paragraph mark\n  [8] Lin Editor changed the formatting of a paragraph: \"This paragraph was centred under tracking.\"\n  [9] Lin Editor changed the formatting of a row\n  [10] Lin Editor changed the formatting of a cell\n  [11] Lin Editor changed the formatting of a cell\n  [12] Lin Editor inserted a cell\n  [13] Lin Editor deleted a cell\nFinal text:\nRevised Agreement Amendment (as agreed)\nBoth parties confirm this amendment.\nThe Supplier shall deliver the Goods within five working days of each\nPayment is due monthly. Late payments bear interest.\nInterest accrues daily.\nThis paragraph was inserted in full.\nThis paragraph's mark was deleted, joining it to the next.The joined paragraph continues here.\nThe parties agree in writing to any variation.\nThis paragraph was centred under tracking.\nThis agreement was signed on .\nMilestone\nDue\nDesign\nJune\nLaunch\nSeptember\nResponsibilities:\nOwner\nLin\nReview\nSign-off\nBoard\n\nLegal\nEnd of amendment.\n\n"
+        }
+      ],
+      "path": "examples/redline/main.roc"
+    },
+    {
+      "cases": [
+        {
+          "args": [],
+          "exit_code": 0,
+          "name": "default",
+          "stderr": "",
+          "stdin": "",
+          "stdout": "Wrote repackaged.docx:\n  /_rels/.rels  (generated)\n  /word/document.xml  (copied)\n  /word/_rels/document.xml.rels  (generated)\n  /docProps/app.xml  (copied)\n  /docProps/core.xml  (copied)\n  /docProps/custom.xml  (copied)\n  /word/numbering.xml  (copied)\n  /word/styles.xml  (copied)\n  /word/settings.xml  (copied)\n  /word/webSettings.xml  (copied)\n  /word/fontTable.xml  (copied)\n  /word/theme/theme1.xml  (copied)\n  /word/footnotes.xml  (copied)\n  /word/comments.xml  (copied)\n  /word/_rels/footnotes.xml.rels  (copied)\n"
+        }
+      ],
+      "path": "examples/repackage/main.roc"
+    },
+    {
+      "cases": [
+        {
+          "args": [],
+          "exit_code": 0,
+          "name": "default",
+          "stderr": "",
+          "stdin": "",
+          "stdout": "Sections of report.docx:\n  11906 by 16838 twips, Portrait; header \"Harbour Lane Bakery: quarterly sales\"; footer \"Page 1 of 1\"\n  16838 by 11906 twips, Landscape; header \"Harbour Lane Bakery: sales by product\"; footer as before\n"
+        }
+      ],
+      "path": "examples/report/main.roc"
+    },
+    {
+      "cases": [
+        {
+          "args": [],
+          "exit_code": 0,
+          "name": "default",
+          "stderr": "",
+          "stdin": "",
+          "stdout": "Comments in reviewed.docx:\n  [2] Morgan Reviewer, resolved on \"Draft Services Agreement\": Please give the parties' full legal names.\n    reply [3] Lin Editor, resolved on \"Draft Services Agreement\": Done; both names now match the register.\n  [0] Ada Reviewer on \"The Provider shall perform the Services with reasonable skill and care.\"\n  [1] Grace Author on \"thirty days\"\n"
+        }
+      ],
+      "path": "examples/review_contract/main.roc"
+    }
+  ],
+  "dependencies": [],
+  "release": "working-tree",
+  "schema_version": 1
+}

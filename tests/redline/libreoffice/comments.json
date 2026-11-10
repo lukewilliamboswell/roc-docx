@@ -1,0 +1,32 @@
+{
+  "schema": "roc-docx-snapshot/1",
+  "producer": {"name": "roc-docx", "version": "working tree"},
+  "document": ".roc-docx/redline/libreoffice/comments.docx",
+  "keys": ["blocks.kind", "blocks.level", "blocks.list", "blocks.text", "blocks.rows", "blocks.runs.bold", "blocks.runs.italic", "blocks.runs.underline", "blocks.runs.strike", "blocks.runs.superscript", "blocks.runs.subscript", "blocks.runs.link", "notes.kind", "notes.text", "comments.author", "comments.date", "comments.text", "comments.anchor", "comments.thread", "comments.resolved", "revisions.kind", "revisions.author", "revisions.date", "revisions.text", "sections.page_width", "sections.page_height", "sections.orientation", "sections.margin_top", "sections.margin_bottom", "sections.margin_left", "sections.margin_right", "sections.header", "sections.footer", "sections.header_even", "sections.footer_even", "sections.header_first", "sections.footer_first", "properties.title", "properties.subject", "properties.creator", "properties.keywords", "properties.description", "properties.last_modified_by", "properties.created", "properties.modified"],
+  "blocks": [
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Revised Services Agreement (as agreed)", "runs": [{"text": "Revised Services Agreement (as agreed)", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Both parties confirm this amendment.", "runs": [{"text": "Both parties confirm this amendment.", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "heading", "level": 1, "list": "", "text": "Services", "runs": [{"text": "Services", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "The Provider shall perform the Services with reasonable skill and care.", "runs": [{"text": "The Provider shall perform the Services with reasonable skill and care.", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "heading", "level": 2, "list": "", "text": "Fees", "runs": [{"text": "Fees", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "The Customer shall pay the Fees within thirty days of receipt of a valid invoice.", "runs": [{"text": "The Customer shall pay the Fees within thirty days of receipt of a valid invoice.", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "heading", "level": 2, "list": "", "text": "Liability", "runs": [{"text": "Liability", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Neither party is liable for indirect or consequential loss. The total liability of either party is capped at the Fees paid in the preceding twelve months.", "runs": [{"text": "Neither party is liable for indirect or consequential loss. The total liability of either party is capped at the Fees paid in the preceding twelve months.", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []}
+  ],
+  "notes": [],
+  "comments": [
+    {"author": "Ada Reviewer", "date": "2026-03-02T09:15:00Z", "text": "", "anchor": "The Provider shall perform the Services with reasonable skill and care.", "thread": 0, "resolved": false},
+    {"author": "Grace Author", "date": "2026-03-02T10:40:00Z", "text": "", "anchor": "thirty days", "thread": 1, "resolved": false},
+    {"author": "Ada Reviewer", "date": "2026-03-03T08:00:00Z", "text": "", "anchor": "Neither party is liable for indirect or consequential loss.", "thread": 2, "resolved": false}
+  ],
+  "revisions": [
+    {"kind": "deletion", "author": "Morgan Reviewer", "date": "2026-11-10T10:00:00Z", "text": "Draft"},
+    {"kind": "insertion", "author": "Morgan Reviewer", "date": "2026-11-10T10:00:00Z", "text": "Revised"},
+    {"kind": "insertion", "author": "Morgan Reviewer", "date": "2026-11-10T10:00:00Z", "text": " (as agreed)\nBoth parties confirm this amendment."},
+    {"kind": "deletion", "author": "Morgan Reviewer", "date": "2026-11-10T10:00:00Z", "text": " Agreement"}
+  ],
+  "sections": [
+    {"page_width": 12240, "page_height": 15840, "orientation": "portrait", "margin_top": 1440, "margin_bottom": 1440, "margin_left": 1440, "margin_right": 1440, "header": "", "footer": "", "header_even": "", "footer_even": "", "header_first": "", "footer_first": ""}
+  ],
+  "properties": {"title": "Draft Services Agreement", "subject": "", "creator": "", "keywords": "", "description": "", "last_modified_by": "", "created": "2023-11-14T22:13:20Z", "modified": "2023-11-14T22:13:20Z"}
+}

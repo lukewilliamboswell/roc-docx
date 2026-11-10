@@ -1,0 +1,179 @@
+{
+  "schema": "roc-docx-ledger/1",
+  "reviewed_on": "2026-11-09",
+  "notes": [
+    "The standards the package is defined against, pinned by digest where a download exists.",
+    "oracle/provision.py fetches every entry whose fetch is `schemas` or `file`, verifies sha256 and bytes, and lays the schemas out under .roc-docx/oracle/. Entries with fetch `reference` are fetched only with --all; `none` entries are pinned by identifier.",
+    "Changing an entry is a reviewed change to what the package conforms to."
+  ],
+  "standards": [
+    {
+      "id": "ecma-376-1",
+      "title": "Office Open XML File Formats, Part 1: Fundamentals and Markup Language Reference",
+      "revision": "ECMA-376 5th edition, December 2016",
+      "url": "https://ecma-international.org/wp-content/uploads/ECMA-376-1_5th_edition_december_2016.zip",
+      "sha256": "9d0bcad9cf06054785b03762fcfadbf6bab7e54a5f9d69434e34b7fd464d4129",
+      "bytes": 43501721,
+      "retrieved_on": "2026-11-09",
+      "role": "WordprocessingML and DrawingML markup reference; Strict schemas (not used for validation)",
+      "fetch": "reference"
+    },
+    {
+      "id": "ecma-376-2",
+      "title": "Office Open XML File Formats, Part 2: Open Packaging Conventions",
+      "revision": "ECMA-376 5th edition, December 2021",
+      "url": "https://ecma-international.org/wp-content/uploads/ECMA-376-2_5th_edition_december_2021.zip",
+      "sha256": "1d489dc491168ea1f9e9a59063acc8dd5f02b4ad1d21aa7ec19ba9a58d020c70",
+      "bytes": 1899204,
+      "retrieved_on": "2026-11-09",
+      "role": "package model: content types, relationships, core properties; normative OPC schemas",
+      "fetch": "schemas",
+      "members": [{ "path": "OpenPackagingConventions-XMLSchema.zip", "extract_to": "opc" }]
+    },
+    {
+      "id": "ecma-376-3",
+      "title": "Office Open XML File Formats, Part 3: Markup Compatibility and Extensibility",
+      "revision": "ECMA-376 5th edition, December 2015",
+      "url": "https://ecma-international.org/wp-content/uploads/ECMA-376-3_5th_edition_december_2015.zip",
+      "sha256": "42294159fbbbe9393ccadac95b859d7729cc68d908898bcbe31034dda059daa8",
+      "bytes": 741741,
+      "retrieved_on": "2026-11-09",
+      "role": "ignorable namespaces, alternate content, preservation rules",
+      "fetch": "reference"
+    },
+    {
+      "id": "ecma-376-4",
+      "title": "Office Open XML File Formats, Part 4: Transitional Migration Features",
+      "revision": "ECMA-376 5th edition, December 2016",
+      "url": "https://ecma-international.org/wp-content/uploads/ECMA-376-4_5th_edition_december_2016.zip",
+      "sha256": "bd25da1109f73762356596918bf5ff8b74a1331642dba5f1c1d1dfc6bed34ecd",
+      "bytes": 8471820,
+      "retrieved_on": "2026-11-09",
+      "role": "normative Transitional schemas: the grammar every written part must satisfy",
+      "fetch": "schemas",
+      "members": [{ "path": "OfficeOpenXML-XMLSchema-Transitional.zip", "extract_to": "transitional" }]
+    },
+    {
+      "id": "w3c-xml-xsd",
+      "title": "XML namespace schema (xml:space, xml:lang)",
+      "revision": "W3C, as served 2026-11-09",
+      "url": "https://www.w3.org/2001/xml.xsd",
+      "sha256": "61960fb3131e38022caad5360e2f33a3382578ab3c80cd58bd74320ede61b20c",
+      "bytes": 8836,
+      "retrieved_on": "2026-11-09",
+      "role": "imported without a location by the ECMA schemas; supplied through wrapper schemas and the catalog",
+      "fetch": "file",
+      "copy_to": "w3c/xml.xsd",
+      "catalog_uris": ["http://www.w3.org/2001/xml.xsd", "http://www.w3.org/2001/03/xml.xsd"]
+    },
+    {
+      "id": "dc-xsd",
+      "title": "Dublin Core elements schema",
+      "revision": "DCMI, 2003-04-02",
+      "url": "http://dublincore.org/schemas/xmls/qdc/2003/04/02/dc.xsd",
+      "sha256": "bc1d454db1bb20dfb1867a3fe0cf007775fc4afa33a5df425c12d854f049f1f6",
+      "bytes": 4112,
+      "retrieved_on": "2026-11-09",
+      "role": "imported by the OPC core-properties schema",
+      "fetch": "file",
+      "copy_to": "dublincore/dc.xsd",
+      "catalog_uris": ["http://dublincore.org/schemas/xmls/qdc/2003/04/02/dc.xsd"]
+    },
+    {
+      "id": "dcterms-xsd",
+      "title": "Dublin Core terms schema",
+      "revision": "DCMI, 2003-04-02",
+      "url": "http://dublincore.org/schemas/xmls/qdc/2003/04/02/dcterms.xsd",
+      "sha256": "6328c8b574c166f8ebc28d07231e6ee47121e9791689b70c3afa665f22099fed",
+      "bytes": 11171,
+      "retrieved_on": "2026-11-09",
+      "role": "imported by the OPC core-properties schema",
+      "fetch": "file",
+      "copy_to": "dublincore/dcterms.xsd",
+      "catalog_uris": ["http://dublincore.org/schemas/xmls/qdc/2003/04/02/dcterms.xsd"]
+    },
+    {
+      "id": "dcmitype-xsd",
+      "title": "DCMI type vocabulary schema",
+      "revision": "DCMI, 2003-04-02",
+      "url": "http://dublincore.org/schemas/xmls/qdc/2003/04/02/dcmitype.xsd",
+      "sha256": "4980845d0bedcf45e707fa64eb47492ae4f95ac4ae42f5c3c68b58c0bc9e8e49",
+      "bytes": 1442,
+      "retrieved_on": "2026-11-09",
+      "role": "imported by the Dublin Core terms schema",
+      "fetch": "file",
+      "copy_to": "dublincore/dcmitype.xsd",
+      "catalog_uris": ["http://dublincore.org/schemas/xmls/qdc/2003/04/02/dcmitype.xsd"]
+    },
+    {
+      "id": "ms-docx",
+      "title": "[MS-DOCX]: Word Extensions to the Office Open XML (.docx) File Format",
+      "revision": "to be pinned to a published version when first consumed (plan G3.2)",
+      "url": "https://learn.microsoft.com/en-us/openspecs/office_standards/ms-docx/",
+      "retrieved_on": "2026-11-09",
+      "role": "w14, w15, w16cid, w16cex and w16du extension namespaces for comments and revisions",
+      "fetch": "none"
+    },
+    {
+      "id": "xml-1.0-5e",
+      "title": "Extensible Markup Language (XML) 1.0 (Fifth Edition)",
+      "revision": "W3C Recommendation 26 November 2008",
+      "url": "https://www.w3.org/TR/2008/REC-xml-20081126/",
+      "role": "well-formedness",
+      "fetch": "none"
+    },
+    {
+      "id": "xml-names-1.0-3e",
+      "title": "Namespaces in XML 1.0 (Third Edition)",
+      "revision": "W3C Recommendation 8 December 2009",
+      "url": "https://www.w3.org/TR/2009/REC-xml-names-20091208/",
+      "role": "namespace resolution",
+      "fetch": "none"
+    },
+    {
+      "id": "zip-appnote",
+      "title": ".ZIP File Format Specification",
+      "revision": "APPNOTE.TXT 6.3.10, November 2022",
+      "url": "https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT",
+      "role": "package container",
+      "fetch": "none"
+    },
+    {
+      "id": "rfc1951",
+      "title": "DEFLATE Compressed Data Format Specification version 1.3",
+      "revision": "RFC 1951, May 1996",
+      "url": "https://www.rfc-editor.org/rfc/rfc1951.html",
+      "role": "entry compression",
+      "fetch": "none"
+    }
+  ],
+  "oracles": [
+    {
+      "id": "schema",
+      "role": "normative structural oracle",
+      "tool": "xmllint (libxml2) from the host; the lane records `xmllint --version`",
+      "inputs": ["ecma-376-4", "ecma-376-2", "w3c-xml-xsd", "dc-xsd", "dcterms-xsd", "dcmitype-xsd"]
+    },
+    {
+      "id": "libreoffice",
+      "role": "independent consumer oracle",
+      "tool": "soffice --headless; found through SOFFICE or PATH; the lane records `soffice --version`",
+      "observed": "LibreOffice 26.2.3.2 on macOS, 2026-11-09"
+    },
+    {
+      "id": "pandoc",
+      "role": "fixture producer and semantic reader",
+      "release": "3.9.0.2",
+      "fetched_by": "Blueprint.roc (digests in Blueprint.lock)",
+      "determinism": "byte-identical output under SOURCE_DATE_EPOCH"
+    },
+    {
+      "id": "roc-fuzz",
+      "role": "property, allocation and campaign harness",
+      "release": "0.5.0",
+      "bundle": "https://github.com/lukewilliamboswell/roc-fuzz/releases/download/0.5.0/9WT86CuwM7ZJBSs8iTd1jLyrUFTTiGp5hcJE63TwswGE.tar.zst",
+      "sha256": "aed4032105af1cc910604949f43636b7bff6aec4a82184631213153b8e2dd23f",
+      "bytes": 2242328
+    }
+  ]
+}

@@ -1,0 +1,478 @@
+= Read a document's text
+
+This chapter reads what a document's body says: its text, and the typed
+blocks, paragraphs and runs the text comes from. It continues from
+<<read-and-write-the-parts-of-a-document>>, which opens a document with
+`Docx.parse`.
+
+== The text
+
+`Docx.text` gives the body's text: every paragraph's text in reading order,
+each followed by a line feed, including the paragraphs inside tables and
+content controls.
+
+[source,roc]
+----
+include::../tests/manual.roc[tag=text,indent=0]
+----
+
+The text is the current text, the document with its tracked changes as
+they stand: inserted text and text moved in are included, deleted text and
+text moved away are not. A paragraph whose mark was deleted, or moved away,
+runs on into the next paragraph without a line feed, as it does when the
+change is accepted, but never into or out of a table cell. A deleted table
+row or cell is still there, empty of the text deleted from it. Field
+instructions, note and comment references and drawings contribute nothing;
+a field contributes the result it last displayed. Inside a run:
+
+* a tab is a tab character;
+* a line, page or column break is a line feed;
+* a symbol, a character in a named font such as Wingdings, is its character
+  code, which for most symbol fonts is in Unicode's private use area;
+* a soft hyphen, shown only where a line breaks, is U+00AD, and a hyphen at
+  which a line never breaks is U+2011.
+
+Text keeps its spaces where the document says `xml:space="preserve"`, as
+producers write it for text with leading, trailing or repeated spaces.
+Elsewhere, as Word and LibreOffice read it, spaces at the start and end of a
+piece of text are layout and are removed, and a tab or line end inside it is
+a space.
+
+== The blocks
+
+`Docx.body` gives the body as a list of `Document.Block` values in reading
+order, read from the main document part as it is written, extensions and
+alternative content included, so that the model holds everything the part
+says and <<write-a-document>> can write it back from the model:
+
+[source,roc]
+----
+include::../tests/manual.roc[tag=paragraphs,indent=0]
+----
+
+That lists the text of the paragraphs directly in the body; the paragraphs in
+a table are inside its cells.
+
+A `Paragraph` has `properties` and `content`, a list of `Document.Inline`
+values. A `Run` inline has `properties` and `content`, a list of
+`Document.RunContent` values: `Text(text)`, `Tab`, `Break({ kind, clear })`
+with `kind` one of `Line`, `Page` and `Column` and `clear` saying which
+floating objects a line break clears, `Symbol({ font, code })`, `SoftHyphen`
+and `NonBreakingHyphen`. `Document.paragraph_text` gives one paragraph's
+text as `Docx.text` does, and `Document.inline_text` one inline's.
+`Document.append_inline_text` appends an inline's text to a list of bytes
+instead, so that a text built from many inlines takes no allocation for
+each.
+
+The model grows a construct at a time, and what it does not represent yet is
+never dropped. Every element it does not model is kept as the XML node it
+was read as, in its place among the modelled ones: a `Preserved` block,
+inline or run content. A property element the model does not represent
+stays in `properties.preserved`. An element whose content is blocks or paragraph
+content is a `Container`: the element itself, without its children, and its
+content read as blocks or inlines. Content controls and custom XML are
+containers of blocks, and of rows and cells inside a table; content
+controls, smart tags and bidirectional embeddings are containers of
+inlines. That is how the text in a content control is still text. Tracked
+changes are inlines of their own, which <<read-a-documents-tracked-changes>>
+describes.
+
+A break of a type the schema does not define, a symbol without a character
+code and text holding markup are kept as `Preserved` run content rather than
+guessed at.
+
+Extensions are kept the same way. An element in a namespace the package does
+not understand, such as Word's newer shapes, is `Preserved` where it stands,
+and so is alternative content (`mc:AlternateContent`) as a whole, which is
+how LibreOffice writes a horizontal line: its text, if it has any, is not
+part of the body's text. A paragraph, run, table, row, cell or piece of run
+content with an attribute the model cannot hold, such as an extension's, is
+kept whole as `Preserved` rather than read without it. The exceptions are the
+identifiers Word gives paragraphs and rows (`w14:paraId` and `w14:textId`):
+they are not part of the model, which names what it refers to by meaning,
+and nothing in the body refers to them.
+
+== Links and bookmarks
+
+A `Hyperlink({ target, preserved, content })` inline holds the runs it
+links. Its `target` is one of:
+
+* `External(url)`, an address outside the document;
+* `ExternalAt({ url, location })`, an address and a location within what it
+  addresses;
+* `Internal(name)`, a bookmark of the document by its name.
+
+`preserved` keeps the hyperlink's other attributes, such as its tooltip. A
+document names an external address through a relationship of its part; the
+model holds the address itself, so an application never sees the
+relationship's identifier.
+
+A bookmark is a `BookmarkStart(name)` inline where it begins and a
+`BookmarkEnd(name)` where it ends, named by its name, which an internal
+link's target uses too. The document's own numeric identifiers for
+bookmarks are not part of the model.
+
+What the package cannot resolve is kept rather than guessed at: a hyperlink
+whose relationship is missing, or that names no target, is a `Container` of
+its runs, and a bookmark end without a start, or a bookmark spanning table
+columns, is `Preserved`.
+
+== Footnotes and endnotes
+
+`Docx.footnotes` and `Docx.endnotes` give a document's notes as
+`Document.Note` values, in the order of their parts, read from the parts
+the main document's footnotes and endnotes relationships lead to. A note
+has a `kind` and `content`, a list of blocks read as the body's are. Most
+notes are of kind `Note`; the others are the `Separator` line between body
+and notes, the `ContinuationSeparator` above notes continued from the
+previous page, and the `ContinuationNotice` that they continue.
+
+In the body, a reference is the run content
+`NoteReference({ kind, note })`: `kind` is `Footnote` or `Endnote`, and
+`note` is the note's place in the list `Docx.footnotes` or `Docx.endnotes`
+gives:
+
+[source,roc]
+----
+include::../tests/manual.roc[tag=notes,indent=0]
+----
+
+Inside a note, the mark that numbers it is `NoteMark(kind)`. Neither the
+reference nor the mark contributes text. A reference whose mark is the text
+written after it, rather than a number, is kept as `Preserved`.
+
+== Fields
+
+Fields are read, never evaluated: the package does not recalculate a page
+number or a date, and a field's result is what the producer last displayed.
+
+A simple field is a `SimpleField({ code, preserved, content })` inline: its
+field code, its other attributes and its result as runs. A complex field is
+spread over runs, and can be spread over paragraphs, exactly as it was
+written: `FieldMark({ kind: Begin, element })`, the pieces of its code as
+`FieldCode(text)`, `FieldMark({ kind: Separate, element })`, the runs of its
+result, and `FieldMark({ kind: End, element })`. Each mark keeps its
+element, with what the model does not hold, such as a lock or form field
+data.
+
+`Docx.fields` gathers the body's fields, in the order they begin, as
+`{ code, result }` with the result as text; `Document.fields` does the same
+for any list of blocks, such as a note's content:
+
+[source,roc]
+----
+include::../tests/manual.roc[tag=fields,indent=0]
+----
+
+A field nested in another's result, as page numbers are inside the links of
+a table of contents, is part of that result too. `Document.field_target`
+reads the target a `HYPERLINK` field code names, as Word and LibreOffice
+write links in fields, in the same form as a hyperlink's target.
+
+== Pictures
+
+An inline picture is the run content
+`Picture({ media, size, drawing })`: `media` is the name of the part holding
+the image, which is never decoded, `size` its `width` and `height` on the
+page in English Metric Units (914,400 to the inch), and `drawing` the
+drawing as it was read. The image part itself is written back byte for byte
+as it was read. A floating drawing, a picture whose image is not in the
+package and any other drawing are kept as `Preserved`.
+
+== Formatting and styles
+
+A paragraph's and a run's `properties` are what the document states on that
+paragraph or run, its direct formatting. Each property is `Unset` where the
+document says nothing, so a property left to the styles can be told from one
+set to the value a style would give:
+
+* a paragraph has its `style`, `alignment`, `indentation` and `spacing` in
+  twentieths of a point, `keep_next`, `keep_lines`, `page_break_before`,
+  `widow_control`, its `outline_level` from 0, `borders`, `shading`, `tabs`
+  and the `numbering` instance and level that make it a list item;
+* a run has its character `style`, `bold`, `italic`, `caps`, `small_caps`,
+  `strike`, `double_strike`, `hidden`, `underline`, `vertical_align`
+  (`Superscript`, `Subscript` or `Baseline`), `color`, `highlight`, `size` in
+  half-points, `fonts` by script and `language` by script.
+
+An on or off property is `On`, `Off` or `Unset`. A theme colour or theme font
+is kept as the document names it and not looked up in the theme. A property
+element the model cannot hold whole, such as spacing in lines, an underline
+with its own colour, a font hint or a number written with a fraction, stays
+in `preserved` as it was read, and so does a second copy of an element.
+
+`Docx.styles` reads the document's style table with `Styles.read`, and
+`Styles.effective_paragraph` and `Styles.effective_run` resolve what applies
+to a paragraph or run once its styles and the document's defaults are taken
+into account:
+
+[source,roc]
+----
+include::../tests/manual.roc[tag=headings,indent=0]
+----
+
+Resolution follows the order the standard gives: the document defaults,
+then a table style and a numbering level, then the paragraph style and the
+styles it is based on, then the paragraph's direct properties; for a run,
+then the character style and its bases, then the run's direct properties.
+A paragraph without a style has the document's default paragraph style.
+Toggle properties (bold, italic, caps, small caps, both strikes and hidden)
+are combined as the standard says: each kind of style that turns one on
+inverts it, so a bold character style in a bold paragraph style gives text
+that is not bold, and direct formatting sets it outright. A table style and a numbering level contribute
+only when the caller passes their properties, as `{ table_paragraph,
+table_run, numbering }`, the last from the paragraph's list level as
+<<lists>> describes. `Styles.table_properties` gives a table's: those of
+the table style it names, with its bases', or of the document's default
+table style where it names none or names a style that is not a table style,
+as Word applies it. `Styles.inherited` gives any style's properties with its
+bases'. The model keeps only what the document states, so resolving never
+changes what a document writes.
+
+`Docx.paragraphs` resolves the whole document at once: the body's
+paragraphs in reading order, then the footnotes', the endnotes', and the
+headers' and footers'. Each is a `Docx.FormattedParagraph`: its
+`location`, the `paragraph` as the model holds it, its effective
+`properties`, and its `runs`, each a `Docx.FormattedRun` with the `run` and
+its effective `properties`. The location is `Body`; `Footnote(n)` or
+`Endnote(n)`, the note's place among `Docx.footnotes` or `Docx.endnotes`,
+which is how a note reference names it; or `Header(part)` or
+`Footer(part)`, the part a section's headers and footers name. Every
+paragraph is there, in tables and content controls too, and each is
+resolved with its list level and, in a table, with what
+`Styles.table_properties` gives the innermost table, so nothing is left to
+pass by hand:
+
+[source,roc]
+----
+include::../tests/manual.roc[tag=effective-paragraphs,indent=0]
+----
+
+The runs are those of the paragraph's current text, as
+`Document.paragraph_text` counts it: runs in hyperlinks, fields, insertions
+and moves here, not in deletions or moves away. A paragraph whose mark is
+deleted is still one paragraph, not joined to the next. What reading the styles and numbering did not take as written is what
+`Docx.styles` and `Docx.numbering` give beside their tables.
+
+A style based on one that does not exist or on a style of another kind is
+read without a base, and every style on a cycle of bases is too; each case
+is a `Styles.Diagnostic` beside the table, as is a style without an
+identifier or with one already taken, which is skipped.
+
+A heading is a paragraph whose effective outline level is 0 to 8, whether
+its style or the paragraph itself gives it; level 9 is body text. That is
+how LibreOffice reads headings, and it recognises a style based on a
+heading style as a heading.
+
+== Lists
+
+A paragraph is a list item when its numbering reference names a list. The
+reference is the paragraph's `numbering`: an `instance` and a `level` from
+0, stated on the paragraph or given by its paragraph style, so the
+effective one comes from `Styles.effective_paragraph`. `Docx.numbering`
+reads the document's numbering table with `Numbering.read`, and
+`Numbering.level` resolves a reference to the list level the paragraph is
+at:
+
+[source,roc]
+----
+include::../tests/manual.roc[tag=lists,indent=0]
+----
+
+A list is described twice over. A `Numbering.Definition` holds the levels,
+up to nine of them, and each `Numbering.Level` says how it is numbered
+(`format`), the number it `start`s from, the `text` it shows, where `%1` to
+`%9` stand for the current numbers of levels 1 to 9, its `alignment`, the
+`paragraph_style` that takes the level, and the `paragraph` and `run`
+properties it gives. The format is `Bullet`, which includes picture bullets;
+`NoNumber`, a list item that shows nothing; `Number(name)` with the schema's
+name for the numbering, such as `decimal`, `lowerLetter` or `upperRoman`; or
+`Unset`, which the standard reads as `decimal`. A `Numbering.Instance` is
+what paragraphs name: it uses one definition, by its identifier, and its
+`overrides` can restart a level at another number or replace a level
+outright, so two lists can share a definition and still be numbered
+separately. `Numbering.level` applies them: the level is the definition's,
+or the override's replacement, starting from the override's number where it
+gives one. A definition can stand for a numbering style, and another can use
+that style instead of levels of its own; the levels then come from the
+definition of the instance the numbering style names, or failing that from
+the definition that stands for the style.
+
+A reference names no list when its instance is 0, which is how a paragraph
+removes the numbering its style gives it, or it names no instance at all.
+An instance that does not exist, or whose definition does not exist, names
+no list either, and `Numbering.level` says which as `MissingInstance` or
+`MissingDefinition`, as pandoc reads it; LibreOffice numbers such a
+paragraph anyway. A level the definition does not give is still a list
+level, with every property `Unset`, as LibreOffice reads it.
+
+A list level's `paragraph` properties take part in the paragraph's
+effective properties, after the document defaults and a table style and
+before its paragraph style: pass them as
+`Styles.effective_paragraph(styles, properties, { numbering: level.paragraph })`.
+The level's `run` properties format the number or bullet, not the
+paragraph's text.
+
+What reading the numbering part did not take as written is a
+`Numbering.Diagnostic`: a definition or instance without a usable
+identifier, or with one already taken, which is skipped, and an instance
+whose definition does not exist. Within a definition, a level and an
+override the model cannot hold whole, and every element it does not model,
+such as a level's suffix or restart rule, stay in the `preserved` list of
+the definition, level or instance, and attributes such as a level's
+template code in `preserved_attributes`. The numbering part's own picture
+bullet definitions are not part of the table.
+
+== Tables
+
+A `Table` block has `properties`, a `grid` of columns and `content`, its
+rows in order. `Document.table_rows` gives a table's rows and
+`Document.row_cells` a row's cells, reading through the content controls
+and custom XML that can hold them; a cell's `content` is blocks, so a
+nested table is a `Table` block inside a cell:
+
+[source,roc]
+----
+include::../tests/manual.roc[tag=tables,indent=0]
+----
+
+The properties are those the document states on the table, row or cell
+itself. A table's style contributes more, and `style` names it by its
+identifier in the document's styles:
+
+* a table has its `style`, its preferred `width`, its `borders` and its
+  `shading`;
+* each grid column is `Column(width)` in twips;
+* a row says whether it is a `header` row, repeated at the top of each page,
+  and how many grid columns it skips before its first cell (`grid_before`)
+  and after its last (`grid_after`);
+* a cell has its preferred `width`, the grid columns it `span`s, its
+  vertical `merge` with the cell above (`Restart` starts a merged cell,
+  `Continue` is covered by the one above), its `borders`, its `shading` and
+  the vertical `alignment` of its content.
+
+A width is `Auto`, `Nil`, `Twips(n)` or `Fiftieths(n)`, a share of the
+available width in fiftieths of a per cent. A border names its `edge`, its
+`line` as the schema spells it (`single`, `double`, `nil` and so on), its
+`size` in eighths of a point, its `space` in points and its `color`, which
+is `Auto` or `Rgb` six hexadecimal digits. Every property that is not given
+is `Unset`, so a property a document states can be told from one it leaves
+to the style.
+
+Each property element the model does not hold stays in the `preserved` list
+of its table, row or cell properties, in order, as paragraph properties do.
+So does a property element with attributes the model cannot hold, such as a
+border or shading in a theme colour: it is kept whole rather than read in
+part. A grid column without a width is kept as `Preserved` in the grid.
+
+Some producers write a fraction where the schema wants a whole number:
+Google Docs exports write widths such as `w:w="10470.0"`. `Docx.parse`
+repairs such widths as it reads a document, with a `Rounded` diagnostic of
+its own, so the body of a parsed document holds `Twips(10470)`. The body
+reader is lenient on its own as well: given a tree with such a width,
+`WmlRead.read_body` rounds it to the nearest whole number, halves away from
+zero, and returns a `Rounded({ element, attribute, value })` diagnostic for
+it beside the blocks, naming the value as the tree has it. A percentage
+width finer than a fiftieth of a per cent, which parsing keeps as written,
+is rounded the same way, and `Docx.read_body` reports it.
+`Docx.body` gives the same blocks without the diagnostics.
+
+Reading the body is a query: it reads the main document's tree each time it
+is asked, and a document still writes the trees it was read with, so
+`Docx.to_bytes` writes what `Docx.parse` read whatever the body says.
+
+== Sections
+
+A document is divided into sections, each with its own page setup and its
+own headers and footers. In the body, a `Section` block ends a section: it
+follows the paragraph whose mark ends the section, and the body's last
+section ends the body. `Docx.sections` lists them in order, and
+`Document.sections` does the same for any list of blocks:
+
+[source,roc]
+----
+include::../tests/manual.roc[tag=sections,indent=0]
+----
+
+A `Document.Section` holds what the section states, each `Unset` when it
+states nothing:
+
+* `start`, where the section begins: `NextPage`, `Continuous` on the same
+  page, `EvenPage`, `OddPage` or `NextColumn`;
+* `page_size`, its `width` and `height` in twips (1,440 to the inch) and its
+  `orientation`, `Portrait` or `Landscape`;
+* `margins`, in twips: `top`, `right`, `bottom` and `left` from the page's
+  edges to the body, `header` and `footer` from the top and bottom edges to
+  the header and footer, and the `gutter` kept for binding;
+* `columns`, `Equal({ count, space, separator })` for columns of one width
+  with `space` twips between them, or `Unequal({ widths, separator })` with
+  each column's `width` and the `space` after it; `separator` is `Line` when
+  a line is drawn between them;
+* `page_numbers`, their `format` by its name in the schema (`decimal`,
+  `lowerRoman` and so on) and the number the section's first page `start`s
+  from;
+* `title_page`, `On` when the first page has its own header and footer;
+* `headers` and `footers`, described below.
+
+Every other section property, such as line numbering or page borders, stays
+in `preserved` as it was read, and so does one the model cannot hold, such
+as a page size naming a paper by its printer code. Google Docs exports write
+margins with fractions, such as `w:left="863.9999999999999"`, and leave out
+the gutter. `Docx.parse` repairs both as it reads the document, with a
+`Rounded` or `Defaulted` diagnostic of its own, so a parsed document's
+margins are whole and have a gutter of zero. Given such a tree directly,
+the body reader rounds the one and reads the other as zero too, and
+`WmlRead.read_body` returns a `Rounded` or `Defaulted({ element, attribute })`
+diagnostic for each.
+
+== Headers and footers
+
+A section's `headers` and `footers` are lists of `Document.HeaderFooter`
+values: the `kind` of pages each is for, `Default` for every page, `First`
+for the section's first page or `Even` for even pages, and the `part`
+holding it. `Docx.header_footer` reads a part's blocks as the body's are
+read, so the fields that number a document's pages are found in them:
+
+[source,roc]
+----
+include::../tests/manual.roc[tag=headers-footers,indent=0]
+----
+
+A section without a header or footer of a kind has the previous section's.
+A reference to a part the package does not have stays in `preserved`.
+
+Which of them a page shows depends on two settings. A section's `First`
+header and footer are shown on its first page only when its `title_page`
+is `On`. `Even` ones are shown on even pages only when the document gives
+odd and even pages different headers and footers, which is the whole
+document's setting, not a section's: `Docx.different_odd_and_even` says
+whether it does, and then the `Default` ones are for odd pages. Without the
+setting, `Default` ones are on every page and `Even` ones are kept but not
+shown. `Docx.set_different_odd_and_even(document, On)` turns the setting on
+and `Off` turns it off, in the document's settings part, giving a document
+without one a settings part; nothing else in the document changes.
+
+== Document properties
+
+`Docx.core_properties` gives what a document says about itself, read from
+the part its package's core properties relationship leads to: its `title`,
+`subject`, `creator` (the author), `keywords`, `description`, who it was
+`last_modified_by`, as `Text(text)`, its `revision` as `Number(n)`, and when
+it was `created` and `modified` as `Date(text)`, in the W3C date format the
+document writes, such as `2026-11-09T11:03:00Z`. A property the document
+does not give is `Unset`; the others, such as its category or language, are
+kept in `preserved`.
+
+`Docx.extended_properties` gives what the application that saved the
+document recorded: its `application` and `app_version`, the `company`,
+`manager` and `template`, and the statistics it counted, such as `pages`,
+`words` and the `total_time` spent editing in minutes, as `Count(n)`.
+`Docx.custom_properties` lists the properties an application or person
+added, each `Property({ name, value })` with a value that is `Text`,
+`Integer`, `Boolean` or `Date`; one of any other type is kept as
+`Preserved`.
+
+Properties are read, like the body, from the trees a document writes back,
+so they pass through `Docx.parse` and `Docx.to_bytes` unchanged.
+`Docx.set_properties` changes the core properties, as
+<<set-what-a-document-says-about-itself>> describes.

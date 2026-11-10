@@ -1,0 +1,26 @@
+{
+  "schema": "roc-docx-snapshot/1",
+  "producer": {"name": "roc-docx", "version": "working tree"},
+  "document": ".roc-docx/review/word/pages.docx",
+  "keys": ["blocks.kind", "blocks.level", "blocks.list", "blocks.text", "blocks.rows", "blocks.runs.bold", "blocks.runs.italic", "blocks.runs.underline", "blocks.runs.strike", "blocks.runs.superscript", "blocks.runs.subscript", "blocks.runs.link", "notes.kind", "notes.text", "comments.author", "comments.date", "comments.text", "comments.anchor", "comments.thread", "comments.resolved", "revisions.kind", "revisions.author", "revisions.date", "revisions.text", "sections.page_width", "sections.page_height", "sections.orientation", "sections.margin_top", "sections.margin_bottom", "sections.margin_left", "sections.margin_right", "sections.header", "sections.footer", "sections.header_even", "sections.footer_even", "sections.header_first", "sections.footer_first", "properties.title", "properties.subject", "properties.creator", "properties.keywords", "properties.description", "properties.last_modified_by", "properties.created", "properties.modified"],
+  "blocks": [
+    {"kind": "heading", "level": 1, "list": "", "text": "Field Guide", "runs": [{"text": "Field Guide", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Northwind Rambling Club", "runs": [{"text": "Northwind Rambling Club", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Planning a walk", "runs": [{"text": "Planning a walk", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Weather and kit", "runs": [{"text": "Weather and kit", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "Routes follow in the second part.", "runs": [{"text": "Routes follow in the second part.", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "heading", "level": 1, "list": "", "text": "Routes", "runs": [{"text": "Routes", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []},
+    {"kind": "paragraph", "level": 0, "list": "", "text": "The ridge loop", "runs": [{"text": "The ridge loop", "bold": false, "italic": false, "underline": false, "strike": false, "superscript": false, "subscript": false, "link": ""}], "rows": []}
+  ],
+  "notes": [],
+  "comments": [
+    {"author": "Morgan Reviewer", "date": "2026-11-10T09:00:00Z", "text": "Please give the parties' full legal names.", "anchor": "Field Guide", "thread": 0, "resolved": true},
+    {"author": "Lin Editor", "date": "2026-11-10T09:30:00Z", "text": "Done; both names now match the register.", "anchor": "Field Guide", "thread": 0, "resolved": true}
+  ],
+  "revisions": [],
+  "sections": [
+    {"page_width": 11906, "page_height": 16838, "orientation": "portrait", "margin_top": 1440, "margin_bottom": 1440, "margin_left": 1440, "margin_right": 1440, "header": "Field Guide", "footer": "Page 1", "header_even": "Northwind Rambling Club", "footer_even": "Page 1", "header_first": "", "footer_first": "Issued May 2026"},
+    {"page_width": 11906, "page_height": 16838, "orientation": "portrait", "margin_top": 1440, "margin_bottom": 1440, "margin_left": 1440, "margin_right": 1440, "header": "Field Guide", "footer": "Page 1", "header_even": "Northwind Rambling Club", "footer_even": "Routes, page 1", "header_first": "Part two: routes", "footer_first": "Issued May 2026"}
+  ],
+  "properties": {"title": "Field Guide", "subject": "", "creator": "Ada Reviewer", "keywords": "", "description": "", "last_modified_by": "Grace Author", "created": "2026-11-10T00:30:00Z", "modified": "2026-11-10T00:30:00Z"}
+}

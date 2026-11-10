@@ -1,0 +1,264 @@
+= Read and write the parts of a document
+
+This chapter opens a `.docx`, lists the parts inside it and writes them to a
+new package. It needs a Roc nightly on your `PATH` as `roc`. Until the first
+release, an application depends on the package by relative path from a
+checkout of the repository.
+
+== What a document is made of
+
+A `.docx` is a ZIP archive of XML parts: the body in one part, styles,
+numbering, comments, footnotes, headers and footers in others, with images as
+binary parts. `[Content_Types].xml` labels every part, and relationship parts
+link a source part to its targets, so the body is found by following the
+package's `officeDocument` relationship rather than by its file name.
+
+`Opc.open` reads the archive within resource limits and labels every part
+with its content type and size. It keeps the archive as it is and inflates a
+part only when you ask for it with `Opc.part_bytes`, so opening a document
+costs memory in proportion to its archive rather than to its content.
+`Opc.main_document` follows the relationship to the body, and
+`Opc.relationships` lists what a part links to. Part names compare without
+regard to ASCII case, as the conventions require, so `/word/document.xml`
+and `/Word/Document.xml` name the same part.
+
+== The example
+
+The repository's `examples/inspect` does exactly that for the document beside
+it, or for a path you pass:
+
+[source,roc]
+----
+include::../examples/inspect/main.roc[]
+----
+
+Run it from its directory:
+
+[source,sh]
+----
+cd examples/inspect && roc main.roc
+----
+
+The output names each part with its content type and size, then the
+relationships of the main document: its styles, numbering, settings,
+footnotes and comments parts.
+
+== Limits
+
+Documents are untrusted input. `Opc.open` takes a props record of limits
+beside the bytes, and `{}` keeps every default. The limits are checked
+against the sizes the archive declares before anything is decompressed, and
+a document over one fails with that limit's own error, such as
+`TooManyEntries(count)`; <<read-untrusted-and-imperfect-documents>> lists the
+limits, their defaults and the order of the checks. The other errors say
+what is wrong with the archive, such as `DuplicatePart(name)` for two parts
+with the same name; none of them is a crash. `Opc.part_bytes` reports the
+same kinds of damage for the part it decompresses.
+
+`[Content_Types].xml` and the relationship parts are read with
+`XmlTree.parse`, described below, within the same record's XML bounds, and
+their elements are found by namespace and local name, whatever prefix the
+producer wrote. XML that cannot be read fails with the reader's located
+error inside `ContentTypesNotXml(problem)`, or inside
+`RelationshipsNotXml({ part, problem })` from `Opc.relationships`.
+
+== Write the parts to a new package
+
+`Opc.graph` reads the part graph of an opened package: every part with its
+content type and the relationships whose source it is, and the package's own
+relationships. `Opc.writer` takes a graph, checks it, and fixes the order of
+the new archive:
+
+. `[Content_Types].xml`, generated from the parts' content types;
+. `_rels/.rels`, the package's relationships;
+. the main document, then the other parts the package's relationships reach,
+  breadth first in relationship order, then the parts nothing reaches, each
+  part followed by its relationship part, and the parts that are not XML,
+  such as images, after all the others.
+
+Every relationship part is generated from the graph too. An internal target
+inside its source part's directory is written relative to it, as producers
+write them, and any other as an absolute part name. A relationship part with
+no relationships, or whose source part is not in the package, stays an
+ordinary part of the graph and is copied like one.
+
+`Opc.pending` names the parts still to write, in that order. `Opc.add` writes
+the next one from its content and returns the next chunk of the archive, and
+`Opc.finish` returns the last chunk. The content is `Bytes(content)`, which
+is compressed with DEFLATE at one fixed level, `Balanced`, or at the level
+`Opc.writer_with(graph, compression)` names, `Fastest`, `Balanced` or
+`Smallest`, or stored when compressing would not make it smaller; or `Copied(pkg)`, which writes the part of the same
+name from an opened package exactly as its archive stored it, with its
+compression method, checksum and sizes, without decompressing it. The writer holds only the
+archive's directory of entries between chunks, so a document written to a
+file chunk by chunk holds one part at a time. `examples/repackage` writes a
+document to a new package that way:
+
+[source,roc]
+----
+include::../examples/repackage/main.roc[]
+----
+
+`Opc.to_bytes(graph, content_of)` runs the same loop, asking `content_of` for
+each part's content by name, and returns the whole archive; its bytes are the
+chunks concatenated. The same graph and content always give the same bytes:
+entries carry no timestamps and no data descriptors.
+
+The checks run when the writer starts, so a graph that cannot be written fails
+before any chunk exists: `InvalidPartName(name)` for a name that is not
+absolute, has an empty segment or one ending in a dot, or holds a control
+character; `DuplicatePart(name)` for two parts, generated ones included, whose
+names differ only in case; `InvalidContentType(name)` for an empty content
+type or one XML cannot carry; and `InvalidRelationship({ source, id })` or
+`DuplicateRelationshipId({ source, id })` for a relationship whose identifier
+is not an XML name or repeats one of its source, or whose internal target is
+not a part name. After that, `add` and `finish` fail only when driven out of order, with
+`NothingPending` or `NotWritten(name)`, or when a copied part cannot be read
+from its package.
+
+== A part's XML
+
+`XmlTree.parse` reads the bytes of an XML part into a tree in which every
+element and attribute is named by its namespace and local name, so
+`w:p` and `ns0:p` are the same name when both prefixes are bound to the
+WordprocessingML namespace. It takes the same limits record, whose XML bounds
+allow 1024 levels of nesting, 4,194,304 elements per part and 1024 attributes
+per element:
+
+[source,roc]
+----
+include::../tests/manual.roc[tag=xml-parse,indent=0]
+----
+
+A part that is not well-formed XML, breaks a namespace rule or exceeds a bound
+fails with a located error, such as `MalformedXml({ message, line, column })`,
+`NamespaceError({ problem, line, column })` or
+`XmlTooDeep({ max, line, column })`.
+
+`XmlTree.render` writes a tree back as a part. It does not reuse the
+declarations the tree was read with: the root declares every namespace the
+tree uses, once, so the same tree always gives the same bytes. A namespace in
+`XmlTree.prefixes` is written with its prefix there, and those come first, in
+table order. Any other namespace, such as a newer Word extension, keeps the
+prefix it was first read with, unless the table or an earlier namespace
+already has that prefix, it was read unprefixed, or it begins with `xml`;
+then it is written as `ns1`, `ns2` and so on, the first that is free. These
+are declared after the table's, in the order the tree first uses them.
+Content types, relationships and document properties keep their namespace
+as the default, as producers write them.
+
+Some attribute values name namespaces by prefix: `mc:Ignorable`,
+`mc:MustUnderstand` and the `Requires` of an alternative list prefixes, and
+`mc:ProcessContent`, `mc:PreserveElements`, `mc:PreserveAttributes` and
+`xsi:type` list qualified names. `XmlTree.render` resolves each prefix in
+them with the declarations in scope where it was read and writes the prefix
+its namespace is written with, and declares a namespace that only such a
+value names, so a reader that skips ignorable content still skips exactly
+what the producer marked. The items are written separated by one space. A
+prefix that had no declaration is written as it was.
+
+`XmlTree.unprefixed` gives the same tree without prefixes or declarations,
+with the namespaces those values name written out in braces, so two trees
+that spell their namespaces differently compare equal.
+
+== Extensions and alternative content
+
+Producers add markup that older readers do not know: Word 2010 and later, and
+LibreOffice, write paragraph identifiers, newer shapes and other extensions in
+namespaces of their own. ECMA-376 Part 3 lets them mark such a namespace as
+one a reader may ignore (`mc:Ignorable`) and offer the same content twice,
+once in the newer markup and once in a form every reader understands
+(`mc:AlternateContent`). LibreOffice, for example, writes a horizontal line as
+a newer shape with a VML picture as its fallback.
+
+`Mce.process` reads a part's tree the way a reader that understands only the
+namespaces in `Mce.understood` must: ignorable content in other namespaces is
+removed, the content of each alternative is replaced by the first choice it
+can understand, or by the fallback, and the compatibility markup itself is
+removed. What you get is the interpreted tree; the tree you passed in is
+unchanged and still holds every extension, so it is what a writer keeps:
+
+[source,roc]
+----
+include::../tests/manual.roc[tag=mce,indent=0]
+----
+
+A part that breaks a compatibility rule is still read, with a diagnostic for
+each problem: an extension namespace used without being marked ignorable, as
+Google Docs exports do (reported once per namespace), a namespace the
+producer says must be understood, a prefix with no declaration, or
+compatibility markup where the rules do not allow it. Each diagnostic names
+the element it is on and that element's position among the part's elements
+in document order, counting the root as 1. Content in such an extension
+namespace is removed from the interpreted tree as if it had been marked
+ignorable. Extension lists, which DrawingML parts such as the theme use for
+application-defined content, are kept in the interpreted tree as written.
+
+`Mce.declare_extensions` is the writing side of that leniency. It adds every
+extension namespace a part uses without declaring it ignorable to the root's
+`mc:Ignorable`, after what is there, so the written part says what the reader
+assumed and a reader that does not know the namespace, the ECMA schemas
+included, skips it rather than rejecting the part. The extension content
+itself is kept. A Google Docs comment's paragraph identifier is written back with
+`mc:Ignorable="w14"` on the comments part's root. Packaging parts, such as the
+core properties, and parts whose root is in a namespace the package does not
+understand, such as custom XML, are left as they are.
+
+== Pass a whole document through
+
+`Docx.parse` reads the bytes of a `.docx` as a `Document`, within the default
+limits, `Docx.parse_with` within the limits it is given, and `Docx.to_bytes`
+writes a document back:
+
+[source,roc]
+----
+include::../tests/manual.roc[tag=pass-through,indent=0]
+----
+
+A document is its package, the model of its main document's body and the
+tree of each XML part, which is every part whose content type is
+`application/xml`, `text/xml` or ends in `+xml`. The body is read one block
+at a time as the main document part is parsed, and kept as the model
+<<read-a-documents-text>> describes, so no tree of the whole body is held
+beside it; the main document's tree is the rest of the part, the shell the
+body is written into. Writing writes the main document, its notes and its
+headers and footers from their models, in the canonical form
+<<write-a-document>> describes, renders every other tree with
+`XmlTree.render`, its extensions declared ignorable by
+`Mce.declare_extensions`, and copies every other part, such as an image,
+exactly as the archive stored it; the parts, their content types and their
+relationships are those of the original, with any relationship a part
+written from its model needs added, in the order `Opc.writer` fixes.
+The same document always gives the same bytes. A document holds the
+archive's bytes, the body's model, the footnotes' model once a footnote is
+built, and the trees of its other XML parts;
+reading and writing it hold one part's bytes beyond them, and reading the
+main document holds one block's tree. `Document.from_package` reads a
+package you opened yourself, with limits of your choosing, every XML part
+as a tree; `Document.from_package_with_body` reads it as `Docx.parse` does,
+the body with the reader you give it.
+
+Reading drops editor state that the producing application regenerates and
+that carries no document meaning, such as the identifiers Word stamps on
+each editing session's content, and repairs the few values real producers
+write that the standard does not allow, such as a Google Docs export's
+table widths with a fraction. Each is reported in `diagnostics`, as
+<<what-reading-reports>> describes. Everything else is kept. A part that is
+not well-formed XML, breaks a namespace rule or exceeds a limit fails the
+parse with `XmlPartUnreadable({ part, problem })`.
+
+`Docx.equivalent` says whether two documents are the same in the sense a
+document keeps when it is written and read again: the main document, notes,
+header and footer parts the same when each is written from its model, so that spellings the model
+reads alike and identifiers the writer allocates make no difference, and
+every other part as `Document.equivalent` compares them. That is the same
+parts with the same content types and relationships, every part that is not
+XML byte for byte the same, and the trees of the XML parts equal by
+`Document.equivalent_xml`. Two
+trees are equivalent when they are equal after namespace prefixes and
+declarations, the order of attributes and whitespace-only text between
+elements are set aside, the dropped content is removed, repaired attributes
+compare repaired and an extension namespace used without being declared
+ignorable counts as declared; text,
+including text whose whitespace `xml:space="preserve"` keeps, compares
+exactly.
