@@ -61,6 +61,12 @@ Opc :: [].{
 	## CRC and sizes are written unchanged.
 	Content : [Bytes(List(U8)), Copied(Package)]
 
+	## How hard the writer compresses the parts it is given as bytes, with
+	## DEFLATE: `Fastest`, `Balanced` or `Smallest`, the levels 1, 6 and 12
+	## of the ZIP layer. A part that would not be smaller compressed is stored
+	## as it is, whatever the level.
+	Compression : [Fastest, Balanced, Smallest]
+
 	## A package being written one part at a time: the archive's central
 	## directory so far and the steps still to write, never a part's content.
 	Writer :: { zip : Zip.Writer, steps : List(Step), next : U64 }
@@ -88,7 +94,8 @@ Opc :: [].{
 
 	## Why a package cannot be opened: the ZIP layer's own archive errors, two
 	## parts with the same name, a part whose content is not the size its
-	## entry declares, the limit that was exceeded, or what is wrong with
+	## entry declares, the limit that was exceeded, a part name longer than
+	## the limit allows, with its length in bytes, or what is wrong with
 	## `[Content_Types].xml`: XML that cannot be read, from bytes that are not
 	## UTF-8 to an exceeded XML bound, a root that is not the content types
 	## namespace's `Types`, or an entry without its attributes.
@@ -102,6 +109,7 @@ Opc :: [].{
 		DuplicatePart(Str),
 		PartSizeMismatch({ name : Str, declared : U64 }),
 		TooManyEntries(U64),
+		PartNameTooLong({ name : Str, bytes : U64 }),
 		PartTooLarge({ name : Str, bytes : U64 }),
 		PackageTooLarge(U64),
 		MissingContentTypes,
@@ -124,11 +132,15 @@ Opc :: [].{
 	]
 
 	## Why a part's relationships cannot be read: their relationship part is
-	## missing, its XML cannot be read, or a relationship lacks an attribute.
+	## missing, its XML cannot be read, a relationship lacks an attribute, or
+	## an internal target climbs with `..` above the package root, named by
+	## the relationship part, the relationship's identifier and the target as
+	## written.
 	RelationshipsError : [
 		MissingPart(Str),
 		RelationshipsNotXml({ part : Str, problem : XmlTree.ReadError }),
 		MissingAttribute(AttributeLocation),
+		TargetOutsidePackage({ part : Str, id : Str, target : Str }),
 	]
 
 	## The relationship type that names a package's main document part.
@@ -142,8 +154,9 @@ Opc :: [].{
 	## 2. The central directory, which is read without inflating anything;
 	##    two entries with byte-equal names are a `DuplicatePart`.
 	## 3. The entry count against `max_entries`.
-	## 4. Each entry's declared decompressed size against `max_part_bytes`,
-	##    and their running total against `max_total_bytes`, in archive order.
+	## 4. Each entry's name against `max_part_name_bytes`, its declared
+	##    decompressed size against `max_part_bytes`, and the running total
+	##    of the sizes against `max_total_bytes`, in archive order.
 	## 5. Part names that differ only in ASCII case, as a `DuplicatePart`.
 	## 6. `[Content_Types].xml`, inflated and parsed.
 	## 7. A content type for every part, and each relationship part inflated.
@@ -163,6 +176,10 @@ Opc :: [].{
 		}
 		var $total = 0.U64
 		for entry in entries {
+			name_bytes = entry.path.count_utf8_bytes()
+			if name_bytes > limits.max_part_name_bytes {
+				return Err(PartNameTooLong({ name: entry.path, bytes: name_bytes }))
+			}
 			if entry.uncompressed_size > limits.max_part_bytes {
 				return Err(PartTooLarge({ name: entry.path, bytes: entry.uncompressed_size }))
 			}
@@ -265,7 +282,7 @@ Opc :: [].{
 				}
 				resolved = match mode {
 					External => target
-					Internal => resolve_target(source, target)
+					Internal => resolve_target(source, target) ? |OutsidePackage| TargetOutsidePackage({ part: rels_name, id, target })
 				}
 				$found = List.append($found, { id, kind, target: resolved, mode })
 			}
@@ -275,7 +292,7 @@ Opc :: [].{
 
 	## The main document part: the target of the package's `officeDocument`
 	## relationship, wherever the producer placed it.
-	main_document : Package -> Try(Part, [MissingPart(Str), RelationshipsNotXml({ part : Str, problem : XmlTree.ReadError }), MissingAttribute(AttributeLocation), NoMainDocument])
+	main_document : Package -> Try(Part, [MissingPart(Str), RelationshipsNotXml({ part : Str, problem : XmlTree.ReadError }), MissingAttribute(AttributeLocation), TargetOutsidePackage({ part : Str, id : Str, target : Str }), NoMainDocument])
 	main_document = |pkg| {
 		rels = Opc.relationships(pkg, "/")?
 		rel = rels.find_first(|candidate| candidate.kind == Opc.officedocument_relationship) ? |_| NoMainDocument
@@ -321,7 +338,13 @@ Opc :: [].{
 	## An internal target inside its source part's directory is written
 	## relative to it, and any other as an absolute part name.
 	writer : Graph -> Try(Writer, WriteError)
-	writer = |package_graph| {
+	writer = |package_graph| Opc.writer_with(package_graph, Balanced)
+
+	## Start writing a package as [Opc.writer] does, compressing the parts
+	## given as bytes at `compression`. The same graph and parts at the same
+	## level always give the same bytes.
+	writer_with : Graph, Compression -> Try(Writer, WriteError)
+	writer_with = |package_graph, compression| {
 		check_graph(package_graph)?
 		order = write_order(package_graph)
 		var $steps = List.with_capacity(2 * order.len() + 2)
@@ -335,7 +358,22 @@ Opc :: [].{
 				$steps = List.append($steps, Relationships({ source: planned.name, relationships: planned.relationships }))
 			}
 		}
-		Ok({ zip: Zip.writer({ compression: Balanced }), steps: $steps, next: 0 })
+		zip_compression = match compression {
+			Fastest => Fastest
+			Balanced => Balanced
+			Smallest => Smallest
+		}
+		Ok({ zip: Zip.writer({ compression: zip_compression }), steps: $steps, next: 0 })
+	}
+
+	## Whether `add` can copy the part of this name from `pkg`: the package
+	## has the part, its stored bytes lie within the archive, and a part
+	## stored without compression declares the same size twice. A part that
+	## passes is copied by `add` without an error.
+	copyable : Package, Str -> Try({}, WriteError)
+	copyable = |pkg, name| {
+		_ = entry_for(Part(name), Ok(Copied(pkg)))?
+		Ok({})
 	}
 
 	## The parts still to add, in the order `add` takes them.
@@ -880,7 +918,7 @@ relationships_part_name = |source|
 
 # Resolve a relationship target against its source part's directory and
 # collapse `.` and `..` segments, so a target never escapes the package.
-resolve_target : Str, Str -> Str
+resolve_target : Str, Str -> Try(Str, [OutsidePackage])
 resolve_target = |source, target| {
 	base = if (target.starts_with("/")) target else "${split_name(source).directory}${target}"
 	var $segments = List.with_capacity(8)
@@ -888,12 +926,15 @@ resolve_target = |source, target| {
 		if segment == "" or segment == "." {
 			{}
 		} else if segment == ".." {
+			if $segments.is_empty() {
+				return Err(OutsidePackage)
+			}
 			$segments = List.drop_last($segments, 1)
 		} else {
 			$segments = List.append($segments, segment)
 		}
 	}
-	"/${Str.join_with($segments, "/")}"
+	Ok("/${Str.join_with($segments, "/")}")
 }
 
 # The directory of a part name, with its trailing slash, and the file name.
@@ -949,22 +990,14 @@ expect relationships_part_name("/") == "/_rels/.rels"
 ## Relationship parts take the source's file name with a `.rels` suffix.
 expect relationships_part_name("/word/document.xml") == "/word/_rels/document.xml.rels"
 
-## Targets resolve against the source directory and never escape the root.
+## Targets resolve against the source directory.
 expect {
-	actual =
-		\\${resolve_target("/word/document.xml", "styles.xml")}
-		\\${resolve_target("/word/document.xml", "../docProps/core.xml")}
-		\\${resolve_target("/", "word/document.xml")}
-		\\${resolve_target("/word/document.xml", "/word/media/image1.png")}
-		\\${resolve_target("/word/document.xml", "../../../etc/passwd")}
-	expected =
-		\\/word/styles.xml
-		\\/docProps/core.xml
-		\\/word/document.xml
-		\\/word/media/image1.png
-		\\/etc/passwd
-	actual == expected
+	resolved = ["styles.xml", "../docProps/core.xml", "/word/media/image1.png"].map(|target| resolve_target("/word/document.xml", target))
+	resolved == [Ok("/word/styles.xml"), Ok("/docProps/core.xml"), Ok("/word/media/image1.png")] and resolve_target("/", "word/document.xml") == Ok("/word/document.xml")
 }
+
+## A target that climbs above the package root is outside the package.
+expect resolve_target("/word/document.xml", "../../../etc/passwd") == Err(OutsidePackage) and resolve_target("/", "../word/document.xml") == Err(OutsidePackage)
 
 # A minimal package: the three parts every WordprocessingML document has,
 # with the main document's content given.
@@ -1090,6 +1123,24 @@ expect {
 	archive = sample_with(compressible_document, Balanced)?
 	total = sample_content_types.to_utf8().len() + sample_rels.to_utf8().len() + compressible_document.to_utf8().len()
 	open_parts(archive, { max_total_bytes: 2_000 }) == Err(PackageTooLarge(total))
+}
+
+## A hostile part name, longer than the default limit, is refused before
+## anything is inflated, whatever its content; a lowered limit names the
+## first entry over it.
+expect {
+	long_name = "word/${Str.repeat("a", 2_000)}.xml"
+	archive = archive_of([{ path: long_name, content: compressible_document.to_utf8() }, { path: content_types_path, content: sample_content_types.to_utf8() }], Balanced)?
+	open_parts(archive, { max_part_bytes: 10 }) == Err(PartNameTooLong({ name: long_name, bytes: 2_009 }))
+		and open_parts(sample_archive?, { max_part_name_bytes: 16 }) == Err(PartNameTooLong({ name: content_types_path, bytes: 19 }))
+}
+
+## An internal relationship target that climbs above the package root is an
+## error naming the relationship, not a part inside the package.
+expect {
+	rels = "<Relationships xmlns='${relationships_namespace}'><Relationship Id='rId1' Type='${Opc.officedocument_relationship}' Target='../../word/document.xml'/></Relationships>"
+	archive = archive_of([{ path: content_types_path, content: sample_content_types.to_utf8() }, { path: "_rels/.rels", content: rels.to_utf8() }, { path: "word/document.xml", content: sample_document.to_utf8() }], None)?
+	Opc.relationships(Opc.open(archive, {})?, "/") == Err(TargetOutsidePackage({ part: "/_rels/.rels", id: "rId1", target: "../../word/document.xml" }))
 }
 
 ## Part names that differ only in ASCII case name the same part.
@@ -1261,6 +1312,37 @@ expect {
 		$w = added.writer
 	}
 	List.concat($chunks, Opc.finish($w)?) == Opc.to_bytes(scrambled_graph, named_content)?
+}
+
+## Every compression level writes a package that opens to the same parts and
+## contents, `Balanced` is the level of `writer`, and `Smallest` is no larger
+## than `Fastest`.
+expect {
+	chunked = |compression| {
+		var $w = Opc.writer_with(scrambled_graph, compression)?
+		var $chunks = List.with_capacity(1024)
+		for name in Opc.pending($w) {
+			added = Opc.add($w, named_content(name))?
+			$chunks = List.concat($chunks, added.chunk)
+			$w = added.writer
+		}
+		Ok(List.concat($chunks, Opc.finish($w)?))
+	}
+	fastest = chunked(Fastest)?
+	smallest = chunked(Smallest)?
+	same = |bytes|
+		match Opc.open(bytes, {}) {
+			Ok(pkg) => Opc.part_bytes(pkg, "/word/media/image1.png") == Ok("/word/media/image1.png".to_utf8())
+			Err(_) => Bool.False
+		}
+	chunked(Balanced)? == Opc.to_bytes(scrambled_graph, named_content)? and same(fastest) and same(smallest) and smallest.len() <= fastest.len()
+}
+
+## A part can be copied when its package has it and its stored bytes are
+## whole.
+expect {
+	pkg = Opc.open(sample_archive?, {})?
+	Opc.copyable(pkg, "/word/document.xml") == Ok({}) and Opc.copyable(pkg, "/word/missing.xml") == Err(MissingPart("/word/missing.xml"))
 }
 
 ## Copied parts keep their stored bytes, method, CRC and sizes, and writing

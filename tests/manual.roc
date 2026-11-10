@@ -10,7 +10,6 @@ import docx.Build
 import docx.Comments
 import docx.Docx
 import docx.Document
-import docx.Limits
 import docx.Mce
 import docx.Numbering
 import docx.Opc
@@ -71,6 +70,8 @@ main! = |_args| {
 		{ name: "tracks", outcome: done(Ok(tracking_said(amended))) },
 		{ name: "set-tracking", outcome: done(for_review(reviewed)) },
 		{ name: "write-body", outcome: done(write_body(basics_shell, Docx.body(Docx.parse(basics)?.document))) },
+		{ name: "write-options", outcome: done(written_with_options(reviewed)) },
+		{ name: "write-chunks", outcome: done(streamed_length(reviewed)) },
 		{ name: "new-document", outcome: done(new_lease({})) },
 		{ name: "build", outcome: done(tenancy_notice({})) },
 		{ name: "footer", outcome: done(footer_added(Docx.new_document({})?)) },
@@ -137,10 +138,7 @@ pass_through = |bytes| {
 bounded : List(U8) -> Try(Str, _)
 bounded = |bytes| {
 	# tag::limits[]
-	limits : Limits
-	limits = { max_part_bytes: 8_388_608, max_xml_depth: 256 }
-	opened = Opc.open(bytes, limits)?
-	{ document, diagnostics: _ } = Document.from_package(opened, limits)?
+	{ document, diagnostics: _ } = Docx.parse_with(bytes, { max_part_bytes: 8_388_608, max_xml_depth: 256 })?
 	# end::limits[]
 	Ok(Docx.text(document))
 }
@@ -474,6 +472,37 @@ write_body = |shell, blocks| {
 	{ tree, relationships: _, next: _ } = WmlWrite.document(shell, blocks, { relationships: [], footnotes: [], endnotes: [], comments: [] })?
 	# end::write-body[]
 	Ok(tree)
+}
+
+written_with_options : Document -> Try(List(U8), _)
+written_with_options = |document| {
+	# tag::write-options[]
+	bytes = Docx.to_bytes_with(document, { compression: Smallest, extension_parts: [ExtendedComments, People] })?
+	# end::write-options[]
+	Ok(bytes)
+}
+
+streamed_length : Document -> Try(U64, _)
+streamed_length = |document| {
+	# tag::write-chunks[]
+	var $next = Docx.next_chunk(Docx.to_chunks(document, {})?)
+	var $length = 0.U64
+	var $writing = Bool.True
+	while $writing {
+		match $next {
+			Emit(chunk, rest) => {
+				# Send the chunk to a file or a socket; it is not needed again.
+				$length = $length + chunk.len()
+				$next = Docx.next_chunk(rest)
+			}
+
+			Done => {
+				$writing = Bool.False
+			}
+		}
+	}
+	# end::write-chunks[]
+	if (Ok($length) == Docx.to_bytes(document).map_ok(List.len)) Ok($length) else Err(NotTheBytesOfToBytes)
 }
 
 # Generate a document

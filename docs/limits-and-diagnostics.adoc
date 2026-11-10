@@ -10,7 +10,7 @@ never crashes on a document and never drops content without saying so.
 
 == Limits
 
-A `Limits` value is a props record of six bounds, each with a default that
+A `Limits` value is a props record of seven bounds, each with a default that
 is generous for business documents. `{}` keeps every default, and naming a
 field lowers that one:
 
@@ -18,6 +18,7 @@ field lowers that one:
 |===
 |Field |Default |What it bounds |Error when exceeded
 |`max_entries` |4,096 |The entries, parts and folders, in the archive |`TooManyEntries(count)`
+|`max_part_name_bytes` |1,024 |The bytes of one part's name, as the archive spells it |`PartNameTooLong({ name, bytes })`
 |`max_part_bytes` |64 MiB |The size of one part once decompressed |`PartTooLarge({ name, bytes })`
 |`max_total_bytes` |256 MiB |The archive's own size, and the size of all its parts decompressed together |`PackageTooLarge(bytes)`
 |`max_xml_depth` |1,024 |How deeply the elements of one part nest |`XmlTooDeep({ max, line, column })`
@@ -25,19 +26,19 @@ field lowers that one:
 |`max_xml_attributes` |1,024 |The attributes of one element, namespace declarations included |`TooManyXmlAttributes({ max, line, column })`
 |===
 
-`Docx.parse` reads a document within the defaults. To read one within
-other bounds, open its package with `Opc.open` and read the document from
-it with `Document.from_package`, giving both the same record:
+`Docx.parse` reads a document within the defaults. `Docx.parse_with`
+reads one within the bounds it is given, naming only those that differ, and
+applies them to the package and to every part of it:
 
 [source,roc]
 ----
 include::../tests/manual.roc[tag=limits,indent=0]
 ----
 
-A document read this way holds its main document as a tree and reads the
-body from it each time it is asked, so every query of the other chapters
-works on it; `Docx.parse` reads the body one block at a time instead, and
-holds less.
+Producers write part names of a few dozen bytes, such as
+`word/document.xml`; the archive format allows names of up to 65,535
+bytes, so a name of more than a kilobyte is taken as a sign of a hostile
+document and refused before it is used.
 
 The size bounds are checked against the sizes the archive declares, before
 anything is decompressed, so a small archive that would inflate to
@@ -47,8 +48,8 @@ gigabytes is refused without inflating it. `Opc.open` checks, in order:
 . the archive's directory of entries, which is read without decompressing
   anything;
 . the number of entries;
-. each entry's declared size against the part bound, and their running
-  total against the total bound;
+. each entry's name against the name bound, its declared size against the
+  part bound, and the running total of the sizes against the total bound;
 . that no two part names differ only in case;
 . the content types, which are decompressed and read;
 . a content type for every part, and each part's relationships,
@@ -78,6 +79,10 @@ whose payload carries the facts. `Docx.ParseError` names them all:
 * a relationship is malformed or names a part that is not there:
   `MissingAttribute(location)`, `MissingPart(name)` or
   `RelationshipsNotXml({ part, problem })`;
+* a relationship's target climbs above the root of the package, such as
+  `../../secret.xml` from the main document:
+  `TargetOutsidePackage({ part, id, target })`. A document's content is
+  never taken as a path on the computer that reads it;
 * a part is not well-formed XML, breaks a namespace rule or exceeds an XML
   bound: `XmlPartUnreadable({ part, problem })`, where `problem` is
   `MalformedXml({ message, line, column })`,

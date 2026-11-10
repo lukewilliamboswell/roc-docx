@@ -10,6 +10,12 @@ Limits := {
 	## Most ZIP entries a package may contain.
 	max_entries : U64 ?? 4096,
 
+	## Most bytes a part name may have, as the archive spells it. Word,
+	## LibreOffice, Google Docs and pandoc write names of a few dozen bytes;
+	## the ZIP format allows 65,535, so a name of more than a kilobyte is
+	## refused before it is indexed, compared or resolved against.
+	max_part_name_bytes : U64 ?? 1024,
+
 	## Most decompressed bytes a single part may hold.
 	max_part_bytes : U64 ?? 67_108_864,
 

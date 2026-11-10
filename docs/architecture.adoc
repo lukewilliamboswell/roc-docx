@@ -361,7 +361,8 @@ A rule that lives only in guidance is followed until someone forgets it. Where a
 * every `TODO` names a GitHub issue;
 * every top-level `expect` in the package has a doc comment, so a failing test prints its name;
 * every `.docx` outside the fixture corpus is byte-identical to a fixture, so it inherits that fixture's provenance;
-* every manual chapter opens with a title and is included by the manual's index.
+* every manual chapter opens with a title and is included by the manual's index;
+* every Roc listing in the manual is a tagged region of the compiled snippet program or an include of an example, never written out.
 
 Formatting, fixture regeneration and schema validation are mechanical checks of the same kind. Guidance that cannot be checked stays in the contributing chapter, and a recurring review comment is the signal to turn it into a check.
 

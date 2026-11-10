@@ -22,7 +22,10 @@ import zip.Zip
 ##   relationships and its content: a copied part's stored bytes, method, CRC
 ##   and sizes unchanged, a generated part's bytes as given;
 ## - writing the written package back with every part copied gives the same
-##   bytes again.
+##   bytes again;
+## - written at the compression level the input's third byte chooses, the
+##   package opens to the same parts, and at `Balanced`, the level of
+##   `writer`, to the same bytes.
 ##
 ## Writing chunk by chunk holds at most a constant plus multiples of the
 ## largest part and of the number of parts beyond what was live before; the
@@ -37,10 +40,11 @@ import zip.Zip
 test! : List(U8) => Fuzz.Outcome
 test! = |bytes| {
 	example = declared_example(bytes)
+	level = [Fastest, Balanced, Smallest].get(byte_at(bytes, 2) % 3) ?? Balanced
 	match Opc.open(bytes, limits) {
 		Ok(pkg) =>
 			match Opc.graph(pkg) {
-				Ok(graph) => check_write!(example, graph, |_| Copied(pkg), Copied(pkg))
+				Ok(graph) => check_write!(example, graph, |_| Copied(pkg), Copied(pkg), level)
 				Err(_) =>
 					if example == Generated {
 						Fuzz.keep
@@ -50,13 +54,13 @@ test! = |bytes| {
 			}
 		Err(_) => {
 			graph = generated_graph(bytes)
-			check_write!(example, graph, |name| Bytes(content_of(bytes, graph, name)), Generated(bytes))
+			check_write!(example, graph, |name| Bytes(content_of(bytes, graph, name)), Generated(bytes), level)
 		}
 	}
 }
 
-check_write! : [Small, Large, Generated], Opc.Graph, (Str -> Opc.Content), [Copied(Opc.Package), Generated(List(U8))] => Fuzz.Outcome
-check_write! = |example, graph, content_for, source| {
+check_write! : [Small, Large, Generated], Opc.Graph, (Str -> Opc.Content), [Copied(Opc.Package), Generated(List(U8))], Opc.Compression => Fuzz.Outcome
+check_write! = |example, graph, content_for, source, level| {
 	{ value: streamed, stats } = Fuzz.measure!("opc-writer", || stream_length(graph, content_for))
 	{ value: first, stats: buffered_stats } = Fuzz.measure!("opc-to-bytes", || Opc.to_bytes(graph, content_for))
 	parts = graph.parts.len()
@@ -89,7 +93,7 @@ check_write! = |example, graph, content_for, source| {
 			if buffered_stats.peak_live_bytes - buffered_stats.entry_live_bytes > writer_memory_ceiling(largest, parts) + 2 * written.len() {
 				crash "to_bytes held more than the largest part and the archive allow"
 			}
-			if streamed != Ok(written.len()) or chunks(graph, content_for) != Ok(written) {
+			if streamed != Ok(written.len()) or chunks(graph, content_for, Balanced) != Ok(written) {
 				crash "the chunks are not the bytes of to_bytes"
 			}
 			if Opc.to_bytes(graph, content_for) != Ok(written) {
@@ -113,6 +117,15 @@ check_write! = |example, graph, content_for, source| {
 					}
 					if rewritten != Ok(written) {
 						crash "writing the written package back changed its bytes"
+					}
+					at_level = chunks(graph, content_for, level) ?? crash "a graph that writes at one level did not write at another"
+					match Opc.open(at_level, limits) {
+						Ok(opened) =>
+							if !same_parts(opened, graph, source) {
+								crash "a package written at another level does not open to the same parts"
+							}
+
+						Err(_) => crash "a package written at another level does not open"
 					}
 					Fuzz.keep
 				}
@@ -139,10 +152,10 @@ stream_length = |graph, content_for| {
 	Ok($length + Opc.finish($writer)?.len())
 }
 
-# The chunks, concatenated.
-chunks : Opc.Graph, (Str -> Opc.Content) -> Try(List(U8), Opc.WriteError)
-chunks = |graph, content_for| {
-	var $writer = Opc.writer(graph)?
+# The chunks at a compression level, concatenated.
+chunks : Opc.Graph, (Str -> Opc.Content), Opc.Compression -> Try(List(U8), Opc.WriteError)
+chunks = |graph, content_for, level| {
+	var $writer = Opc.writer_with(graph, level)?
 	var $out = List.with_capacity(4096)
 	for name in Opc.pending($writer) {
 		added = Opc.add($writer, content_for(name))?
