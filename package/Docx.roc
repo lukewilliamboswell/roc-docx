@@ -2,7 +2,7 @@
 ## text, comments and tracked changes, and write it back.
 ##
 ## `Docx.parse` opens the package within the default `Limits` and reads it as
-## a [Document], and `Docx.new_document` builds a new one from the default
+## a [Document], `Docx.parse_with` within the limits it is given, and `Docx.new_document` builds a new one from the default
 ## document kit; `Docx.body` and `Docx.text` read what its body says,
 ## `Docx.final_text`, `Docx.original_text` and `Docx.revisions` its tracked
 ## changes, `Docx.footnotes` and `Docx.endnotes` its notes, `Docx.comments`
@@ -18,12 +18,14 @@
 ## even pages have different headers and footers, which
 ## `Docx.different_odd_and_even` reads;
 ## `Docx.to_bytes` writes a document as a package, its body written from the
-## model, and `Docx.equivalent` says whether two documents write the same.
+## model, `Docx.to_bytes_with` with the options it is given, and
+## `Docx.to_chunks` and `Docx.next_chunk` a part at a time; and `Docx.equivalent` says whether two documents write the same.
 ## What reading drops comes back as diagnostics beside the document, never
 ## printed.
 import Comments
 import Document
 import Kit
+import Limits
 import Mce
 import Numbering
 import Opc
@@ -47,6 +49,7 @@ Docx :: [].{
 		DuplicatePart(Str),
 		PartSizeMismatch({ name : Str, declared : U64 }),
 		TooManyEntries(U64),
+		PartNameTooLong({ name : Str, bytes : U64 }),
 		PartTooLarge({ name : Str, bytes : U64 }),
 		PackageTooLarge(U64),
 		MissingContentTypes,
@@ -56,6 +59,7 @@ Docx :: [].{
 		NoContentType(Str),
 		MissingPart(Str),
 		RelationshipsNotXml({ part : Str, problem : XmlTree.ReadError }),
+		TargetOutsidePackage({ part : Str, id : Str, target : Str }),
 		XmlPartUnreadable({ part : Str, problem : XmlTree.ReadError }),
 	]
 
@@ -64,7 +68,14 @@ Docx :: [].{
 	## as the model, as [Document.from_package_with_body] reads it, so no
 	## tree of the whole body is held beside it.
 	parse : List(U8) -> Try({ document : Document, diagnostics : List(Document.Diagnostic) }, ParseError)
-	parse = |bytes| Ok(Document.from_package_with_body(Opc.open(bytes, {})?, {}, |document, main| WmlRead.body_reader(main_context(document, main.name, main.relationships)))?)
+	parse = |bytes| Docx.parse_with(bytes, {})
+
+	## Read a document as [Docx.parse] does, within `limits` rather than the
+	## defaults: the package is opened by [Opc.open] and every XML part read
+	## within the same record, so `Docx.parse_with(bytes, { max_xml_depth: 256 })`
+	## names only the bound that differs.
+	parse_with : List(U8), Limits -> Try({ document : Document, diagnostics : List(Document.Diagnostic) }, ParseError)
+	parse_with = |bytes, limits| Ok(Document.from_package_with_body(Opc.open(bytes, limits)?, limits, |document, main| WmlRead.body_reader(main_context(document, main.name, main.relationships)))?)
 
 	## Why a document cannot be written: the errors of [Document.to_bytes],
 	## and a note or comment that a reference or range names and the document
@@ -105,7 +116,54 @@ Docx :: [].{
 	## other part as [Document.to_bytes] writes it. The same document always
 	## gives the same bytes.
 	to_bytes : Document -> Try(List(U8), WriteError)
-	to_bytes = |document| Ok(Document.to_bytes(as_written(document)?)?)
+	to_bytes = |document| Docx.to_bytes_with(document, {})
+
+	## How [Docx.to_bytes_with] and [Docx.to_chunks] write a document.
+	## `compression` is how hard the parts written from the model or from
+	## their trees are compressed; a part copied from the document's archive
+	## keeps its stored bytes whatever it says. `extension_parts` are the
+	## parts beside the comments part that Word's extensions define and the
+	## writer emits, each where the document has it or its comments need
+	## it; a part of a kind not listed is left out of the package, with the
+	## main document's relationship to it. `{}` is every default, what
+	## [Docx.to_bytes] writes.
+	WriteOptions := {
+		compression : Opc.Compression ?? Balanced,
+		extension_parts : List(Docx.ExtensionPart) ?? [ExtendedComments, CommentIdentifiers, ExtensibleComments, People],
+	}
+
+	## A part Word's extensions add beside the comments part: the extended
+	## comments part, which holds replies and resolved marks; the comment
+	## identifiers part, durable identifiers; the extensible comments part,
+	## the UTC dates of comments; and the people part, the identities of
+	## their authors.
+	ExtensionPart : [ExtendedComments, CommentIdentifiers, ExtensibleComments, People]
+
+	## A document being written a part at a time, as [Docx.to_chunks] starts
+	## it and [Docx.next_chunk] continues it.
+	Encoder : Document.Encoder
+
+	## Write a document as the bytes of a `.docx`, as [Docx.to_bytes] does,
+	## with `options`. The same document and options always give the same
+	## bytes, and either the whole document is written or an error names the
+	## reason.
+	to_bytes_with : Document, WriteOptions -> Try(List(U8), WriteError)
+	to_bytes_with = |document, options| Ok(Document.to_bytes_with(with_extensions(as_written(document)?, options.extension_parts), options.compression)?)
+
+	## Start writing a document a part at a time, with `options`, for a caller
+	## that streams it to a file or a socket. Every check that can fail runs
+	## here and gives the error [Docx.to_bytes_with] would, so that
+	## [Docx.next_chunk] cannot fail. Each XML part is rendered here to check
+	## it and again when its chunk is emitted, one part at a time.
+	to_chunks : Document, WriteOptions -> Try(Encoder, WriteError)
+	to_chunks = |document, options| Ok(Document.to_chunks(with_extensions(as_written(document)?, options.extension_parts), options.compression)?)
+
+	## The next chunk of a document being written, one part with the
+	## generated parts due before it, and the encoder for the rest; or `Done`
+	## after the last chunk. The chunks concatenated are the bytes
+	## [Docx.to_bytes_with] gives for the same document and options.
+	next_chunk : Encoder -> [Done, Emit(List(U8), Encoder)]
+	next_chunk = |encoder| Document.next_chunk(encoder)
 
 	## Whether two documents are the same document: the same parts with the
 	## same relationships, every part [Docx.to_bytes] writes from the model
@@ -714,6 +772,25 @@ kept_in = |found, story|
 		Notes(listed) => listed.fold(found, |inner, note| WmlWrite.kept_ids(inner, note.content))
 		Region(blocks) => WmlWrite.kept_ids(found, blocks)
 	}
+
+# The written document without the extension parts `kept` does not list,
+# each found by its relationship from the main document.
+with_extensions : Document, List(Docx.ExtensionPart) -> Document
+with_extensions = |document, kept| {
+	omitted = |current, part, kind|
+		if kept.contains(part) {
+			current
+		} else {
+			match Document.related(current, main_name(current), kind) {
+				Ok(found) => Document.without_part(current, found.name)
+				Err(NotFound) => current
+			}
+		}
+	extended = omitted(document, ExtendedComments, comments_extended_relationship)
+	ids = omitted(extended, CommentIdentifiers, comments_ids_relationship)
+	extensible = omitted(ids, ExtensibleComments, comments_extensible_relationship)
+	omitted(extensible, People, people_relationship)
+}
 
 header_relationship : Str
 header_relationship = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header"
@@ -1431,6 +1508,81 @@ expect {
 		and extended
 		and !parts.any(|part| part.name == "/word/commentsIds.xml")
 		and Docx.text(resolved) == Docx.text(parsed.document)
+}
+
+# Every chunk of an encoder, concatenated.
+concatenated : Docx.Encoder -> List(U8)
+concatenated = |encoder| {
+	var $out = List.with_capacity(4096)
+	var $next = Docx.next_chunk(encoder)
+	var $writing = Bool.True
+	while $writing {
+		match $next {
+			Emit(chunk, rest) => {
+				$out = List.concat($out, chunk)
+				$next = Docx.next_chunk(rest)
+			}
+
+			Done => {
+				$writing = Bool.False
+			}
+		}
+	}
+	$out
+}
+
+## A document written in chunks is the bytes written whole, with the default
+## options, which are those of `to_bytes`, and at another compression, which
+## still reads back as the same document.
+expect {
+	parsed = Docx.parse(commented({})?)?
+	replied = Docx.reply(parsed.document, 1, { author: "Lin Editor", content: Text("Agreed."), initials: Initials("LE") })?
+	whole = Docx.to_bytes_with(replied.document, {})?
+	smallest = Docx.to_bytes_with(replied.document, { compression: Smallest })?
+	concatenated(Docx.to_chunks(replied.document, {})?) == whole
+		and whole == Docx.to_bytes(replied.document)?
+		and concatenated(Docx.to_chunks(replied.document, { compression: Smallest })?) == smallest
+		and Docx.equivalent(Docx.parse(smallest)?.document, Docx.parse(whole)?.document)
+}
+
+## Writing fails before the first chunk, with the error writing whole gives:
+## a built part without a tree has no bytes.
+expect {
+	graph = {
+		relationships: [{ id: "rId1", kind: Opc.officedocument_relationship, target: "/word/document.xml", mode: Internal }],
+		parts: [{ name: "/word/document.xml", content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml", relationships: [] }],
+	}
+	built = Document.from_trees(graph, Dict.empty(), [])
+	Docx.to_bytes_with(built, {}) == Err(MissingPart("/word/document.xml")) and Docx.to_chunks(built, {}).map_ok(|_| {}) == Err(MissingPart("/word/document.xml"))
+}
+
+## An extension part not listed is left out, with its relationship: a thread
+## written without the extended comments part reads back as comments without
+## replies or resolved marks.
+expect {
+	parsed = Docx.parse(commented({})?)?
+	replied = Docx.reply(parsed.document, 1, { author: "Lin Editor", content: Text("Agreed."), initials: Initials("LE") })?
+	written = Docx.to_bytes_with(replied.document, { extension_parts: [CommentIdentifiers, ExtensibleComments, People] })?
+	pkg = Opc.open(written, {})?
+	again = Docx.parse(written)?
+	main_relationships = Opc.relationships(pkg, "/word/document.xml")?
+	!Opc.parts(pkg).any(|part| part.name == "/word/commentsExtended.xml")
+		and !main_relationships.any(|rel| rel.target == "/word/commentsExtended.xml")
+		and summary(again.document).all(|comment| comment.parent == Unset and !comment.resolved)
+		and summary(again.document).len() == 3
+}
+
+## Parsing within other limits applies them to the package and to every XML
+## part: a lowered depth refuses the main document, a lowered name length
+## the first part over it, and the defaults read as `parse` reads.
+expect {
+	bytes = commented({})?
+	too_deep = match Docx.parse_with(bytes, { max_xml_depth: 2 }) {
+		Err(XmlPartUnreadable({ part: _, problem: XmlTooDeep({ max: 2, line: _, column: _ }) })) => Bool.True
+		_ => Bool.False
+	}
+	too_long = Docx.parse_with(bytes, { max_part_name_bytes: 12 }).map_ok(|_| {}) == Err(PartNameTooLong({ name: "[Content_Types].xml", bytes: 19 }))
+	too_deep and too_long and Docx.equivalent(Docx.parse_with(bytes, {})?.document, Docx.parse(bytes)?.document)
 }
 
 ## Removing a comment removes its replies, their ranges and references and

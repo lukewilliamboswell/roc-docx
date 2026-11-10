@@ -936,12 +936,14 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 	Dropped : [RevisionSaveIds, RenderedPageBreaks, ProofingMarks, GoBackBookmark]
 
 	## Why an opened package cannot be read as a document: a relationship part
-	## that cannot be read, an XML part whose stored data is damaged, or one
-	## that is not namespace-well-formed XML within the limits.
+	## that cannot be read or names a target outside the package, an XML part
+	## whose stored data is damaged, or one that is not namespace-well-formed
+	## XML within the limits.
 	ReadError : [
 		MissingPart(Str),
 		RelationshipsNotXml({ part : Str, problem : XmlTree.ReadError }),
 		MissingAttribute(Opc.AttributeLocation),
+		TargetOutsidePackage({ part : Str, id : Str, target : Str }),
 		TruncatedArchive,
 		CompressionNotSupported(U16),
 		CrcMismatch({ path : Str, expected : U32, actual : U32 }),
@@ -1063,19 +1065,83 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 	## same bytes, and either the whole package is written or an error names
 	## the reason.
 	to_bytes : Document -> Try(List(U8), WriteError)
-	to_bytes = |document| {
-		var $writer = Opc.writer(document.graph)?
+	to_bytes = |document| Document.to_bytes_with(document, Balanced)
+
+	## Write a document as [Document.to_bytes] does, compressing the parts
+	## written from trees at `compression`. The bytes are the chunks
+	## [Document.next_chunk] emits, concatenated, made by the same steps.
+	to_bytes_with : Document, Opc.Compression -> Try(List(U8), WriteError)
+	to_bytes_with = |document, compression| {
+		var $encoder = encoder(document, compression)?
 		var $out = List.with_capacity(0)
-		for name in Opc.pending($writer) {
-			content = match document.trees.get(name) {
-				Ok(tree) => Bytes(XmlTree.render(Mce.declare_extensions(tree)) ? |problem| XmlPartUnwritable({ part: name, problem }))
-				Err(_) => Copied(document.pkg)
+		var $writing = Bool.True
+		while $writing {
+			match step($encoder)? {
+				Emit(chunk, next) => {
+					$out = List.concat($out, chunk)
+					$encoder = next
+				}
+
+				Done => {
+					$writing = Bool.False
+				}
 			}
-			added = Opc.add($writer, content)?
-			$out = List.concat($out, added.chunk)
-			$writer = added.writer
 		}
-		Ok(List.concat($out, Opc.finish($writer)?))
+		Ok($out)
+	}
+
+	## A document being written a part at a time: the package writer and the
+	## parts still to write, never a written part's bytes.
+	Encoder :: { writer : Opc.Writer, document : Document, pending : List(Str), next : U64, finished : Bool }
+
+	## Start writing a document a part at a time, at `compression`. Every
+	## check that can fail runs here, in the order [Document.to_bytes_with]
+	## meets them, and gives the error it gives: the part graph, then each
+	## part in archive order, a tree rendered and its bytes dropped, a copied
+	## part checked by [Opc.copyable]. So [Document.next_chunk] cannot fail,
+	## and the price is that each XML part is rendered twice, one at a time.
+	to_chunks : Document, Opc.Compression -> Try(Encoder, WriteError)
+	to_chunks = |document, compression| {
+		started = encoder(document, compression)?
+		for name in started.pending {
+			match document.trees.get(name) {
+				Ok(tree) => {
+					_ = rendered(name, tree)?
+				}
+
+				Err(_) => Opc.copyable(document.pkg, name)?
+			}
+		}
+		Ok(started)
+	}
+
+	## The next chunk of the archive, with the encoder for the rest, or `Done`
+	## once the last chunk, the central directory, was emitted. Each chunk is
+	## one part, preceded by the generated parts due before it, as [Opc.add]
+	## writes it; the chunks concatenated are the bytes of
+	## [Document.to_bytes_with] at the same compression.
+	next_chunk : Encoder -> [Done, Emit(List(U8), Encoder)]
+	next_chunk = |current|
+		match step(current) {
+			Ok(emitted) => emitted
+			# [Document.to_chunks] made every check a step makes: the graph,
+			# every tree rendered as the step renders it, a pure function of
+			# the tree, and every copied part. No step it started can fail.
+			Err(_) => Done
+		}
+
+	## The document without the part named `name`: the part, its tree, the
+	## relationships whose source it is, and every internal relationship
+	## that targets it are gone. A name that is not a part changes nothing.
+	without_part : Document, Str -> Document
+	without_part = |document, name| {
+		kept = |relationships| relationships.drop_if(|rel| rel.mode == Internal and rel.target == name)
+		parts = document.graph.parts.drop_if(|part| part.name == name).map(|part| { name: part.name, content_type: part.content_type, relationships: kept(part.relationships) })
+		kept_body = match document.body {
+			Blocks(read) if read.part == name => Whole
+			other => other
+		}
+		{ pkg: document.pkg, graph: { relationships: kept(document.graph.relationships), parts }, trees: document.trees.remove(name), body: kept_body }
 	}
 
 	## Two documents are equivalent when they have the same package
@@ -1129,6 +1195,45 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 	equivalent_xml : XmlTree.Node, XmlTree.Node -> Bool
 	equivalent_xml = |one, other| normalized(one) == normalized(other)
 }
+
+# The writer of a document's package at `compression`, before any part.
+encoder : Document, Opc.Compression -> Try(Document.Encoder, Document.WriteError)
+encoder = |document, compression| {
+	writer = Opc.writer_with(document.graph, compression)?
+	Ok({ writer, document, pending: Opc.pending(writer), next: 0, finished: Bool.False })
+}
+
+# One emission step, which both [Document.to_bytes_with] and
+# [Document.next_chunk] take: the next part, from its tree or copied with
+# its stored bytes, or after the last part the archive's last chunk.
+step : Document.Encoder -> Try([Done, Emit(List(U8), Document.Encoder)], Document.WriteError)
+step = |current| {
+	{ writer, document, pending, next, finished } = current
+	if finished {
+		Ok(Done)
+	} else {
+		match pending.get(next) {
+			Ok(name) => {
+				content = match document.trees.get(name) {
+					Ok(tree) => Bytes(rendered(name, tree)?)
+					Err(_) => Copied(document.pkg)
+				}
+				added = Opc.add(writer, content)?
+				Ok(Emit(added.chunk, { writer: added.writer, document, pending, next: next + 1, finished: Bool.False }))
+			}
+
+			Err(_) => {
+				last = Opc.finish(writer)?
+				Ok(Emit(last, { writer, document, pending, next, finished: Bool.True }))
+			}
+		}
+	}
+}
+
+# A part's tree as written: its extension namespaces declared ignorable and
+# rendered.
+rendered : Str, XmlTree.Node -> Try(List(U8), [XmlPartUnwritable({ part : Str, problem : XmlTree.WriteError })])
+rendered = |name, tree| Ok(XmlTree.render(Mce.declare_extensions(tree)) ? |problem| XmlPartUnwritable({ part: name, problem }))
 
 # The content a part holds, read from each package: the same when both
 # inflate to the same bytes, or, when either cannot be inflated, when both

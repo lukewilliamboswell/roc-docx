@@ -11,8 +11,9 @@ import zip.Zip
 
 ## Any bytes open to `Ok` or a structured `Err`, never a crash; opening the
 ## same bytes twice gives the same result; an opened package labels every
-## part with a name and a content type, and every part reads back as the size
-## it declares or as an error.
+## part with a name within the name limit and a content type, and every part
+## reads back as the size it declares or as an error. A part name over the
+## limit is refused before anything is inflated.
 ##
 ## Opening runs under lowered limits so that the declared bombs are bombs. It
 ## holds at most a constant plus multiples of the archive and of the parts it
@@ -44,6 +45,11 @@ test! = |bytes| {
 			if opened != Err(PartTooLarge({ name: "word/document.xml", bytes: bomb_bytes })) or stats.peak_live_bytes > bytes.len() + limits.max_part_bytes {
 				crash "the truthful bomb was not refused by its declared size within the archive and the part limit"
 			}
+		LongPartName =>
+			if opened != Err(PartNameTooLong({ name: long_part_name, bytes: long_part_name.count_utf8_bytes() })) or stats.peak_live_bytes > bytes.len() + limits.max_part_bytes {
+				crash "the long part name was not refused before anything was inflated"
+			}
+
 		_ => {}
 	}
 	match first {
@@ -52,6 +58,9 @@ test! = |bytes| {
 			for part in Opc.parts(pkg) {
 				if !part.name.starts_with("/") or part.content_type.is_empty() {
 					crash "an opened part lacks an absolute name or a content type"
+				}
+				if part.name.count_utf8_bytes() > limits.max_part_name_bytes + 1 {
+					crash "an opened part's name is longer than the limit"
 				}
 				{ value: read, stats: read_stats } = Fuzz.measure!("opc-part-bytes", || Opc.part_bytes(pkg, part.name))
 				if read_stats.peak_live_bytes - read_stats.entry_live_bytes > read_memory_ceiling(part.size) {
@@ -97,7 +106,7 @@ test! = |bytes| {
 }
 
 limits : Limits
-limits = { max_entries: 64, max_part_bytes: 65_536, max_total_bytes: 1_048_576 }
+limits = { max_entries: 64, max_part_name_bytes: 64, max_part_bytes: 65_536, max_total_bytes: 1_048_576 }
 
 # The declared sizes of the parts opening inflates; nothing when the central
 # directory does not read.
@@ -122,12 +131,14 @@ read_memory_ceiling = |part_bytes| 16_384 + part_bytes
 # roc-parser 6.0.0-rc.1, and a linear one for every other input. The packages
 # that open take 59 and 4, mostly the ZIP layer's decode tables and the
 # content types, which are read as a namespaced tree; the truthful bomb takes
-# 3 and is refused before anything is inflated.
-allocation_ceiling : [MinimalPackage, TruthfulBomb, LyingBomb, CompressiblePackage, Generated], U64 -> U64
+# 3 and is refused before anything is inflated, and so is the long part
+# name, in 3 too.
+allocation_ceiling : [MinimalPackage, TruthfulBomb, LyingBomb, CompressiblePackage, LongPartName, Generated], U64 -> U64
 allocation_ceiling = |example, input_bytes|
 	match example {
 		MinimalPackage => 63
 		TruthfulBomb => 3
+		LongPartName => 3
 		LyingBomb => 63
 		CompressiblePackage => 63
 		Generated => 16 + input_bytes
@@ -137,14 +148,14 @@ allocation_ceiling = |example, input_bytes|
 # measured with the ceilings above: the document part takes 12 allocations
 # and reallocations, its inflater's tables and output, and the relationship
 # part, kept inflated from opening, 1.
-read_allocation_ceiling : [MinimalPackage, TruthfulBomb, LyingBomb, CompressiblePackage, Generated] -> Try(U64, [NotDeclared])
+read_allocation_ceiling : [MinimalPackage, TruthfulBomb, LyingBomb, CompressiblePackage, LongPartName, Generated] -> Try(U64, [NotDeclared])
 read_allocation_ceiling = |example|
 	match example {
 		MinimalPackage | LyingBomb | CompressiblePackage => Ok(13)
-		TruthfulBomb | Generated => Err(NotDeclared)
+		TruthfulBomb | LongPartName | Generated => Err(NotDeclared)
 	}
 
-declared_example : List(U8) -> [MinimalPackage, TruthfulBomb, LyingBomb, CompressiblePackage, Generated]
+declared_example : List(U8) -> [MinimalPackage, TruthfulBomb, LyingBomb, CompressiblePackage, LongPartName, Generated]
 declared_example = |bytes|
 	if bytes == minimal_package() {
 		MinimalPackage
@@ -154,6 +165,8 @@ declared_example = |bytes|
 		LyingBomb
 	} else if bytes == compressible_package() {
 		CompressiblePackage
+	} else if bytes == long_part_name_package() {
+		LongPartName
 	} else {
 		Generated
 	}
@@ -205,6 +218,22 @@ compressible_package = || {
 	package_with("<w:document xmlns:w='http://schemas.openxmlformats.org/wordprocessingml/2006/main'><w:body>${Str.repeat(paragraph, 1_000)}</w:body></w:document>".to_utf8())
 }
 
+# The minimal package with a part whose name is over the name limit, ahead
+# of the others and over the part limit too, so that only its name can be
+# what refuses it first.
+long_part_name_package : () -> List(U8)
+long_part_name_package = || {
+	parts = [
+		{ path: long_part_name, content: List.repeat(0, bomb_bytes) },
+		{ path: "[Content_Types].xml", content: content_types.to_utf8() },
+		{ path: "_rels/.rels", content: package_rels.to_utf8() },
+	]
+	Zip.create(parts, Fastest) ?? crash "long_part_name_package: the paths are valid"
+}
+
+long_part_name : Str
+long_part_name = "word/${Str.repeat("a", 96)}.xml"
+
 # Rewrite the uncompressed size that the central directory declares for one
 # entry. The archive has no comment and no ZIP64 records, as `Zip.create`
 # writes it for these sizes.
@@ -253,6 +282,7 @@ target = Fuzz.target_with!({
 		Fuzz.example({ name: "truthful-bomb", revision: "1", make: truthful_bomb }),
 		Fuzz.example({ name: "lying-bomb", revision: "1", make: lying_bomb }),
 		Fuzz.example({ name: "compressible-package", revision: "1", make: compressible_package }),
+		Fuzz.example({ name: "long-part-name", revision: "1", make: long_part_name_package }),
 	],
 	generator: Fuzz.bytes,
 	test!,
