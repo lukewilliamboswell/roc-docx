@@ -1,7 +1,8 @@
-= roc-docx 0.1.0
+= roc-docx 0.1.0-rc1
 
-The first release. These notes are completed, with the compiler the release
-was tested with, when it is cut.
+The release candidate for the first release, 0.1.0. It was tested with the
+Roc compiler `nightly-2026-11-09-9e85de7`. Try it in an application and
+report what does not work before 0.1.0 is cut.
 
 == Use this release
 
