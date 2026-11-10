@@ -5,8 +5,8 @@ including their comments and tracked changes.
 
 roc-docx is for applications that handle business documents: read what Word,
 LibreOffice or Google Docs produced, change it without losing anything, and
-generate new documents that open cleanly. It is under construction; the gates
-in [implementation-plan.md](implementation-plan.md) say what is verified.
+generate new documents that open cleanly. Each capability below is claimed
+because the tests, the oracles and the fuzz targets in this repository check it.
 
 **Comments.** roc-docx reads the comments Word, LibreOffice, Google Docs and
 pandoc write: each comment's author, date and content, the text it is anchored
@@ -50,8 +50,6 @@ in the manual.
   what the package is, how to use it, the enduring
   [architecture](docs/architecture.adoc) and how to
   [contribute](docs/contributing.adoc).
-- [implementation-plan.md](implementation-plan.md): the development plan
-  until the first release, after which it is removed.
 - [AGENTS.md](AGENTS.md): the principles everyone changing this repository
   follows.
 
