@@ -58,12 +58,14 @@ main! = |_args| {
 		corpus = ".roc-docx/fuzz/corpus/${name}"
 		report = ".roc-docx/fuzz/reports/${name}"
 		check_report = ".roc-docx/fuzz/reports/${name}-check"
-		Path.create_all!(Path.utf8(corpus))?
-		for stale in [report, check_report] {
+		# Every run explores from an empty corpus, as CI does, so inputs kept
+		# by an earlier run cannot outgrow the time budget.
+		for stale in [corpus, report, check_report] {
 			match Path.delete_all!(Path.utf8(stale)) {
 				_ => {}
 			}
 		}
+		Path.create_all!(Path.utf8(corpus))?
 		steps = [
 			[executable, "check", "--report-dir=${check_report}"],
 			[executable, "run", corpus, "--time=1", "--runs=64", "--max-input-size=4096", "--timeout=10", "--report-dir=${report}"],
