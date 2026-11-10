@@ -58,6 +58,54 @@ identifiers, those `WmlWrite.kept_ids` finds in every part, and the
 previous part's `next` as `from`, as <<identifiers>> describes. Both
 default to a part written on its own.
 
+== Choose how a document is written
+
+`Docx.to_bytes` writes with the default options. `Docx.to_bytes_with`
+takes a `Docx.WriteOptions` record, in which `{}` is every default and a
+field names what differs:
+
+[source,roc]
+----
+include::../tests/manual.roc[tag=write-options,indent=0]
+----
+
+* `compression` is how hard the parts written from the model or from their
+  trees are compressed: `Fastest`, `Balanced`, the default, or `Smallest`.
+  A part copied from the document's archive, such as an image, keeps the
+  bytes it was stored with, and a part that compression would not make
+  smaller is stored as it is.
+* `extension_parts` are the parts Word's extensions add beside the
+  comments: `ExtendedComments`, which holds replies and resolved marks,
+  `CommentIdentifiers`, durable identifiers, `ExtensibleComments`, the UTC
+  dates of comments, and `People`, the identities of their authors. All
+  four are listed by default, and each is written where the document has it
+  or its comments need it, as <<read-a-documents-comments>> describes. A
+  part left out of the list is left out of the package with its
+  relationship, for a consumer that does not want it; what it held, such as
+  which comment replies to which, is then not in the written document.
+
+The same document and options always give the same bytes.
+
+== Write a part at a time
+
+A large document need not be held as one list of bytes. `Docx.to_chunks`
+starts writing it with the same options and `Docx.next_chunk` gives the
+next chunk of the archive each time it is asked, one part with the package
+parts due before it, until `Done`:
+
+[source,roc]
+----
+include::../tests/manual.roc[tag=write-chunks,indent=0]
+----
+
+Every check that can fail is made by `Docx.to_chunks`, which fails with
+the error `Docx.to_bytes_with` would give, before the first chunk; so
+`Docx.next_chunk` cannot fail, and a caller never has half a document
+written when it learns that the document cannot be. Each part is held only
+while its chunk is made, and the chunks concatenated are exactly the bytes
+`Docx.to_bytes_with` gives. The price of failing early is that each XML
+part is rendered twice, once to check it and once to emit it.
+
 == The canonical form
 
 Producers spell the same document in many ways. The writer spells it one

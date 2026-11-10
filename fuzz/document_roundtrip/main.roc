@@ -27,7 +27,10 @@ import docx.XmlTree
 ## and footer it names, which `Docx.parse` must read back as
 ## exactly the blocks written; `Docx.to_bytes` must then give the same bytes
 ## twice, and bytes that read back as an equivalent document that writes the
-## same bytes again.
+## same bytes again. Written a part at a time by `Docx.to_chunks` and
+## `Docx.next_chunk`, at the compression the program's first byte chooses,
+## its chunks concatenated are the bytes of `Docx.to_bytes_with` with the
+## same options, which with the default options are those of `to_bytes`.
 ##
 ## Allocation ratchets, which only ever move down: writing allocates at most
 ## linearly in the written tree's nodes and attributes and keeps at most
@@ -93,8 +96,97 @@ round_trip! = |program| {
 	if Docx.to_bytes(again.document) != Ok(first) {
 		crash "writing a rewritten document gave different bytes"
 	}
+	check_chunks!(program, parsed.document, first, size(written.tree))
 	{ allocations: stats.allocs + stats.reallocs, requested_bytes: stats.requested_bytes, held_bytes: stats.peak_live_bytes - stats.entry_live_bytes }
 }
+
+# A document's chunks, streamed and measured, are the bytes written whole
+# with the same options, and with the default options the bytes of
+# `to_bytes`. Streaming allocates and holds at most linearly in the main
+# document tree's nodes and attributes.
+check_chunks! : List(U8), Document, List(U8), U64 => {}
+check_chunks! = |program, document, written, nodes| {
+	options : Docx.WriteOptions
+	options = { compression: pick([Fastest, Balanced, Smallest], program.first().map_ok(|byte| byte.to_u64()) ?? 0, Balanced) }
+	whole = Docx.to_bytes_with(document, options) ?? crash "a read document did not write with options"
+	{ value: streamed, stats } = Fuzz.measure!("docx-to-chunks", || streamed_length(document, options))
+	if streamed != Ok(whole.len()) or concatenated(document, options) != Ok(whole) {
+		crash "the chunks are not the bytes of to_bytes_with"
+	}
+	if Docx.to_bytes_with(document, {}) != Ok(written) or concatenated(document, {}) != Ok(written) {
+		crash "the default options do not write the bytes of to_bytes"
+	}
+	if stats.allocs + stats.reallocs > chunk_allocation_ceiling(program, nodes) {
+		crash "writing in chunks allocated more than its ceiling"
+	}
+	if stats.peak_live_bytes - stats.entry_live_bytes > chunk_memory_ceiling(nodes) {
+		crash "writing in chunks held more than linearly many bytes live"
+	}
+	{}
+}
+
+# The length of a document written in chunks, each dropped once counted, as a
+# caller streaming to a file would.
+streamed_length : Document, Docx.WriteOptions -> Try(U64, Docx.WriteError)
+streamed_length = |document, options| {
+	var $next = Docx.next_chunk(Docx.to_chunks(document, options)?)
+	var $length = 0.U64
+	var $writing = Bool.True
+	while $writing {
+		match $next {
+			Emit(chunk, rest) => {
+				$length = $length + chunk.len()
+				$next = Docx.next_chunk(rest)
+			}
+
+			Done => {
+				$writing = Bool.False
+			}
+		}
+	}
+	Ok($length)
+}
+
+# A document's chunks, concatenated.
+concatenated : Document, Docx.WriteOptions -> Try(List(U8), Docx.WriteError)
+concatenated = |document, options| {
+	var $next = Docx.next_chunk(Docx.to_chunks(document, options)?)
+	var $out = List.with_capacity(4096)
+	var $writing = Bool.True
+	while $writing {
+		match $next {
+			Emit(chunk, rest) => {
+				$out = List.concat($out, chunk)
+				$next = Docx.next_chunk(rest)
+			}
+
+			Done => {
+				$writing = Bool.False
+			}
+		}
+	}
+	Ok($out)
+}
+
+# Measured on nightly-2026-11-07: `to_chunks` and every `next_chunk` of the
+# declared bodies, of 711 and 11,331 nodes, take 7,515 and 107,957
+# allocations, 10.6 and 9.5 a node, and hold 897,503 and 6,089,579 bytes
+# live, a DEFLATE compressor's state and 845 and 511 bytes a node: the
+# document as written, the part being rendered and its chunk. The exact
+# ceilings are those counts; the linear ones leave generated bodies, denser
+# in attributes, three times the declared bodies' share a node.
+chunk_allocation_ceiling : List(U8), U64 -> U64
+chunk_allocation_ceiling = |program, nodes|
+	if program == small_program {
+		7_515
+	} else if program == large_program {
+		107_957
+	} else {
+		2_048 + 32 * nodes
+	}
+
+chunk_memory_ceiling : U64 -> U64
+chunk_memory_ceiling = |nodes| 524_288 + 2_560 * nodes
 
 # Writing allocates at most linearly in the written tree's nodes and
 # attributes, and the bytes it holds live beyond the body grow at most

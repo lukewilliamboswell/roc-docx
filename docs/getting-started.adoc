@@ -85,8 +85,9 @@ ordinary part of the graph and is copied like one.
 `Opc.pending` names the parts still to write, in that order. `Opc.add` writes
 the next one from its content and returns the next chunk of the archive, and
 `Opc.finish` returns the last chunk. The content is `Bytes(content)`, which
-is compressed with DEFLATE at one fixed level, or stored when compressing
-would not make it smaller; or `Copied(pkg)`, which writes the part of the same
+is compressed with DEFLATE at one fixed level, `Balanced`, or at the level
+`Opc.writer_with(graph, compression)` names, `Fastest`, `Balanced` or
+`Smallest`, or stored when compressing would not make it smaller; or `Copied(pkg)`, which writes the part of the same
 name from an opened package exactly as its archive stored it, with its
 compression method, checksum and sizes, without decompressing it. The writer holds only the
 archive's directory of entries between chunks, so a document written to a
@@ -206,7 +207,8 @@ understand, such as custom XML, are left as they are.
 == Pass a whole document through
 
 `Docx.parse` reads the bytes of a `.docx` as a `Document`, within the default
-limits, and `Docx.to_bytes` writes a document back:
+limits, `Docx.parse_with` within the limits it is given, and `Docx.to_bytes`
+writes a document back:
 
 [source,roc]
 ----

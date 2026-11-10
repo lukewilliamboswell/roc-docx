@@ -254,15 +254,18 @@ small_of = |input|
 # the identifiers comments must avoid: 37 more for the pandoc document,
 # whose comments part is empty, and 572 for the Google Docs export's two
 # comments. Reading comments as written, without processing them for
-# compatibility first, lowered parsing them by 5 and 337.
+# compatibility first, lowered parsing them by 5 and 337. Writing through
+# the write options and the emission step `to_bytes` shares with
+# `to_chunks` (G1.6) costs 2 more for each example, 3 for the Word and
+# pandoc fixtures.
 exact_ceiling : Input -> Try({ parse : U64, write : U64 }, [NotDeclared])
 exact_ceiling = |input|
 	match input {
-		Generated(program) if program == one_paragraph_program => Ok({ parse: 292, write: 454 })
-		Generated(program) if program == small_program => Ok({ parse: 579, write: 654 })
-		Generated(program) if program == large_program => Ok({ parse: 5_324, write: 3_911 })
-		Generated(program) if program == undeclared_program => Ok({ parse: 578, write: 764 })
-		Generated(program) if program == repaired_program => Ok({ parse: 749, write: 739 })
+		Generated(program) if program == one_paragraph_program => Ok({ parse: 292, write: 456 })
+		Generated(program) if program == small_program => Ok({ parse: 579, write: 656 })
+		Generated(program) if program == large_program => Ok({ parse: 5_324, write: 3_913 })
+		Generated(program) if program == undeclared_program => Ok({ parse: 578, write: 766 })
+		Generated(program) if program == repaired_program => Ok({ parse: 749, write: 741 })
 		Fixture(index) => fixtures.get(index).map_ok(|fixture| { parse: fixture.parse, write: fixture.write }).map_err(|_| NotDeclared)
 		_ => Err(NotDeclared)
 	}
@@ -301,10 +304,10 @@ program_unit = [7, 4, 3, 5, 1, 2, 6, 2, 0]
 # one table, and one from each of pandoc and LibreOffice.
 fixtures : List({ name : Str, bytes : List(U8), parse : U64, write : U64 })
 fixtures = [
-	{ name: "word-report", bytes: word_report, parse: 10_339, write: 10_485 },
-	{ name: "gdocs-resume", bytes: gdocs_resume, parse: 20_458, write: 17_790 },
-	{ name: "pandoc-basics", bytes: pandoc_basics, parse: 9_156, write: 8_358 },
-	{ name: "libreoffice-basics", bytes: libreoffice_basics, parse: 8_009, write: 7_545 },
+	{ name: "word-report", bytes: word_report, parse: 10_339, write: 10_488 },
+	{ name: "gdocs-resume", bytes: gdocs_resume, parse: 20_458, write: 17_792 },
+	{ name: "pandoc-basics", bytes: pandoc_basics, parse: 9_156, write: 8_361 },
+	{ name: "libreoffice-basics", bytes: libreoffice_basics, parse: 8_009, write: 7_547 },
 ]
 
 wordprocessingml : Str
