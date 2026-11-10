@@ -301,10 +301,10 @@ program_unit = [7, 4, 3, 5, 1, 2, 6, 2, 0]
 # one table, and one from each of pandoc and LibreOffice.
 fixtures : List({ name : Str, bytes : List(U8), parse : U64, write : U64 })
 fixtures = [
-	{ name: "word-report", bytes: word_report, parse: 10_339, write: 10_492 },
-	{ name: "gdocs-resume", bytes: gdocs_resume, parse: 20_458, write: 17_793 },
-	{ name: "pandoc-basics", bytes: pandoc_basics, parse: 9_156, write: 8_339 },
-	{ name: "libreoffice-basics", bytes: libreoffice_basics, parse: 8_009, write: 7_543 },
+	{ name: "word-report", bytes: word_report, parse: 10_339, write: 10_485 },
+	{ name: "gdocs-resume", bytes: gdocs_resume, parse: 20_458, write: 17_790 },
+	{ name: "pandoc-basics", bytes: pandoc_basics, parse: 9_156, write: 8_358 },
+	{ name: "libreoffice-basics", bytes: libreoffice_basics, parse: 8_009, write: 7_545 },
 ]
 
 wordprocessingml : Str

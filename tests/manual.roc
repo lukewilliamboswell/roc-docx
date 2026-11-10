@@ -470,7 +470,7 @@ for_review = |document| {
 write_body : XmlTree.Node, List(Document.Block) -> Try(XmlTree.Node, _)
 write_body = |shell, blocks| {
 	# tag::write-body[]
-	{ tree, relationships: _ } = WmlWrite.document(shell, blocks, { relationships: [], footnotes: [], endnotes: [], comments: [] })?
+	{ tree, relationships: _, next: _ } = WmlWrite.document(shell, blocks, { relationships: [], footnotes: [], endnotes: [], comments: [] })?
 	# end::write-body[]
 	Ok(tree)
 }

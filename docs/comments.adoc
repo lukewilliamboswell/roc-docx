@@ -261,8 +261,12 @@ comment is added. A reply or a resolved thread needs the extended comments
 part to be written; a document without one, as pandoc, LibreOffice and
 Google Docs write a document, gains `commentsExtended.xml` with its content
 type and relationship, so Word and LibreOffice show the reply as a reply and
-the thread as resolved. The people part is left as it is: a new author is
-not added to it.
+the thread as resolved. A new comment's or reply's author is added to the
+people part when the document has one and no person there has the name, as
+Word records an author who signed in to no account: with a presence whose
+provider is `None` and whose identifier is the author. A document without
+a people part, as pandoc, LibreOffice and Google Docs write one, is not
+given one.
 
 An edit fails with `NoSuchComment(id)` for an `id` the document has no
 comment at, `NotADate(text)` for a date that is not a date and time,

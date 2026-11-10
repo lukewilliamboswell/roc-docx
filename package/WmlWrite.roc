@@ -29,8 +29,21 @@ WmlWrite :: [].{
 	## the part, the identifiers of the footnotes and of the endnotes in the
 	## order of their parts, which a note reference's place indexes, and the
 	## identifiers of the comments in the order of their part, which a
-	## comment's range and reference index.
-	Context : { relationships : List(Opc.Relationship), footnotes : List(Str), endnotes : List(Str), comments : List(Str) }
+	## comment's range and reference index. A part written as one of a
+	## document's parts shares the document's space of identifiers:
+	## `reserved` holds those kept content anywhere in the document uses, as
+	## [WmlWrite.kept_ids] gathers them, and `from` is the lowest number the
+	## part's bookmarks, tracked changes and moves' ranges may take, the
+	## `next` of the part written before it. Both default to a part written
+	## on its own.
+	Context := {
+		relationships : List(Opc.Relationship),
+		footnotes : List(Str),
+		endnotes : List(Str),
+		comments : List(Str),
+		reserved : Set(Str) ?? Set.with_capacity(0),
+		from : U64 ?? 0,
+	}
 
 	## Why blocks cannot be written: a note reference names a note by a
 	## place the document's footnotes or endnotes do not have, or a comment's
@@ -54,12 +67,14 @@ WmlWrite :: [].{
 	## before it, a section is written where it stands.
 	##
 	## Bookmark identifiers come from one space shared with the identifiers
-	## of the comments and those the kept content uses, such as a grid's
-	## kept change: each bookmark takes the lowest number no kept element
-	## and no earlier bookmark uses, in the order the bookmarks begin, and its
-	## end takes its start's. Tracked changes and moves' ranges then take the
+	## of the comments, those the kept content uses, such as a grid's kept
+	## change, and those the context reserves: each bookmark takes the lowest
+	## number from the context's `from` up that no kept element and no
+	## earlier bookmark uses, in the order the bookmarks begin, and its end
+	## takes its start's. Tracked changes and moves' ranges then take the
 	## lowest numbers left, in the order they are written, a range's end its
-	## start's. A comment's range and reference take its comment's identifier.
+	## start's; `next` is the number after the last taken. A comment's range
+	## and reference take its comment's identifier.
 	##
 	## A tracked change is written with its identifier, author, date as it
 	## was written and the attributes it kept; in a deletion, text is
@@ -78,11 +93,11 @@ WmlWrite :: [].{
 	## target in the same mode, of the kind the reference needs where the
 	## reader asks for one; otherwise it is added as `rId` with the lowest
 	## number from the count of relationships up that no relationship uses.
-	document : XmlTree.Node, List(Document.Block), Context -> Try({ tree : XmlTree.Node, relationships : List(Opc.Relationship) }, WriteError)
+	document : XmlTree.Node, List(Document.Block), Context -> Try({ tree : XmlTree.Node, relationships : List(Opc.Relationship), next : U64 }, WriteError)
 	document = |shell, content, context| {
 		root = match shell {
 			Element(element) if is_w(element.name, "document") => element
-			_ => return Ok({ tree: shell, relationships: context.relationships })
+			_ => return Ok({ tree: shell, relationships: context.relationships, next: context.from })
 		}
 		var $state = initial(content, context)?
 		var $children = List.with_capacity(root.children.len() + 1)
@@ -110,7 +125,7 @@ WmlWrite :: [].{
 		}
 		tree : XmlTree.Node
 		tree = Element({ name: root.name, bindings: root.bindings, attributes: root.attributes, children: $children })
-		Ok({ tree, relationships: $state.relationships })
+		Ok({ tree, relationships: $state.relationships, next: $state.next })
 	}
 
 	## The tree of a footnotes or endnotes part holding `notes`, and the
@@ -128,11 +143,11 @@ WmlWrite :: [].{
 	##
 	## Bookmark identifiers are allocated across the part's notes as across a
 	## main document's body.
-	notes : XmlTree.Node, List(Document.Note), Context -> Try({ tree : XmlTree.Node, relationships : List(Opc.Relationship) }, WriteError)
+	notes : XmlTree.Node, List(Document.Note), Context -> Try({ tree : XmlTree.Node, relationships : List(Opc.Relationship), next : U64 }, WriteError)
 	notes = |shell, content, context| {
 		root = match shell {
 			Element(part) if is_w(part.name, "footnotes") or is_w(part.name, "endnotes") => part
-			_ => return Ok({ tree: shell, relationships: context.relationships })
+			_ => return Ok({ tree: shell, relationships: context.relationships, next: context.from })
 		}
 		local = if (is_w(root.name, "footnotes")) "footnote" else "endnote"
 		var $state = initial(List.join(content.map(|note| note.content)), context)?
@@ -180,7 +195,7 @@ WmlWrite :: [].{
 		}
 		tree : XmlTree.Node
 		tree = Element({ name: root.name, bindings: root.bindings, attributes: root.attributes, children: $children })
-		Ok({ tree, relationships: $state.relationships })
+		Ok({ tree, relationships: $state.relationships, next: $state.next })
 	}
 
 	## The tree of a header or footer part holding `content`, and the part's
@@ -190,16 +205,16 @@ WmlWrite :: [].{
 	## the model, its blocks as a body's are outside a table cell. A shell
 	## whose root is not a WordprocessingML header or footer is returned as it
 	## is.
-	header_footer : XmlTree.Node, List(Document.Block), Context -> Try({ tree : XmlTree.Node, relationships : List(Opc.Relationship) }, WriteError)
+	header_footer : XmlTree.Node, List(Document.Block), Context -> Try({ tree : XmlTree.Node, relationships : List(Opc.Relationship), next : U64 }, WriteError)
 	header_footer = |shell, content, context| {
 		root = match shell {
 			Element(part) if is_w(part.name, "hdr") or is_w(part.name, "ftr") => part
-			_ => return Ok({ tree: shell, relationships: context.relationships })
+			_ => return Ok({ tree: shell, relationships: context.relationships, next: context.from })
 		}
 		out = blocks(content, Flow, initial(content, context)?)
 		tree : XmlTree.Node
 		tree = Element({ name: root.name, bindings: root.bindings, attributes: root.attributes, children: out.nodes })
-		Ok({ tree, relationships: out.state.relationships })
+		Ok({ tree, relationships: out.state.relationships, next: out.state.next })
 	}
 
 	## What the parts a comments part is written beside use, which the
@@ -215,25 +230,34 @@ WmlWrite :: [].{
 	taken : List(XmlTree.Node) -> Taken
 	taken = |trees| trees.fold({ ids: Set.with_capacity(16), paragraphs: Set.with_capacity(16) }, taken_in)
 
-	## The identifier each comment takes, in the order of the comments, from
-	## the space bookmarks share: the lowest number from 0 up that no kept
-	## content of the body or of any comment uses and no earlier comment
-	## takes. A body written by [WmlWrite.document] with these identifiers
-	## as its [WmlWrite.Context]'s comments gives its bookmarks numbers
-	## after them.
-	comment_ids : List(Document.Block), List(Document.Comment) -> List(Str)
-	comment_ids = |body, listed| {
-		if listed.is_empty() {
-			return []
-		}
+	## `found` with the identifiers that content kept as it was read uses in
+	## these blocks, such as a permission range's or a tracked change the
+	## model keeps whole. Gathered from the blocks of every part of a
+	## document, the body, notes, headers, footers and comments, they are the
+	## identifiers no comment, bookmark, tracked change or move's range
+	## written anywhere in the document may take, as a [WmlWrite.Context]
+	## reserves them.
+	kept_ids : Set(Str), List(Document.Block) -> Set(Str)
+	kept_ids = |found, content| {
+		none : WmlWrite.Context
 		none = { relationships: [], footnotes: [], endnotes: [], comments: [] }
-		empty = { used: Set.with_capacity(8), named: Dict.with_capacity(0), starts: List.with_capacity(0), missing: Ok({}) }
-		in_body = body.fold(empty, |found, block| scan_block(none, found, block))
-		scanned = listed.fold(in_body, |found, comment| comment.content.fold(found, |inner, block| scan_block(none, inner, block)))
+		empty = { used: found, named: Dict.with_capacity(0), starts: List.with_capacity(0), missing: Ok({}) }
+		content.fold(empty, |scan, block| scan_block(none, scan, block)).used
+	}
+
+	## The identifier each comment takes, in the order of the comments, from
+	## the space bookmarks share: the lowest number from 0 up that is not
+	## `kept`, the identifiers [WmlWrite.kept_ids] gives for every part of the
+	## document and every comment, and that no earlier comment takes. Parts
+	## written by [WmlWrite.document], [WmlWrite.notes] and
+	## [WmlWrite.header_footer] with these identifiers as their
+	## [WmlWrite.Context]'s comments give their bookmarks other numbers.
+	comment_ids : Set(Str), List(Document.Comment) -> List(Str)
+	comment_ids = |kept, listed| {
 		var $ids = List.with_capacity(listed.len())
 		var $next = 0.U64
 		for _ in listed {
-			id = free_id(scanned.used, $next)
+			id = free_id(kept, $next)
 			$ids = List.append($ids, id.to_str())
 			$next = id + 1
 		}
@@ -438,17 +462,18 @@ Mode : [Body, Flow, Cell]
 Scan : { used : Set(Str), named : Dict(Str, Str), starts : List(Str), missing : Try({}, WmlWrite.WriteError) }
 
 initial : List(Document.Block), WmlWrite.Context -> Try(State, WmlWrite.WriteError)
-initial = |content, context| initial_reserving(content, context, Set.with_capacity(8))
+initial = |content, context| initial_reserving(content, context, context.reserved)
 
 # The state before writing content, its bookmarks avoiding the identifiers
-# `reserved` holds, every comment's and those kept content uses.
+# `reserved` holds, every comment's and those kept content uses, and taking
+# numbers from the context's `from` up.
 initial_reserving : List(Document.Block), WmlWrite.Context, Set(Str) -> Try(State, WmlWrite.WriteError)
 initial_reserving = |content, context, reserved| {
 	empty = { used: context.comments.fold(reserved, |ids, id| ids.insert(id)), named: Dict.with_capacity(0), starts: List.with_capacity(8), missing: Ok({}) }
 	scan = content.fold(empty, |found, block| scan_block(context, found, block))
 	scan.missing?
 	var $bookmarks = Dict.with_capacity(scan.starts.len() + scan.named.len())
-	var $next = 0.U64
+	var $next = context.from
 	for name in scan.starts {
 		if $bookmarks.get(name).is_err() {
 			id = free_id(scan.used, $next)
@@ -2265,7 +2290,7 @@ no_context = { relationships: [], footnotes: [], endnotes: [], comments: [] }
 written : List(Document.Block), WmlWrite.Context -> Str
 written = |content, context|
 	match WmlWrite.document(shell, content, context) {
-		Ok({ tree, relationships: _ }) =>
+		Ok({ tree, relationships: _, next: _ }) =>
 			match XmlTree.render(tree) {
 				Ok(bytes) =>
 					match (Str.from_utf8(bytes) ?? "").split_first("<w:body") {
@@ -2325,6 +2350,7 @@ expect {
 expect {
 	comment = XmlTree.parse("<w:commentRangeStart xmlns:w='${wordprocessingml}' w:id='0'/>".to_utf8(), {}) ?? Text("")
 	links = [{ id: "rId1", kind: hyperlink_relationship, target: "https://example.org/a", mode: External }]
+	context : WmlWrite.Context
 	context = { relationships: links, footnotes: ["-1", "0", "7"], endnotes: [], comments: ["3"] }
 	content = [
 		paragraph([
@@ -2419,7 +2445,7 @@ expect {
 ## document and is written as it is.
 expect {
 	other = XmlTree.parse("<w:styles xmlns:w='${wordprocessingml}'/>".to_utf8(), {}) ?? Text("")
-	WmlWrite.document(other, [paragraph([])], no_context) == Ok({ tree: other, relationships: [] })
+	WmlWrite.document(other, [paragraph([])], no_context) == Ok({ tree: other, relationships: [], next: 0 })
 }
 
 ## Notes take the place, identifier and attributes of the shell's note at
@@ -2432,7 +2458,7 @@ expect {
 	header_shell = XmlTree.parse("<w:hdr xmlns:w='${wordprocessingml}'><w:p/></w:hdr>".to_utf8(), {}) ?? Text("")
 	rendered = |result|
 		match result {
-			Ok({ tree, relationships: _ }) => Str.from_utf8(XmlTree.render(tree) ?? []) ?? ""
+			Ok({ tree, relationships: _, next: _ }) => Str.from_utf8(XmlTree.render(tree) ?? []) ?? ""
 			Err(_) => "not written"
 		}
 	rendered(WmlWrite.notes(notes_shell, notes, no_context)).ends_with("<w:footnotes xmlns:w=\"${wordprocessingml}\"><w:footnote w:type=\"separator\" w:id=\"0\"><w:p/></w:footnote><w:footnote w:id=\"1\"><w:p><w:r><w:t>a</w:t></w:r></w:p></w:footnote><w:footnote w:id=\"2\" w:type=\"continuationNotice\"/></w:footnotes>")
@@ -2454,8 +2480,9 @@ expect {
 	table = Table({ properties: { style: Unset, width: Unset, borders: [], shading: Unset, preserved: [], change: [] }, grid: [], content: [Row({ properties: { header: Unset, grid_before: Unset, grid_after: Unset, preserved: [], inserted: Unset, deleted: Unset, change: [] }, content: [cell] })] })
 	listed = [comment([paragraph([BookmarkStart("b"), BookmarkEnd("b"), run([Text("one")])]), paragraph([run([Text("two")])])]), comment([table]), comment([])]
 	body = [paragraph([Preserved(kept), CommentStart(0), BookmarkStart("a"), BookmarkEnd("a"), CommentEnd(0), run([CommentReference(0)])])]
-	ids = WmlWrite.comment_ids(body, listed)
-	context = { ..no_context, comments: ids }
+	ids = WmlWrite.comment_ids(listed.fold(WmlWrite.kept_ids(Set.with_capacity(8), body), |found, one| WmlWrite.kept_ids(found, one.content)), listed)
+	context : WmlWrite.Context
+	context = { relationships: [], footnotes: [], endnotes: [], comments: ids }
 	main = WmlWrite.document(shell, body, context)?
 	part = WmlWrite.comments(Text(""), listed, context, WmlWrite.taken([main.tree, identified]))?
 	rendered = Str.from_utf8(XmlTree.render(part.tree)?) ?? ""
@@ -2471,7 +2498,21 @@ expect {
 		and written(body, context) == "<w:body><w:p><w:ins w:id=\"0\"/><w:commentRangeStart w:id=\"1\"/><w:bookmarkStart w:id=\"4\" w:name=\"a\"/><w:bookmarkEnd w:id=\"4\"/><w:commentRangeEnd w:id=\"1\"/><w:r><w:commentReference w:id=\"1\"/></w:r></w:p></w:body></w:document>"
 		and part.paragraphs == ["00000002", "00000003", ""]
 		and comments == "${first}${second}${third}</w:comments>"
-		and WmlWrite.comments(Text(""), [comment([paragraph([])]), { ..comment([]), parent: Parent(0) }], { ..no_context, comments: ["0", "1"] }, WmlWrite.taken([])).map_ok(|_| {}) == Err(CommentWithoutParagraph(1))
+		and WmlWrite.comments(Text(""), [comment([paragraph([])]), { ..comment([]), parent: Parent(0) }], { relationships: [], footnotes: [], endnotes: [], comments: ["0", "1"] }, WmlWrite.taken([])).map_ok(|_| {}) == Err(CommentWithoutParagraph(1))
+}
+
+## A part written as one of a document's takes its bookmarks' and tracked
+## changes' identifiers from the context's `from` up, avoiding the
+## comments' and those the context reserves, and gives the number after the
+## last it took as `next`; the identifiers kept content uses are reserved.
+expect {
+	kept = XmlTree.parse("<w:permStart xmlns:w='${wordprocessingml}' w:id='4'/>".to_utf8(), {}) ?? Text("")
+	content = [paragraph([BookmarkStart("b"), BookmarkEnd("b"), Revision({ kind: Insertion, author: "Ada", date: Unset, content: [run([Text("x")])], preserved: [] })])]
+	context : WmlWrite.Context
+	context = { relationships: [], footnotes: [], endnotes: [], comments: ["3"], reserved: WmlWrite.kept_ids(Set.with_capacity(1), [paragraph([Preserved(kept)])]), from: 2 }
+	written(content, context) == "<w:body><w:p><w:bookmarkStart w:id=\"2\" w:name=\"b\"/><w:bookmarkEnd w:id=\"2\"/><w:ins w:id=\"5\" w:author=\"Ada\"><w:r><w:t>x</w:t></w:r></w:ins></w:p></w:body></w:document>"
+		and WmlWrite.document(shell, content, context).map_ok(|out| out.next) == Ok(6)
+		and WmlWrite.header_footer(XmlTree.parse("<w:hdr xmlns:w='${wordprocessingml}'/>".to_utf8(), {}) ?? Text(""), content, { ..context, from: 6 }).map_ok(|out| out.next) == Ok(8)
 }
 
 ## Turning tracking on puts `w:trackRevisions` after the settings the schema

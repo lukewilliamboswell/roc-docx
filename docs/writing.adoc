@@ -51,7 +51,12 @@ blocks, in the same way. A note reference names its note by its place
 among the document's footnotes or endnotes, and a comment's range or
 reference its comment by its place among the comments; one whose place the
 context does not have cannot be written, and fails with
-`MissingNote({ kind, note })` or `MissingComment(id)`.
+`MissingNote({ kind, note })` or `MissingComment(id)`. Each writer gives
+`next` beside the tree, the number after the last identifier it took; a
+part written as one of a document's takes the context's `reserved`
+identifiers, those `WmlWrite.kept_ids` finds in every part, and the
+previous part's `next` as `from`, as <<identifiers>> describes. Both
+default to a part written on its own.
 
 == The canonical form
 
@@ -97,17 +102,22 @@ identifiers the markup needs, as a function of the model and the part's
 relationships alone:
 
 * A comment takes the lowest number from 0 up that no element kept as it
-  was read in the body or in any comment uses and no earlier comment takes,
-  in the order of the comments, and every range boundary and reference to
-  it, in the body, a note or a header, takes the same. <<read-a-documents-comments>>
+  was read in any part, the body, a note, a header, a footer or a comment,
+  uses and no earlier comment takes, in the order of the comments, and
+  every range boundary and reference to it, in the body, a note or a
+  header, takes the same. <<read-a-documents-comments>>
   says how the comments themselves are written.
 * A bookmark takes the lowest number that no comment, no other bookmark and
   no element kept as it was read uses as its `w:id`, in the order the
   bookmarks begin, so that bookmarks, comments and revisions share one space
   of identifiers without colliding. A bookmark's end takes its start's
-  identifier. Each part allocates its own: the notes of a footnotes part
-  share one space, and a header's bookmarks have theirs; the comments
-  part's bookmarks also avoid every identifier the other parts use.
+  identifier. The space is the document's: no bookmark takes a number an
+  element kept in any part uses, and the parts take theirs in turn, the
+  body first, then the footnotes, the endnotes and the headers and footers
+  in the order the main document relates to them, each from the number
+  after the last the part before it took, so that no two parts share one.
+  The comments part's bookmarks avoid every identifier the other parts
+  use.
 * A hyperlink, picture, header or footer uses the part's relationship to its
   target, in the same mode, internal or external; a header or footer needs
   one of the header or footer kind. When the part has none, a relationship

@@ -22,18 +22,24 @@ import docx.XmlTree
 ## comments, resolved comments, durable identifiers and UTC dates, comment
 ## content of one or two paragraphs, a bookmark or a table, bookmarks in the
 ## body, tracked insertions, and kept permission ranges whose identifiers
-## the allocated ones must avoid. The body is written by `WmlWrite.document` with the identifiers
-## `WmlWrite.comment_ids` allocates, the comments part by
+## the allocated ones must avoid; and a header and a footnote, each of
+## paragraphs holding a comment's range and reference around a bookmark and
+## a tracked insertion after a kept permission range. The body is written by
+## `WmlWrite.document` with the identifiers `WmlWrite.comment_ids` allocates
+## avoiding those `WmlWrite.kept_ids` finds in every part, the footnote by
+## `WmlWrite.notes` and the header by `WmlWrite.header_footer`, each taking
+## its numbers after the part before it, the comments part by
 ## `WmlWrite.comments`, the extended comments, comment identifiers and
 ## extensible comments parts by `Comments.split` and the people part by
 ## `Comments.people_part`, each with its content type and its relationship
-## from the main document. `Docx.parse` must read back the body and the
-## comments, threads, anchors and people as they were written, with no entry
-## left unapplied; in the written parts
-## every range that starts ends, and the comments' and bookmarks'
-## identifiers and the comments' paragraph identifiers are unique and avoid
-## the kept ones. `Docx.to_bytes` must then give the same bytes twice, and
-## bytes that read back as an equivalent document that writes the same bytes
+## from the main document. `Docx.parse` must read back the body, header,
+## footnote and the comments, threads, anchors and people as they were
+## written, with no entry left unapplied; across the written parts every
+## range that starts ends, and the comments', bookmarks' and tracked
+## changes' identifiers and the comments' paragraph identifiers are unique
+## and avoid the kept ones. `Docx.to_bytes` must then give the same bytes
+## twice, with its identifiers unique across its parts as well, and bytes
+## that read back as an equivalent document that writes the same bytes
 ## again.
 ##
 ## For a program of at most 1,024 bytes, the document read back, or for a
@@ -45,7 +51,8 @@ import docx.XmlTree
 ## replies to its parent with its parent's anchor, resolving resolves exactly
 ## the thread, and removing removes exactly the comment and its replies; and
 ## every edited document writes with its ranges balanced and its identifiers
-## unique, and reads back as the same comments.
+## unique across the body, header, footnotes and comments, and reads back
+## as the same comments.
 ##
 ## Allocation ratchets, which only ever move down: `WmlWrite.comments`,
 ## `Comments.split` with `Comments.people_part`, `Docx.comments`, which joins
@@ -58,8 +65,10 @@ import docx.XmlTree
 ## few words with a reply. Running a large example runs its small one again
 ## and fails if any region allocates more than sixteen times as often, or
 ## requests or holds live more than eighteen times as many bytes, as
-## `byte_ratio` explains. Raising a ceiling needs a cause recorded in the
-## pull request.
+## `byte_ratio` explains. A fifth example, the small threads with comments
+## in a header and a footnote, runs the identifiers' law across parts in
+## every smoke run. Raising a ceiling needs a cause recorded in the pull
+## request.
 test! : List(U8) => Fuzz.Outcome
 test! = |program| {
 	costs = round_trip!(program)
@@ -114,10 +123,15 @@ Costs : List((Str, Fuzz.Stats))
 round_trip! : List(U8) => Costs
 round_trip! = |program| {
 	built = build(program)
-	ids = WmlWrite.comment_ids(built.body, built.comments)
-	context = { relationships: [], footnotes: [], endnotes: [], comments: ids }
+	kept = List.concat([built.header, built.note], built.comments.map(|comment| comment.content)).fold(WmlWrite.kept_ids(Set.with_capacity(8), built.body), WmlWrite.kept_ids)
+	ids = WmlWrite.comment_ids(kept, built.comments)
+	context : WmlWrite.Context
+	context = { relationships: [], footnotes: [], endnotes: [], comments: ids, reserved: kept }
 	main = WmlWrite.document(shell, built.body, context) ?? crash "a generated body did not write"
-	taken = WmlWrite.taken([main.tree])
+	notes = WmlWrite.notes(w_element("footnotes", [], []), [{ kind: Note, content: built.note }], { ..context, from: main.next }) ?? crash "a generated footnote did not write"
+	header = WmlWrite.header_footer(w_element("hdr", [], []), built.header, { ..context, from: notes.next }) ?? crash "a generated header did not write"
+	stories = List.concat(if (built.note.is_empty()) [] else [("/word/footnotes.xml", notes.tree)], if (built.header.is_empty()) [] else [("/word/header1.xml", header.tree)])
+	taken = WmlWrite.taken(List.prepend(stories.map(|(_, tree)| tree), main.tree))
 	{ value: written, stats: write } = Fuzz.measure!("wml-write-comments", || WmlWrite.comments(Text(""), built.comments, context, taken))
 	comments = written ?? crash "generated comments did not write"
 	{ value: split, stats: splitting } = Fuzz.measure!(
@@ -127,20 +141,26 @@ round_trip! = |program| {
 	beside = [split.threads.extended, split.threads.ids, split.threads.extensible, split.people].fold(0, |total, tree| total + size(tree))
 	check_linear("writing comments", write, size(comments.tree))
 	check_linear("splitting threads", splitting, beside)
-	check_identifiers(main.tree, comments.tree)
-	trees = [
-		("/word/document.xml", main.tree),
-		("/word/comments.xml", comments.tree),
-		("/word/commentsExtended.xml", split.threads.extended),
-		("/word/commentsIds.xml", split.threads.ids),
-		("/word/commentsExtensible.xml", split.threads.extensible),
-		("/word/people.xml", split.people),
-	]
-	nodes = size(main.tree) + size(comments.tree)
-	bytes = Opc.to_bytes(graph(main.relationships), |name| Bytes(rendered(trees, name))) ?? crash "a written document did not package"
+	check_identifiers(List.concat([main.tree, comments.tree], stories.map(|(_, tree)| tree)))
+	trees = List.concat(
+		[
+			("/word/document.xml", main.tree),
+			("/word/comments.xml", comments.tree),
+			("/word/commentsExtended.xml", split.threads.extended),
+			("/word/commentsIds.xml", split.threads.ids),
+			("/word/commentsExtensible.xml", split.threads.extensible),
+			("/word/people.xml", split.people),
+		],
+		stories,
+	)
+	nodes = stories.fold(size(main.tree) + size(comments.tree), |total, (_, tree)| total + size(tree))
+	bytes = Opc.to_bytes(graph(main.relationships, stories.map(|(name, _)| name)), |name| Bytes(rendered(trees, name))) ?? crash "a written document did not package"
 	parsed = Docx.parse(bytes) ?? crash "a written document did not parse"
 	if Docx.body(parsed.document) != built.body {
 		crash "a written body read back differently"
+	}
+	if Docx.header_footer(parsed.document, "/word/header1.xml") != built.header or Docx.footnotes(parsed.document).map(|note| note.content) != (if (built.note.is_empty()) [] else [built.note]) {
+		crash "a written header or footnote read back differently"
 	}
 	{ value: joined, stats: join } = Fuzz.measure!("docx-comments", || Docx.comments(parsed.document))
 	if joined != { comments: Comments.anchored(built.body, built.comments), diagnostics: [] } {
@@ -156,6 +176,7 @@ round_trip! = |program| {
 		crash "written people read back differently"
 	}
 	first = Docx.to_bytes(parsed.document) ?? crash "a read document did not write"
+	check_identifiers(written_parts(first))
 	if Docx.to_bytes(parsed.document) != Ok(first) {
 		crash "writing a document twice gave different bytes"
 	}
@@ -170,7 +191,7 @@ round_trip! = |program| {
 	if program.len() > edited_program_bytes {
 		return measured
 	}
-	edited = if (program.len() % 2 == 0) parsed.document else without_threads(trees, main.relationships)
+	edited = if (program.len() % 2 == 0) parsed.document else without_threads(trees, graph(main.relationships, stories.map(|(name, _)| name)))
 	List.concat(measured, operate!(program, edited, nodes))
 }
 
@@ -183,9 +204,8 @@ edited_program_bytes = 1024
 
 # The document packaged with its main document and comments part only, as
 # pandoc and LibreOffice write one: without the parts that make threads.
-without_threads : List((Str, XmlTree.Node)), List(Opc.Relationship) -> Document
-without_threads = |trees, relationships| {
-	full = graph(relationships)
+without_threads : List((Str, XmlTree.Node)), Opc.Graph -> Document
+without_threads = |trees, full| {
 	dropped = ["/word/commentsExtended.xml", "/word/commentsIds.xml", "/word/commentsExtensible.xml", "/word/people.xml"]
 	parts = full.parts
 		.drop_if(|part| dropped.contains(part.name))
@@ -259,7 +279,7 @@ operate! = |program, document, nodes| {
 	}
 	for one in edited {
 		bytes = Docx.to_bytes(one) ?? crash "an edited document did not write"
-		check_identifiers(part_tree(bytes, "/word/document.xml"), part_tree(bytes, "/word/comments.xml"))
+		check_identifiers(written_parts(bytes))
 		if listed((Docx.parse(bytes) ?? crash "an edited document did not parse").document) != listed(one) {
 			crash "an edited document read back as different comments"
 		}
@@ -285,6 +305,11 @@ comments_of = |entries| sorted_by_id(entries).map(|entry| entry.comment)
 sorted_by_id : List(Comments.Anchored) -> List(Comments.Anchored)
 sorted_by_id = |entries| entries.sort_with(|a, b| if (a.id < b.id) Before else if (a.id > b.id) After else Same)
 
+# The trees of a written package's parts that hold comments' ranges,
+# bookmarks and tracked changes.
+written_parts : List(U8) -> List(XmlTree.Node)
+written_parts = |bytes| ["/word/document.xml", "/word/footnotes.xml", "/word/header1.xml", "/word/comments.xml"].map(|name| part_tree(bytes, name))
+
 # A written part's tree, or an empty one where the package has no such part.
 part_tree : List(U8), Str -> XmlTree.Node
 part_tree = |bytes, name| {
@@ -305,16 +330,23 @@ rendered = |trees, name|
 	}
 
 # The package: the main document, related to its comments part and the
-# parts beside it.
-graph : List(Opc.Relationship) -> Opc.Graph
-graph = |relationships| {
-	related = [
-		("comments", "/word/comments.xml", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments"),
-		("commentsExtended", "/word/commentsExtended.xml", "http://schemas.microsoft.com/office/2011/relationships/commentsExtended"),
-		("commentsIds", "/word/commentsIds.xml", "http://schemas.microsoft.com/office/2016/09/relationships/commentsIds"),
-		("commentsExtensible", "/word/commentsExtensible.xml", "http://schemas.microsoft.com/office/2018/08/relationships/commentsExtensible"),
-		("people", "/word/people.xml", "http://schemas.microsoft.com/office/2011/relationships/people"),
+# parts beside it, and to the footnotes and header parts named.
+graph : List(Opc.Relationship), List(Str) -> Opc.Graph
+graph = |relationships, named| {
+	stories = [
+		("footnotes", "/word/footnotes.xml", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes"),
+		("header", "/word/header1.xml", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header"),
 	]
+	related = List.concat(
+		[
+			("comments", "/word/comments.xml", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments"),
+			("commentsExtended", "/word/commentsExtended.xml", "http://schemas.microsoft.com/office/2011/relationships/commentsExtended"),
+			("commentsIds", "/word/commentsIds.xml", "http://schemas.microsoft.com/office/2016/09/relationships/commentsIds"),
+			("commentsExtensible", "/word/commentsExtensible.xml", "http://schemas.microsoft.com/office/2018/08/relationships/commentsExtensible"),
+			("people", "/word/people.xml", "http://schemas.microsoft.com/office/2011/relationships/people"),
+		],
+		stories.keep_if(|(_, name, _)| named.contains(name)),
+	)
 	to_parts = related.map(|(kind, name, _)| { name, content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.${kind}+xml", relationships: [] })
 	links = related.map(|(kind, target, relationship)| { id: "rIdC${kind}", kind: relationship, target, mode: Internal })
 	{
@@ -329,14 +361,14 @@ graph = |relationships| {
 # identifiers, and the kept permission ranges'.
 Names : { starts : List(Str), ends : List(Str), comments : List(Str), paragraphs : List(Str), bookmarks : List(Str), bookmark_ends : List(Str), revisions : List(Str), kept : List(Str) }
 
-# Every range that starts ends once and names a comment; the comments'
-# paragraph identifiers are unique; the comments', bookmarks' and tracked
-# changes' identifiers are unique together and apart from the kept
-# permission ranges'; and each bookmark that ends has started.
-check_identifiers : XmlTree.Node, XmlTree.Node -> {}
-check_identifiers = |main, comments| {
+# Across a document's parts: every range that starts ends once and names a
+# comment; the comments' paragraph identifiers are unique; the comments',
+# bookmarks' and tracked changes' identifiers are unique together and apart
+# from the kept permission ranges'; and each bookmark that ends has started.
+check_identifiers : List(XmlTree.Node) -> {}
+check_identifiers = |trees| {
 	empty = { starts: [], ends: [], comments: [], paragraphs: [], bookmarks: [], bookmark_ends: [], revisions: [], kept: [] }
-	names = names_in(names_in(empty, main), comments)
+	names = trees.fold(empty, names_in)
 	if sorted(names.starts) != sorted(names.ends) or !unique(names.starts) {
 		crash "a written comment range is not balanced"
 	}
@@ -456,13 +488,15 @@ join_memory_ceiling = |nodes| 16_384 + 512 * nodes
 exact_ceilings : List(U8) -> Try(List((Str, U64)), [NotDeclared])
 exact_ceilings = |program|
 	if program == small_program {
-		Ok([("wml-write-comments", 472), ("comments-split", 105), ("docx-comments", 822), ("docx-add-comment", 2091), ("docx-reply", 2744), ("docx-resolve", 2670), ("docx-remove-comment", 2683)])
+		Ok([("wml-write-comments", 472), ("comments-split", 105), ("docx-comments", 822), ("docx-add-comment", 2097), ("docx-reply", 2750), ("docx-resolve", 2672), ("docx-remove-comment", 2685)])
 	} else if program == large_program {
-		Ok([("wml-write-comments", 7388), ("comments-split", 1485), ("docx-comments", 12_245), ("docx-add-comment", 30_107), ("docx-reply", 38_806), ("docx-resolve", 37_292), ("docx-remove-comment", 38_746)])
+		Ok([("wml-write-comments", 7388), ("comments-split", 1485), ("docx-comments", 12_245), ("docx-add-comment", 30_113), ("docx-reply", 38_812), ("docx-resolve", 37_294), ("docx-remove-comment", 38_748)])
 	} else if program == few_comments {
-		Ok([("wml-write-comments", 316), ("comments-split", 181), ("docx-comments", 549), ("docx-add-comment", 1658), ("docx-reply", 2127), ("docx-resolve", 2054), ("docx-remove-comment", 2119)])
+		Ok([("wml-write-comments", 316), ("comments-split", 181), ("docx-comments", 549), ("docx-add-comment", 1664), ("docx-reply", 2133), ("docx-resolve", 2056), ("docx-remove-comment", 2121)])
 	} else if program == many_comments {
-		Ok([("wml-write-comments", 4891), ("comments-split", 2701), ("docx-comments", 7892), ("docx-add-comment", 23_306), ("docx-reply", 29_056), ("docx-resolve", 27_452), ("docx-remove-comment", 29_071)])
+		Ok([("wml-write-comments", 4891), ("comments-split", 2701), ("docx-comments", 7892), ("docx-add-comment", 23_312), ("docx-reply", 29_062), ("docx-resolve", 27_454), ("docx-remove-comment", 29_073)])
+	} else if program == stories_program {
+		Ok([("wml-write-comments", 582), ("comments-split", 132), ("docx-comments", 1010), ("docx-add-comment", 2984), ("docx-reply", 3697), ("docx-resolve", 3605), ("docx-remove-comment", 3654)])
 	} else {
 		Err(NotDeclared)
 	}
@@ -517,6 +551,11 @@ short_comment = [0x02, 0x01, 0x03, 0x06, 0x00]
 program_unit : List(U8)
 program_unit = [0x12, 0x01, 0x36, 0x08, 0x03, 0x00, 0xBA, 0x07, 0x29, 0x01, 0x03, 0x45, 0x00]
 
+# The threads once more, with comments in a header and a footnote, each
+# around a bookmark and a tracked insertion after a kept permission range.
+stories_program : List(U8)
+stories_program = List.concat(small_program, [0x0B, 0x1B, 0x2B, 0x3B])
+
 main_type : Str
 main_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"
 
@@ -548,11 +587,11 @@ pick = |choices, index, fallback| choices.get(index % choices.len()) ?? fallback
 # the step and the rest its variant. Paragraph content collects until step 0
 # ends the paragraph; ranges still open at the end close in the last
 # paragraph, which every body has.
-Building : { blocks : List(Document.Block), content : List(Document.Inline), comments : List(Document.Comment), open : List(U64), position : U64 }
+Building : { blocks : List(Document.Block), content : List(Document.Inline), comments : List(Document.Comment), open : List(U64), position : U64, header : List(Document.Block), note : List(Document.Block) }
 
-build : List(U8) -> { body : List(Document.Block), comments : List(Document.Comment), people : List(Document.Person) }
+build : List(U8) -> { body : List(Document.Block), comments : List(Document.Comment), people : List(Document.Person), header : List(Document.Block), note : List(Document.Block) }
 build = |program| {
-	var $state = { blocks: List.with_capacity(program.len()), content: List.with_capacity(8), comments: List.with_capacity(8), open: List.with_capacity(4), position: 0 }
+	var $state = { blocks: List.with_capacity(program.len()), content: List.with_capacity(8), comments: List.with_capacity(8), open: List.with_capacity(4), position: 0, header: [], note: [] }
 	for byte in program {
 		$state = step($state, byte % 16, (byte // 16).to_u64())
 		$state = { ..$state, position: $state.position + 1 }
@@ -560,7 +599,7 @@ build = |program| {
 	closed = $state.open.fold($state, |state, place| with_inline(state, CommentEnd(place)))
 	ended = end_paragraph(closed)
 	people = authors.map(|author| { author, presence: if (author == "Lin Editor") Unset else Presence({ provider: "None", user: author }) })
-	{ body: ended.blocks, comments: ended.comments, people }
+	{ body: ended.blocks, comments: ended.comments, people, header: ended.header, note: ended.note }
 }
 
 end_paragraph : Building -> Building
@@ -633,6 +672,19 @@ step = |state, kind, variant|
 			{ ..added.state, blocks: List.append(added.state.blocks, CommentStart(added.place)), open: List.append(added.state.open, added.place) }
 		}
 
+		11 => {
+			added = with_comment(state, variant, Unset)
+			name = "aside${state.position.to_str()}"
+			kept = Preserved(w_element("permStart", [("id", variant.to_str()), ("edGrp", "everyone")], []))
+			inserted = Revision({ kind: Insertion, author: "Grace Author", date: Unset, content: [text("aside")], preserved: [] })
+			aside = paragraph([kept, CommentStart(added.place), BookmarkStart(name), inserted, BookmarkEnd(name), CommentEnd(added.place), Run({ properties: Document.no_run_properties, content: [CommentReference(added.place)] })])
+			if variant % 2 == 0 {
+				{ ..added.state, header: List.append(added.state.header, aside) }
+			} else {
+				{ ..added.state, note: List.append(added.state.note, aside) }
+			}
+		}
+
 		_ => with_inline(state, text("x"))
 	}
 
@@ -689,6 +741,7 @@ target = Fuzz.target_with!({
 		Fuzz.example({ name: "large-threads", revision: "1", make: || large_program }),
 		Fuzz.example({ name: "few-comments", revision: "1", make: || few_comments }),
 		Fuzz.example({ name: "many-comments", revision: "1", make: || many_comments }),
+		Fuzz.example({ name: "stories", revision: "1", make: || stories_program }),
 	],
 	generator,
 	test!,

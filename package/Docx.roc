@@ -311,7 +311,11 @@ Docx :: [].{
 	## [Comments.mark] places it, and the comment's `id`, its place among the
 	## comments, after every comment the document has. The document is
 	## written as [Docx.to_bytes] writes it, with a comments part where it
-	## had none.
+	## had none. A document with a people part gains the comment's author
+	## there when the part has no person by that name, as Word records an
+	## author who signed in to no account: with the presence of provider
+	## `None` and the author as the identifier. A document without a people
+	## part is not given one.
 	add_comment : Document, Comments.Span, Comments.New -> Try({ document : Document, id : U64 }, EditError)
 	add_comment = |document, span, new| {
 		_ = main_part(document)?
@@ -320,7 +324,7 @@ Docx :: [].{
 		marked = Comments.mark(Docx.body(document), id, span)?
 		comment = Comments.comment(new)?
 		edited = written_with(document, { body: marked, comments: List.append(read.comments, comment), kept: read.kept, places: [] })?
-		Ok({ document: edited, id })
+		Ok({ document: with_author(edited, comment.author), id })
 	}
 
 	## The document with a reply to the comment `to`, and the reply's `id`,
@@ -328,7 +332,8 @@ Docx :: [].{
 	## ends just after its parent's, and its reference follows its
 	## parent's, wherever they are. The document is written as
 	## [Docx.to_bytes] writes it, with an extended comments part where it had
-	## none, so the reply is a reply.
+	## none, so the reply is a reply, and gains the reply's author in its
+	## people part as [Docx.add_comment] says.
 	reply : Document, U64, Comments.New -> Try({ document : Document, id : U64 }, EditError)
 	reply = |document, to, new| {
 		_ = main_part(document)?
@@ -340,7 +345,7 @@ Docx :: [].{
 		comment = Comments.comment(new)?
 		places = List.set(unchanged(read.comments), to, [to, id]) ?? []
 		edited = written_with(document, { body: Comments.relabel(Docx.body(document), places), comments: List.append(read.comments, { ..comment, parent: Parent(to) }), kept: read.kept, places })?
-		Ok({ document: edited, id })
+		Ok({ document: with_author(edited, comment.author), id })
 	}
 
 	## The document with the thread of the comment `id` resolved: every
@@ -519,7 +524,7 @@ resolved_everywhere = |document, resolve| {
 				for note in WmlRead.notes(part.tree, context) {
 					$notes = List.append($notes, { ..note, content: resolve(note.content, Bool.True)? })
 				}
-				written = WmlWrite.notes(part.tree, $notes, context)?
+				written = WmlWrite.notes(part.tree, $notes, writing(context, read_ids, Set.with_capacity(0), 0))?
 				$document = Document.with_part($document, part.name, written.tree, written.relationships)
 			}
 
@@ -531,7 +536,7 @@ resolved_everywhere = |document, resolve| {
 			match Document.xml_part(document, relationship.target) {
 				Ok(part) => {
 					context = part_context(part, read_ids)
-					written = WmlWrite.header_footer(part.tree, resolve(WmlRead.header_footer(part.tree, context), Bool.True)?, context)?
+					written = WmlWrite.header_footer(part.tree, resolve(WmlRead.header_footer(part.tree, context), Bool.True)?, writing(context, read_ids, Set.with_capacity(0), 0))?
 					$document = Document.with_part($document, part.name, written.tree, written.relationships)
 				}
 
@@ -600,12 +605,25 @@ main_context = |document, name, relationships| {
 part_context : Document.XmlPart, List(Str) -> WmlRead.Context
 part_context = |part, comments| { relationships: part.relationships, footnotes: [], endnotes: [], comments }
 
+# What writing a part needs: what reading it needs, with the comments'
+# identifiers it is written with, the identifiers kept content anywhere in
+# the document uses and the lowest number its own may take.
+writing : WmlRead.Context, List(Str), Set(Str), U64 -> WmlWrite.Context
+writing = |context, comments, reserved, from| { relationships: context.relationships, footnotes: context.footnotes, endnotes: context.endnotes, comments, reserved, from }
+
+# A part beside the main document written from the model: a footnotes or
+# endnotes part and its notes, or a header or footer and its blocks.
+Story : { part : Document.XmlPart, content : [Notes(List(Document.Note)), Region(List(Document.Block))] }
+
 # The document as it is written: its main document part, its notes parts and
 # the header and footer parts it relates to written from the model, with the
 # relationships writing them needs, then its comments and the parts beside
 # them written from their threads. Comments take the identifiers
-# [WmlWrite.comment_ids] allocates, and every part's ranges and references
-# name them by those.
+# [WmlWrite.comment_ids] allocates, avoiding what content kept in any part
+# uses, and every part's ranges and references name them by those; the
+# parts' bookmarks and tracked changes share one space of identifiers across
+# the document, each part taking its numbers after the part written before
+# it.
 as_written : Document -> Try(Document, WmlWrite.WriteError)
 as_written = |document| {
 	read = threads(document)
@@ -623,17 +641,13 @@ written_with = |document, change| {
 	}
 	read_ids = comment_ids(document)
 	moved = |blocks| if (change.places.is_empty()) blocks else Comments.relabel(blocks, change.places)
-	comments = WmlWrite.comment_ids(change.body, change.comments)
-	written = WmlWrite.document(main.tree, change.body, { ..main_context(document, main.name, main.relationships), comments })?
-	var $document = Document.with_part(document, main.name, written.tree, written.relationships)
+	var $stories = List.with_capacity(0)
 	for kind in [footnotes_relationship, endnotes_relationship] {
 		match Document.related(document, main.name, kind) {
 			Ok(part) => {
-				context = part_context(part, comments)
 				read_notes = WmlRead.notes(part.tree, part_context(part, read_ids))
 				placed = if (change.places.is_empty()) read_notes else read_notes.map(|note| { ..note, content: Comments.relabel(note.content, change.places) })
-				notes_written = WmlWrite.notes(part.tree, placed, context)?
-				$document = Document.with_part($document, part.name, notes_written.tree, notes_written.relationships)
+				$stories = List.append($stories, { part, content: Notes(placed) })
 			}
 
 			Err(NotFound) => {}
@@ -643,17 +657,38 @@ written_with = |document, change| {
 		if relationship.mode == Internal and (relationship.kind == header_relationship or relationship.kind == footer_relationship) {
 			match Document.xml_part(document, relationship.target) {
 				Ok(part) => {
-					context = part_context(part, comments)
-					part_written = WmlWrite.header_footer(part.tree, moved(WmlRead.header_footer(part.tree, part_context(part, read_ids))), context)?
-					$document = Document.with_part($document, part.name, part_written.tree, part_written.relationships)
+					$stories = List.append($stories, { part, content: Region(moved(WmlRead.header_footer(part.tree, part_context(part, read_ids)))) })
 				}
 
 				Err(NotFound) => {}
 			}
 		}
 	}
+	in_parts = $stories.fold(WmlWrite.kept_ids(Set.with_capacity(8), change.body), kept_in)
+	kept = change.comments.fold(in_parts, |found, comment| WmlWrite.kept_ids(found, comment.content))
+	comments = WmlWrite.comment_ids(kept, change.comments)
+	written = WmlWrite.document(main.tree, change.body, writing(main_context(document, main.name, main.relationships), comments, kept, 0))?
+	var $document = Document.with_part(document, main.name, written.tree, written.relationships)
+	var $next = written.next
+	for story in $stories {
+		context = writing(part_context(story.part, comments), comments, kept, $next)
+		out = match story.content {
+			Notes(listed) => WmlWrite.notes(story.part.tree, listed, context)?
+			Region(blocks) => WmlWrite.header_footer(story.part.tree, blocks, context)?
+		}
+		$document = Document.with_part($document, story.part.name, out.tree, out.relationships)
+		$next = out.next
+	}
 	with_comments($document, change.comments, change.kept, comments)
 }
+
+# `found` with the identifiers content kept in a story uses.
+kept_in : Set(Str), Story -> Set(Str)
+kept_in = |found, story|
+	match story.content {
+		Notes(listed) => listed.fold(found, |inner, note| WmlWrite.kept_ids(inner, note.content))
+		Region(blocks) => WmlWrite.kept_ids(found, blocks)
+	}
 
 header_relationship : Str
 header_relationship = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header"
@@ -696,6 +731,24 @@ with_comments = |document, comments, kept, ids| {
 	with_ids = rewrite(with_extended, comments_ids_relationship, split.ids, durable)
 	Ok(rewrite(with_ids, comments_extensible_relationship, split.extensible, dated))
 }
+
+# The document with `author` after the people of its people part, as Word
+# records a new author, where it has the part and no person there has the
+# name.
+with_author : Document, Str -> Document
+with_author = |document, author|
+	match Document.related(document, main_name(document), people_relationship) {
+		Ok(part) => {
+			people = Comments.people(part.tree).people
+			if people.any(|person| person.author == author) {
+				document
+			} else {
+				Document.with_part(document, part.name, Comments.people_part(part.tree, List.append(people, { author, presence: Presence({ provider: "None", user: author }) })), part.relationships)
+			}
+		}
+
+		Err(NotFound) => document
+	}
 
 # The document with a new part of a kind the comments or the tracking state
 # need, related from the main document: the comments part, `comments.xml`,
@@ -1371,6 +1424,121 @@ expect {
 		and summary(removed) == [{ id: 0, author: "Morgan Reviewer", text: ["Later"], anchor: Range("second"), parent: Unset, resolved: Bool.False }]
 		and Docx.text(removed) == Docx.text(parsed.document)
 		and Docx.remove_comment(removed, 1).map_ok(|_| {}) == Err(NoSuchComment(1))
+}
+
+# A package whose body, footnote and header each hold a bookmark, the
+# footnote a tracked insertion and the header a permission range kept as it
+# was read, with a people part naming Ada.
+story_parts : {} -> Try(List(U8), Opc.WriteError)
+story_parts = |{}| {
+	relationships = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+	declarations = "xmlns:w='http://schemas.openxmlformats.org/wordprocessingml/2006/main' xmlns:r='${relationships}'"
+	part = |name, kind| { name, content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.${kind}+xml", relationships: [] }
+	graph = {
+		relationships: [{ id: "rId1", kind: Opc.officedocument_relationship, target: "/word/document.xml", mode: Internal }],
+		parts: [
+			{
+				name: "/word/document.xml",
+				content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml",
+				relationships: [
+					{ id: "rId7", kind: "${relationships}/header", target: "/word/header1.xml", mode: Internal },
+					{ id: "rId8", kind: "${relationships}/footnotes", target: "/word/footnotes.xml", mode: Internal },
+					{ id: "rId9", kind: people_relationship, target: "/word/people.xml", mode: Internal },
+				],
+			},
+			part("/word/header1.xml", "header"),
+			part("/word/footnotes.xml", "footnotes"),
+			part("/word/people.xml", "people"),
+		],
+	}
+	marked = |name, inner| "<w:bookmarkStart w:id='0' w:name='${name}'/>${inner}<w:bookmarkEnd w:id='0'/>"
+	body = "<w:p>${marked("body", "<w:r><w:t>body</w:t></w:r>")}</w:p><w:sectPr><w:headerReference w:type='default' r:id='rId7'/></w:sectPr>"
+	header = "<w:p><w:permStart w:id='0' w:edGrp='everyone'/>${marked("head", "<w:r><w:t>head</w:t></w:r>")}<w:permEnd w:id='0'/></w:p>"
+	note = "<w:footnote w:id='1'><w:p>${marked("note", "<w:ins w:id='0' w:author='Grace'><w:r><w:t>note</w:t></w:r></w:ins>")}</w:p></w:footnote>"
+	people = "<w15:people xmlns:w15='http://schemas.microsoft.com/office/word/2012/wordml'><w15:person w15:author='Ada'><w15:presenceInfo w15:providerId='None' w15:userId='Ada'/></w15:person></w15:people>"
+	Opc.to_bytes(
+		graph,
+		|name|
+			Bytes(
+				(
+					if name == "/word/document.xml" {
+						"<w:document ${declarations}><w:body>${body}</w:body></w:document>"
+					} else if name == "/word/header1.xml" {
+						"<w:hdr ${declarations}>${header}</w:hdr>"
+					} else if name == "/word/footnotes.xml" {
+						"<w:footnotes ${declarations}>${note}</w:footnotes>"
+					} else {
+						people
+					}
+				).to_utf8(),
+			),
+	)
+}
+
+# The identifiers of the comments, bookmarks, tracked insertions and
+# deletions and permission ranges that begin in these parts of a package, in
+# the parts' order.
+started_ids : List(U8), List(Str) -> List(Str)
+started_ids = |bytes, names|
+	match Opc.open(bytes, {}) {
+		Ok(opened) =>
+			names.fold(
+				[],
+				|found, name|
+					match Opc.part_bytes(opened, name) {
+						Ok(content) => starts_in(found, XmlTree.parse(content, {}) ?? Text(""))
+						Err(_) => found
+					},
+			)
+
+		Err(_) => []
+	}
+
+starts_in : List(Str), XmlTree.Node -> List(Str)
+starts_in = |found, node|
+	match node {
+		Element(element) => {
+			here = if ["comment", "bookmarkStart", "ins", "del", "permStart"].contains(element.name.local) {
+				match element.attributes.find_first(|attribute| attribute.name.local == "id") {
+					Ok(attribute) => List.append(found, attribute.value)
+					Err(_) => found
+				}
+			} else {
+				found
+			}
+			element.children.fold(here, starts_in)
+		}
+
+		Text(_) => found
+	}
+
+## Identifiers are allocated across the document: a comment avoids an
+## identifier kept in a header, the body's, footnotes' and header's
+## bookmarks and tracked changes take numbers no other part takes, each part
+## after the one written before it, and the kept permission range keeps
+## its own.
+expect {
+	parsed = Docx.parse(story_parts({})?)?
+	added = Docx.add_comment(parsed.document, { start: 0, end: 4 }, { author: "Ada", content: Text("Which body?") })?
+	parts = ["/word/document.xml", "/word/footnotes.xml", "/word/header1.xml", "/word/comments.xml"]
+	started_ids(Docx.to_bytes(parsed.document)?, parts) == ["1", "2", "3", "0", "4"]
+		and started_ids(Docx.to_bytes(added.document)?, parts) == ["2", "3", "4", "0", "5", "1"]
+}
+
+## A new comment's or reply's author is added once to a people part, as Word
+## records an author without an account; a document without a people part
+## is not given one.
+expect {
+	parsed = Docx.parse(story_parts({})?)?
+	added = Docx.add_comment(parsed.document, { start: 0, end: 4 }, { author: "Morgan Reviewer", content: Text("Which body?") })?
+	replied = Docx.reply(added.document, added.id, { author: "Ada", content: Text("This one.") })?
+	again = Docx.reply(replied.document, added.id, { author: "Morgan Reviewer", content: Text("Thanks.") })?
+	plain = Docx.add_comment(Docx.parse(commented({})?)?.document, { start: 0, end: 5 }, { author: "Lin Editor", content: Text("Here.") })?
+	person = |author| { author, presence: Presence({ provider: "None", user: author }) }
+	Docx.people(again.document) == { people: [person("Ada"), person("Morgan Reviewer")], diagnostics: [] }
+		and Docx.people(Docx.parse(Docx.to_bytes(again.document)?)?.document) == Docx.people(again.document)
+		and Docx.people(plain.document) == { people: [], diagnostics: [] }
+		and !Opc.parts(Opc.open(Docx.to_bytes(plain.document)?, {})?).any(|part| part.name == "/word/people.xml")
 }
 
 ## A span is placed in the current text: across paragraphs, inside a
