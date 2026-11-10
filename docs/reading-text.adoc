@@ -222,9 +222,37 @@ inverts it, so a bold character style in a bold paragraph style gives text
 that is not bold, and direct formatting sets it outright. A table style and a numbering level contribute
 only when the caller passes their properties, as `{ table_paragraph,
 table_run, numbering }`, the last from the paragraph's list level as
-<<lists>> describes; `Styles.inherited` gives a style's properties with
-its bases', such as a table style's. The model keeps only what the document
-states, so resolving never changes what a document writes.
+<<lists>> describes. `Styles.table_properties` gives a table's: those of
+the table style it names, with its bases', or of the document's default
+table style where it names none or names a style that is not a table style,
+as Word applies it. `Styles.inherited` gives any style's properties with its
+bases'. The model keeps only what the document states, so resolving never
+changes what a document writes.
+
+`Docx.paragraphs` resolves the whole document at once: the body's
+paragraphs in reading order, then the footnotes', the endnotes', and the
+headers' and footers'. Each is a `Docx.FormattedParagraph`: its
+`location`, the `paragraph` as the model holds it, its effective
+`properties`, and its `runs`, each a `Docx.FormattedRun` with the `run` and
+its effective `properties`. The location is `Body`; `Footnote(n)` or
+`Endnote(n)`, the note's place among `Docx.footnotes` or `Docx.endnotes`,
+which is how a note reference names it; or `Header(part)` or
+`Footer(part)`, the part a section's headers and footers name. Every
+paragraph is there, in tables and content controls too, and each is
+resolved with its list level and, in a table, with what
+`Styles.table_properties` gives the innermost table, so nothing is left to
+pass by hand:
+
+[source,roc]
+----
+include::../tests/manual.roc[tag=effective-paragraphs,indent=0]
+----
+
+The runs are those of the paragraph's current text, as
+`Document.paragraph_text` counts it: runs in hyperlinks, fields, insertions
+and moves here, not in deletions or moves away. A paragraph whose mark is
+deleted is still one paragraph, not joined to the next. What reading the styles and numbering did not take as written is what
+`Docx.styles` and `Docx.numbering` give beside their tables.
 
 A style based on one that does not exist or on a style of another kind is
 read without a base, and every style on a cycle of bases is too; each case
@@ -446,3 +474,5 @@ added, each `Property({ name, value })` with a value that is `Text`,
 
 Properties are read, like the body, from the trees a document writes back,
 so they pass through `Docx.parse` and `Docx.to_bytes` unchanged.
+`Docx.set_properties` changes the core properties, as
+<<set-what-a-document-says-about-itself>> describes.

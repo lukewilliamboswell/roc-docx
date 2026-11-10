@@ -52,6 +52,7 @@ main! = |_args| {
 		{ name: "notes", outcome: done(first_footnote(reported)) },
 		{ name: "fields", outcome: done(page_fields(reported)) },
 		{ name: "headings", outcome: done(heading_list(reported)) },
+		{ name: "effective-paragraphs", outcome: done(bold_text(reported)) },
 		{ name: "lists", outcome: done(list_items(reported)) },
 		{ name: "tables", outcome: done(cell_counts(tabled)) },
 		{ name: "sections", outcome: done(any_landscape(reported)) },
@@ -72,6 +73,7 @@ main! = |_args| {
 		{ name: "write-body", outcome: done(write_body(basics_shell, Docx.body(Docx.parse(basics)?.document))) },
 		{ name: "write-options", outcome: done(written_with_options(reviewed)) },
 		{ name: "write-chunks", outcome: done(streamed_length(reviewed)) },
+		{ name: "set-properties", outcome: done(retitled(reviewed)) },
 		{ name: "new-document", outcome: done(new_lease({})) },
 		{ name: "build", outcome: done(tenancy_notice({})) },
 		{ name: "footer", outcome: done(footer_added(Docx.new_document({})?)) },
@@ -233,6 +235,18 @@ heading_list = |document| {
 	)
 	# end::headings[]
 	Ok(headings)
+}
+
+bold_text : Document -> Try(List(Str), _)
+bold_text = |document| {
+	# tag::effective-paragraphs[]
+	bold = List.join(
+		Docx.paragraphs(document).keep_if(|paragraph| paragraph.location == Body).map(
+			|paragraph| paragraph.runs.keep_if(|run| run.properties.bold == On).map(|run| Document.inline_text(Run(run.run))),
+		),
+	)
+	# end::effective-paragraphs[]
+	Ok(bold)
 }
 
 list_items : Document -> Try(List({ depth : U8, bullet : Bool, text : Str }), _)
@@ -503,6 +517,14 @@ streamed_length = |document| {
 	}
 	# end::write-chunks[]
 	if (Ok($length) == Docx.to_bytes(document).map_ok(List.len)) Ok($length) else Err(NotTheBytesOfToBytes)
+}
+
+retitled : Document -> Try(Document, _)
+retitled = |document| {
+	# tag::set-properties[]
+	described = Docx.set_properties(document, { title: Text("Lease"), last_modified_by: Text("Grace Author"), modified: Date("2026-11-10T09:00:00Z") })?
+	# end::set-properties[]
+	if (Docx.core_properties(described).title == Text("Lease")) Ok(described) else Err(NotSet)
 }
 
 # Generate a document

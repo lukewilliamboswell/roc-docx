@@ -27,6 +27,7 @@ Styles :: {
 	defaults : { paragraph : Document.ParagraphProperties, run : Document.RunProperties },
 	default_paragraph : [NoDefault, Default(Str)],
 	default_character : [NoDefault, Default(Str)],
+	default_table : [NoDefault, Default(Str)],
 }.{
 
 	## A style: its identifier and name; its kind; the style it is based on,
@@ -94,6 +95,7 @@ Styles :: {
 		var $diagnostics = List.with_capacity(0)
 		var $default_paragraph = NoDefault
 		var $default_character = NoDefault
+		var $default_table = NoDefault
 		var $position = 0.U64
 		for child in children {
 			match child {
@@ -126,7 +128,14 @@ Styles :: {
 											}
 										}
 
-										_ => {}
+										Table => {
+											$default_table = match $default_table {
+												NoDefault => Default(found_style.id)
+												chosen => chosen
+											}
+										}
+
+										Numbering => {}
 									}
 								}
 							}
@@ -142,14 +151,14 @@ Styles :: {
 		}
 		chains = inherit($by_id, $order)
 		{
-			styles: { by_id: $by_id, inherited: chains.inherited, defaults: $defaults, default_paragraph: $default_paragraph, default_character: $default_character },
+			styles: { by_id: $by_id, inherited: chains.inherited, defaults: $defaults, default_paragraph: $default_paragraph, default_character: $default_character, default_table: $default_table },
 			diagnostics: List.concat($diagnostics, chains.diagnostics),
 		}
 	}
 
 	## The style table of a document without a styles part.
 	empty : Styles
-	empty = { by_id: Dict.empty(), inherited: Dict.empty(), defaults: { paragraph: Document.no_paragraph_properties, run: Document.no_run_properties }, default_paragraph: NoDefault, default_character: NoDefault }
+	empty = { by_id: Dict.empty(), inherited: Dict.empty(), defaults: { paragraph: Document.no_paragraph_properties, run: Document.no_run_properties }, default_paragraph: NoDefault, default_character: NoDefault, default_table: NoDefault }
 
 	## The style with this identifier.
 	get : Styles, Str -> Try(Style, [NotFound])
@@ -161,6 +170,29 @@ Styles :: {
 	## happens between the kinds of style, in [Styles.effective_run].
 	inherited : Styles, Str -> Try({ paragraph : Document.ParagraphProperties, run : Document.RunProperties }, [NotFound])
 	inherited = |styles, id| Ok(styles.inherited.get(id) ? |_| NotFound)
+
+	## The paragraph and run properties a table's style gives the paragraphs
+	## and runs in it, with the styles it is based on, to pass as the
+	## `table_paragraph` and `table_run` of [Styles.Contributions]: those of
+	## the table style `style` names, or of the default table style where it
+	## names none or one that is not a table style in the table. A table
+	## with neither gives none.
+	table_properties : Styles, [Unset, Style(Str)] -> { paragraph : Document.ParagraphProperties, run : Document.RunProperties }
+	table_properties = |styles, style| {
+		applied = match style {
+			Style(id) =>
+				match styles.by_id.get(id) {
+					Ok(found) if found.kind == Table => Default(id)
+					_ => styles.default_table
+				}
+
+			Unset => styles.default_table
+		}
+		match applied {
+			Default(id) => styles.inherited.get(id) ?? no_properties
+			NoDefault => no_properties
+		}
+	}
 
 	## A paragraph's effective properties from its direct properties: the
 	## document defaults, then the contributions of a table style and a
@@ -184,7 +216,7 @@ Styles :: {
 			Default(id) => (styles.inherited.get(id) ?? { paragraph: Document.no_paragraph_properties, run: Document.no_run_properties }).paragraph
 			NoDefault => Document.no_paragraph_properties
 		}
-		merged = [contributions.table_paragraph, contributions.numbering, from_style, direct].fold(styles.defaults.paragraph, merge_paragraph)
+		merged = merge_paragraph(merge_paragraph(merge_paragraph(merge_paragraph(styles.defaults.paragraph, contributions.table_paragraph), contributions.numbering), from_style), direct)
 		style = match applied {
 			Default(id) => Style(id)
 			NoDefault => Unset
@@ -215,17 +247,13 @@ Styles :: {
 			Default(id) => (styles.inherited.get(id) ?? none).run
 			NoDefault => Document.no_run_properties
 		}
-		levels = [contributions.table_run, from_paragraph, from_character]
-		merged = levels.append(run).fold(styles.defaults.run, merge_run)
+		merged = merge_run(merge_run(merge_run(merge_run(styles.defaults.run, contributions.table_run), from_paragraph), from_character), run)
+		# Each level that turns a toggle on inverts it: on is an odd count.
 		toggled = |field| {
-			var $state = field(styles.defaults.run) == On
-			for level in levels {
-				if field(level) == On {
-					$state = !$state
-				}
-			}
+			on = |properties| field(properties) == On
+			state = on(styles.defaults.run) != (on(contributions.table_run) != (on(from_paragraph) != on(from_character)))
 			match field(run) {
-				Unset => if ($state) On else Off
+				Unset => if (state) On else Off
 				stated => stated
 			}
 		}
@@ -680,6 +708,23 @@ expect {
 	linked = Styles.effective_run(styles, { paragraph: Document.no_paragraph_properties, run: run_of("<w:rStyle w:val='Heading1'/>") }, {})
 	from_table = Styles.effective_run(styles, { paragraph: Document.no_paragraph_properties, run: Document.no_run_properties }, { table_run: run_of("<w:b/><w:sz w:val='18'/>") })
 	linked.style == Style("Heading1Char") and linked.bold == On and from_table.bold == On and from_table.size == HalfPoints(18)
+}
+
+## A table's style gives its properties with its bases'; a table naming no
+## style, or one that is not a table style, has the default table style's,
+## and without a default table style none.
+expect {
+	tables = table_of(
+		\\<w:style w:type='table' w:default='1' w:styleId='Plain'><w:rPr><w:caps/></w:rPr></w:style>
+		\\<w:style w:type='table' w:styleId='Grid'><w:basedOn w:val='Plain'/><w:pPr><w:jc w:val='center'/></w:pPr></w:style>
+		\\<w:style w:type='paragraph' w:styleId='Body'/>
+	).styles
+	grid = Styles.table_properties(tables, Style("Grid"))
+	plain = Styles.table_properties(tables, Unset)
+	(grid.paragraph.alignment, grid.run.caps) == (Aligned(Center), On)
+		and Styles.table_properties(tables, Style("Body")) == plain
+		and (plain.paragraph.alignment, plain.run.caps) == (Unset, On)
+		and Styles.table_properties(table_of("").styles, Unset).run == Document.no_run_properties
 }
 
 ## Base chains that loop, name missing styles or cross kinds are cut with a
