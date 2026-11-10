@@ -219,9 +219,11 @@ count of the items is at hand, the list is made at that size instead, as
 `Docx.revisions` counts the changes before it lists them. A loop that
 carries a value exactly as a parameter gave it can copy that value's
 collections at every change instead of updating them in place, which the
-pair check shows as bytes per item that grow with the document; the loops
-that accept and reject changes therefore start from a record update of the
-state they are given. To set or revise a ceiling:
+pair check shows as bytes per item that grow with the document. A loop in
+the package whose state is a record holding a list, set, dictionary or
+string therefore starts from a record update of the state it is given, such
+as `{ ..state, next: state.next }`, and the lint rejects one that starts
+from the parameter as it is. To set or revise a ceiling:
 
 [source,sh]
 ----

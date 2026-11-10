@@ -388,9 +388,12 @@ small_of = |program|
 # eighth, as `fuzz/comment_anchors` allows, since the sets, dictionaries and
 # lists that grow by doubling make an item's bytes rise and fall as counts
 # cross their capacities. The text edits take the most, 16.5 times
-# requested and 16.7 held; the list of changes is made at the size a count
-# of them gives, so `docx-revisions` takes 16.0, and accepting and
-# rejecting, whose loops own the state they carry, at most 15.8. A
+# requested and 16.7 held, and that is growth, not copying: from 4 to 200
+# units of the program they request 69.5 to 74.5 KB a unit, rising and
+# falling without a trend, and hold 21.4 to 23.1 KB. The list of changes is
+# made at the size a count of them gives, so `docx-revisions` takes 16.0,
+# and accepting and rejecting, whose loops own the state they carry, at
+# most 15.8. Seventeen would leave the text edits under 2% margin. A
 # quadratic step costs sixteen times more again.
 byte_ratio : U64
 byte_ratio = 18
