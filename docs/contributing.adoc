@@ -91,6 +91,14 @@ python3 -I oracle/compare_snapshots.py --lane libreoffice,package .roc-docx/revi
 python3 -I oracle/compare_snapshots.py --lane libreoffice,package .roc-docx/redline
 ----
 
+Each comparison prints the LibreOffice version it ran. Pull-request CI runs
+the lane with Ubuntu 24.04's `libreoffice-writer` package, LibreOffice 24.2,
+and its fonts alone; a contributor's machine usually has a newer LibreOffice.
+The lane passes on both, and where they read a document differently the
+adapter reads what each writes or the difference is an accepted deviation
+naming the version, so reproduce a CI-only finding in an `ubuntu:24.04`
+container with that package rather than on your own machine.
+
 Pull-request CI runs `check`, the LibreOffice lane and the manual build, and
 nothing heavier. Sustained fuzz campaigns and benchmarks are not part of CI;
 if they are wanted later they will be separate scheduled work.
