@@ -808,15 +808,13 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 	## nothing.
 	with_part : Document, Str, XmlTree.Node, List(Opc.Relationship) -> Document
 	with_part = |document, name, tree, relationships| {
-		if document.trees.get(name).is_err() {
-			return document
+		{ pkg, graph, trees, body: held } = document
+		if !trees.contains(name) {
+			return { pkg, graph, trees, body: held }
 		}
-		parts = document.graph.parts.map(|part| if (part.name == name) { name: part.name, content_type: part.content_type, relationships: relationships } else part)
-		body = match document.body {
-			Blocks(read) if read.part == name => Whole
-			other => other
-		}
-		{ pkg: document.pkg, graph: { relationships: document.graph.relationships, parts }, trees: document.trees.insert(name, tree), body }
+		holds_body = graph.relationships.any(|rel| rel.kind == Opc.officedocument_relationship and rel.mode == Internal and Str.caseless_ascii_equals(rel.target, name))
+		body = if (holds_body) Whole else held
+		{ pkg, graph: { relationships: graph.relationships, parts: related_by(graph.parts, name, |_| relationships) }, trees: trees.insert(name, tree), body }
 	}
 
 	## An XML part as reading left it: its name, its tree, and the
@@ -850,6 +848,11 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 		Ok({ name: found, tree, relationships: target.relationships })
 	}
 
+	## Whether the document has a part named `name`, XML or not, the names
+	## compared as OPC compares them, ignoring ASCII case.
+	has_part : Document, Str -> Bool
+	has_part = |document, name| document.graph.parts.any(|part| Str.caseless_ascii_equals(part.name, name))
+
 	## The document with a new XML part: `name`, of `content_type`, holding
 	## `tree`, and a relationship of type `kind` to it from the part named
 	## `source`, or from the package itself when `source` is `/`, whose
@@ -859,8 +862,9 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 	## [Document.to_bytes] writes every XML part.
 	with_new_part : Document, { source : Str, kind : Str, name : Str, content_type : Str }, XmlTree.Node -> Document
 	with_new_part = |document, new, tree| {
-		if document.graph.parts.any(|part| part.name == new.name) or (new.source != "/" and !document.graph.parts.any(|part| part.name == new.source)) {
-			return document
+		{ pkg, graph, trees, body } = document
+		if graph.parts.any(|part| part.name == new.name) or (new.source != "/" and !graph.parts.any(|part| part.name == new.source)) {
+			return { pkg, graph, trees, body }
 		}
 		related_from = |relationships| {
 			var $number = 1.U64
@@ -869,10 +873,25 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 			}
 			List.append(relationships, { id: "rId${$number.to_str()}", kind: new.kind, target: new.name, mode: Internal })
 		}
-		parts = document.graph.parts.map(|part| if (part.name == new.source) { name: part.name, content_type: part.content_type, relationships: related_from(part.relationships) } else part)
+		parts = if (new.source == "/") graph.parts else related_by(graph.parts, new.source, related_from)
 		added = List.append(parts, { name: new.name, content_type: new.content_type, relationships: [] })
-		package_relationships = if (new.source == "/") related_from(document.graph.relationships) else document.graph.relationships
-		{ pkg: document.pkg, graph: { relationships: package_relationships, parts: added }, trees: document.trees.insert(new.name, tree), body: document.body }
+		package_relationships = if (new.source == "/") related_from(graph.relationships) else graph.relationships
+		{ pkg, graph: { relationships: package_relationships, parts: added }, trees: trees.insert(new.name, tree), body }
+	}
+
+	## The document with `nodes` after the children of the root of the XML
+	## part named `name`, and `relationships` as the relationships whose
+	## source the part is, as a writer gives them for what it added; every
+	## other part stays as it is. A name that is not an XML part of the
+	## document changes nothing, and a part whose tree is not an element
+	## keeps its tree.
+	with_children_added : Document, Str, List(XmlTree.Node), List(Opc.Relationship) -> Document
+	with_children_added = |document, name, nodes, relationships| {
+		{ pkg, graph, trees, body } = document
+		if !trees.contains(name) {
+			return { pkg, graph, trees, body }
+		}
+		{ pkg, graph: { relationships: graph.relationships, parts: related_by(graph.parts, name, |_| relationships) }, trees: trees.update(name, |slot| slot.map_ok(|tree| children_added(tree, nodes))), body }
 	}
 
 	## The document with `blocks` as the body of its main document part,
@@ -885,6 +904,20 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 			Ok(main) => { pkg: document.pkg, graph: document.graph, trees: document.trees, body: Blocks({ part: main.name, body: { blocks, diagnostics: [] } }) }
 			Err(NotFound) => document
 		}
+
+	## The document with its body as `change` makes it from the blocks
+	## [Document.body] holds, as [Document.with_body] sets them. The blocks
+	## are changed in place when nothing else holds the document, so a body
+	## built a few blocks at a time costs what its blocks cost. A document
+	## whose main document part's tree holds its body is returned as it is.
+	map_body : Document, (List(Block) -> List(Block)) -> Document
+	map_body = |document, change| {
+		{ pkg, graph, trees, body } = document
+		match body {
+			Blocks({ part, body: read }) => { pkg, graph, trees, body: Blocks({ part, body: { blocks: change(read.blocks), diagnostics: [] } }) }
+			Whole => { pkg, graph, trees, body: Whole }
+		}
+	}
 
 	## A document built rather than read: the parts and relationships of
 	## `graph`, each part holding its tree in `trees`, and `blocks` the body
@@ -1589,6 +1622,30 @@ dropped_diagnostics = |part, kept| List.concat(kept.dropped.map(|entry| Dropped(
 # `_GoBack` bookmarks' identifiers, the depth of the element being read and
 # that of the dropped element whose content is being passed over, if any.
 Scanning(p) : { inner : p, go_back : List(Str), depth : U64, skip : U64 }
+
+# A tree with `nodes` after its root's children; text stays as it is.
+children_added : XmlTree.Node, List(XmlTree.Node) -> XmlTree.Node
+children_added = |tree, nodes|
+	match tree {
+		Element(root) => Element({ name: root.name, bindings: root.bindings, attributes: root.attributes, children: List.concat(root.children, nodes) })
+		Text(_) => tree
+	}
+
+# The parts with the relationships of the part named `name` as `change`
+# makes them from its own; parts without that name stay as they are. The
+# part is taken out of the list while it changes, so when nothing else
+# holds the list, neither it nor the part's relationships are copied.
+related_by : List(Opc.GraphPart), Str, (List(Opc.Relationship) -> List(Opc.Relationship)) -> List(Opc.GraphPart)
+related_by = |parts, name, change|
+	match parts.find_first_index(|part| part.name == name) {
+		Ok(index) =>
+			match List.replace(parts, index, { name: "", content_type: "", relationships: [] }) {
+				Ok({ list, prev }) => List.set(list, index, { name: prev.name, content_type: prev.content_type, relationships: change(prev.relationships) }) ?? []
+				Err(_) => []
+			}
+
+		Err(_) => parts
+	}
 
 # A main document read as `reader` reads its body: the part's tree without
 # the body's content, the body, and what the part lost, by kind, and its

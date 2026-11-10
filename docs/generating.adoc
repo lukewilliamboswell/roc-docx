@@ -47,7 +47,10 @@ include::../tests/manual.roc[tag=build,indent=0]
 
 `Build.append` adds blocks at the end of the body, before the end of its
 final section; the one empty paragraph of a new document gives way to the
-first blocks appended.
+first blocks appended. It extends the body in place while nothing else
+holds the document, as `Build.page_setup` and `Build.new_section` change
+it, so a long document can be built a paragraph at a time: keep only the
+document each call returns.
 
 `Build.paragraph` sets a paragraph's `style`, the normal style by default, a
 heading's with `Heading(1)` to `Heading(6)` or any style by its identifier

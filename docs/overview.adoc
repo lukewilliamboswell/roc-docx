@@ -37,7 +37,7 @@ bytes.
 
 The package is not yet released. Reading a document, keeping what it does
 not model, writing it back valid, its comments and its tracked changes are
-established on the whole fixture corpus by that evidence. New documents
-work as their chapter and its examples show and are checked by the same
-oracles; generating documents is claimed once the builders' allocation
-ceilings are in place.
+established on the whole fixture corpus by that evidence, and so is
+generating new documents, which the same oracles check and whose builders
+cost a constant number of allocations a call however long the document
+grows.
