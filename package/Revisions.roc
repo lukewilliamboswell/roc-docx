@@ -74,7 +74,7 @@ Revisions :: [].{
 	## cell's insertion, deletion or merge and its formatting before its
 	## content.
 	list : List(Document.Block) -> List(Listed)
-	list = |blocks| blocks.fold({ listed: List.with_capacity(16), sources: [], destinations: [], previous: Err(NoChange) }, list_block).listed
+	list = |blocks| blocks.fold({ listed: List.with_capacity(blocks.fold(0, block_changes)), sources: [], destinations: [], previous: Err(NoChange) }, list_block).listed
 
 	## A paragraph's text in a view. The current and final text are the
 	## current text of [Document.paragraph_text]; the original text has
@@ -482,6 +482,67 @@ list_content = |walk, content| {
 	{ ..$walk, previous: $previous }
 }
 
+# How many changes [Revisions.list] lists in a block, added to a count, so
+# its list is made at its size and never grows.
+block_changes : U64, Document.Block -> U64
+block_changes = |count, block|
+	match block {
+		Paragraph(paragraph) => paragraph.content.fold(count + paragraph.properties.change.len() + paragraph.properties.mark.len(), inline_changes)
+		Table(table) => table.content.fold(count + table.properties.change.len(), table_changes)
+		Container({ element: _, content }) => content.fold(count, block_changes)
+		Section(section) => count + section.change.len()
+		CommentStart(_) => count
+		CommentEnd(_) => count
+		Preserved(_) => count
+	}
+
+table_changes : U64, Document.TableContent -> U64
+table_changes = |count, content|
+	match content {
+		Row(row) => row.content.fold(count + structure_made(row.properties.inserted) + structure_made(row.properties.deleted) + row.properties.change.len(), row_changes)
+
+		Container({ element: _, content: inner }) => inner.fold(count, table_changes)
+		CommentStart(_) => count
+		CommentEnd(_) => count
+		Preserved(_) => count
+	}
+
+# One for a tracked insertion or deletion of structure that was made.
+structure_made : Document.Tracked -> U64
+structure_made = |change|
+	match change {
+		Tracked(_) => 1
+		Unset => 0
+	}
+
+row_changes : U64, Document.RowContent -> U64
+row_changes = |count, content|
+	match content {
+		Cell(cell) => {
+			revised = match cell.properties.revision {
+				Unset => 0
+				_ => 1
+			}
+			cell.content.fold(count + revised + cell.properties.change.len(), block_changes)
+		}
+
+		Container({ element: _, content: inner }) => inner.fold(count, row_changes)
+		CommentStart(_) => count
+		CommentEnd(_) => count
+		Preserved(_) => count
+	}
+
+inline_changes : U64, Document.Inline -> U64
+inline_changes = |count, inline|
+	match inline {
+		Revision(revision) => revision.content.fold(count + 1, inline_changes)
+		Run(run) => if (run.properties.change.is_empty()) count else count + 1
+		Hyperlink({ target: _, preserved: _, content }) => content.fold(count, inline_changes)
+		SimpleField({ code: _, preserved: _, content }) => content.fold(count, inline_changes)
+		Container({ element: _, content }) => content.fold(count, inline_changes)
+		_ => count
+	}
+
 innermost : List(Str) -> [Unpaired, Move(Str)]
 innermost = |names|
 	match names.last() {
@@ -653,6 +714,13 @@ resolve = |blocks, action, selection| {
 	Ok(resolved_with(blocks, action, chosen))
 }
 
+# The state a loop over blocks or inlines carries, made by a record update
+# rather than taken as the parameter is: a loop that carries a parameter
+# as it is copies the sets of move ranges at every change it records, which
+# made resolving quadratic in a document's moves.
+owned : Resolving -> Resolving
+owned = |state| { ..state, next: state.next }
+
 # Blocks with the chosen changes resolved.
 resolved_with : List(Document.Block), [Accept, Reject], Chosen -> List(Document.Block)
 resolved_with = |blocks, action, chosen| {
@@ -762,7 +830,7 @@ carry_out = |blocks, carried|
 # a table takes it as it is.
 resolve_blocks : List(Document.Block), Resolving, [Nothing, Carried(Document.Paragraph)], Bool -> Resolved
 resolve_blocks = |blocks, state, carried, body| {
-	var $state = state
+	var $state = owned(state)
 	var $carried = carried
 	var $out = List.with_capacity(blocks.len())
 	var $index = 0.U64
@@ -852,7 +920,7 @@ resolve_paragraph = |paragraph, state| {
 
 resolve_inlines : List(Document.Inline), Resolving -> { inlines : List(Document.Inline), state : Resolving }
 resolve_inlines = |inlines, state| {
-	var $state = state
+	var $state = owned(state)
 	var $out = List.with_capacity(inlines.len())
 	for inline in inlines {
 		match inline {
@@ -983,7 +1051,7 @@ resolve_table = |table, state| {
 
 resolve_table_content : List(Document.TableContent), Resolving -> { content : List(Document.TableContent), state : Resolving }
 resolve_table_content = |items, state| {
-	var $state = state
+	var $state = owned(state)
 	var $out = List.with_capacity(items.len())
 	for item in items {
 		match item {
@@ -1023,7 +1091,7 @@ resolve_table_content = |items, state| {
 
 resolve_row_content : List(Document.RowContent), Resolving -> { content : List(Document.RowContent), state : Resolving }
 resolve_row_content = |items, state| {
-	var $state = state
+	var $state = owned(state)
 	var $out = List.with_capacity(items.len())
 	for item in items {
 		match item {
