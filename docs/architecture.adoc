@@ -239,7 +239,7 @@ The same `Document` therefore produces the same bytes on every host, which the t
 
 == Resource bounds and security
 
-Documents are untrusted input. The reader enforces caps on compressed size, uncompressed size per entry and in total, entry count, part name length, XML nesting depth, element count and attribute count, each returning a named limit error. Defaults are generous for business documents and adjustable through parse options with an explicit upper bound. Relationship targets are resolved within the package; a target that escapes the package root is an error. No content is ever interpreted as a path on the host, a URL to fetch or code to run.
+Documents are untrusted input. The reader enforces caps on compressed size, uncompressed size per entry and in total, entry count, part name length, XML nesting depth, element count and attribute count, each returning a named limit error. Defaults are generous for business documents and adjustable through parse options; the value a caller gives is the bound, with no cap above it, so a caller that raises a limit for documents it trusts owns that choice. Relationship targets are resolved within the package; a target that escapes the package root is an error. No content is ever interpreted as a path on the host, a URL to fetch or code to run.
 
 Fuzz targets replay these guarantees continuously; the never-crash target is the first target every slice keeps green.
 
@@ -375,7 +375,9 @@ Formatting, fixture regeneration and schema validation are mechanical checks of 
 [source,text]
 ----
 package/main.roc        package root: the public module list and dependencies
+package/Build.roc       builders: paragraphs, runs, lists, tables, notes, headers, sections
 package/Docx.roc        facade: parse, write, query, edit, author
+package/Kit.roc         the default document kit a new document starts from
 package/Document.roc    the typed model and its equivalence
 package/Styles.roc      style table and effective-property resolution
 package/Numbering.roc   numbering definitions and list membership
@@ -388,10 +390,10 @@ package/Mce.roc         markup compatibility processing
 package/WmlRead.roc     XML trees to model
 package/WmlWrite.roc    model to XML trees, canonical order, identifiers
 package/Limits.roc      resource bounds and limit errors
-package/Error.roc       the error and diagnostic vocabulary
+package/Lenient.roc     values real producers write outside the schema, and their repairs
 ----
 
-Dependencies point downward only: the facade depends on the model and the readers and writers; readers and writers depend on OPC, XML and MCE; nothing below the model knows WordprocessingML. Fuzz targets, examples, tests and scripts live outside `package/` so the bundle contains only what a user needs.
+Dependencies point downward only: the builders depend on the facade; the facade depends on the model, the kit and the readers and writers; readers and writers depend on OPC, XML and MCE; nothing below the model knows WordprocessingML. There is no shared error module: each module declares the error and diagnostic tags it raises, with payloads that carry the facts, and the unions merge through `?` at each call, so a caller's error type names exactly what can reach it. Fuzz targets, examples, tests and scripts live outside `package/` so the bundle contains only what a user needs.
 
 == Dependencies
 
