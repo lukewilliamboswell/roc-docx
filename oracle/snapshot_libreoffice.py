@@ -17,6 +17,11 @@ Rules this adapter applies, each because of how LibreOffice represents a documen
 - Deleted text lives in the tracked-changes table, not in the body; the body
   holds a marker where it was. Inserted and format-changed text is in the
   body between start and end markers.
+- LibreOffice 24.2 writes a deletion the other way: the table's entry holds
+  no content and the deleted content stays in the body between start and end
+  markers. That content is the change's text and not the body's, and a
+  paragraph whose mark lies between the markers joins the next, as it does
+  where the deletion is in the table.
 - Dates without a zone are UTC: LibreOffice drops the `Z` of the document's
   dates on import and writes it back on export.
 - Comments that start at one position, such as a comment and its replies,
@@ -219,6 +224,8 @@ class Document:
         self.revision_index = {}
         self.open_comments = {}
         self.open_revisions = []
+        self.open_deletions = {}
+        self.joined = None
         self.runs = None
         self.after_space = True
         self.anchored = False
@@ -229,8 +236,13 @@ class Document:
         self.comment_parents = []
 
     # Text reaches the current paragraph, every open comment anchor and every open revision.
+    # Text inside a deletion marked in the body reaches only that deletion's current paragraph.
     def emit(self, text, formatting):
         if not text:
+            return
+        if self.open_deletions:
+            for pieces in self.open_deletions.values():
+                pieces[-1] += text
             return
         self.position += len(text)
         for index in self.open_comments.values():
@@ -251,10 +263,20 @@ class Document:
 
     def paragraph(self, element, kind, level, list_kind):
         outer = (self.runs, self.anchored, self.after_space)
-        self.runs, self.anchored, self.after_space = [], False, True
+        joined, self.joined = self.joined, None
+        if joined is None:
+            self.runs, self.anchored = [], False
+        else:
+            self.runs, self.anchored, kind, level, list_kind = joined
+        self.after_space = True
         self.inlines(element, dict(PLAIN))
         runs, anchored = self.runs, self.anchored
         self.runs, self.anchored, self.after_space = outer
+        if self.open_deletions:
+            for pieces in self.open_deletions.values():
+                pieces.append("")
+            self.joined = (runs, anchored, kind, level, list_kind)
+            return
         text = "".join(run["text"] for run in runs)
         self.position += 1
         for index in self.open_comments.values():
@@ -321,12 +343,18 @@ class Document:
             self.revision(child.get(q("text:change-id")))
         elif ns == NS["text"] and name == "change-start":
             self.anchored = True
-            self.open_revisions.append(self.revision(child.get(q("text:change-id"))))
+            index = self.revision(child.get(q("text:change-id")))
+            if self.revisions[index]["kind"] == "deletion":
+                self.open_deletions[index] = [""]
+            else:
+                self.open_revisions.append(index)
         elif ns == NS["text"] and name == "change-end":
             self.anchored = True
             index = self.revision(child.get(q("text:change-id")))
             if index in self.open_revisions:
                 self.open_revisions.remove(index)
+            if index in self.open_deletions:
+                self.revisions[index]["text"] = "\n".join(piece for piece in self.open_deletions.pop(index) if piece)
         elif ns == NS["text"] and name in FIELDS:
             self.inlines(child, formatting)
         elif ns == NS["text"] and name in SILENT:
@@ -343,11 +371,13 @@ class Document:
 
     def detached_paragraphs(self, container):
         """The texts of the paragraphs inside a note, comment or deletion, in order."""
-        saved = (self.blocks, self.open_comments, self.open_revisions, self.position)
-        self.blocks, self.open_comments, self.open_revisions = [], {}, []
+        saved = (self.blocks, self.open_comments, self.open_revisions, self.open_deletions, self.joined, self.position)
+        self.blocks, self.open_comments, self.open_revisions, self.open_deletions, self.joined = [], {}, [], {}, None
         self.body(container, list_kind="", depth=0, list_style=None)
+        if self.open_deletions or self.joined is not None:
+            raise Unsupported(f"deletion open at the end of {container.tag}")
         blocks = self.blocks
-        self.blocks, self.open_comments, self.open_revisions, self.position = saved
+        self.blocks, self.open_comments, self.open_revisions, self.open_deletions, self.joined, self.position = saved
         if any(block["kind"] == "table" for block in blocks):
             raise Unsupported(f"table inside {container.tag}")
         return [block["text"] for block in blocks]
@@ -360,6 +390,8 @@ class Document:
         name = local(element.tag)
         ns = namespace(element.tag)
         kind = "list_item" if depth else "paragraph"
+        if self.joined is not None and (ns, name) not in ((NS["text"], "p"), (NS["text"], "h"), (NS["text"], "list")):
+            raise Unsupported(f"deleted paragraph mark before {element.tag}")
         if ns == NS["text"] and name == "p":
             self.page_style(element)
             self.paragraph(element, kind, depth, list_kind)
@@ -483,6 +515,8 @@ class Document:
         text = self.root.find(q("office:body")).find(q("office:text"))
         self.top_blocks = self.blocks
         self.body(text, "", 0, None)
+        if self.open_deletions or self.joined is not None:
+            raise Unsupported("deletion open at the end of the document")
         if not self.sections:
             self.sections.append(self.section("Standard"))
         self.join_threads()

@@ -56,10 +56,10 @@
       "oracle": "libreoffice",
       "document": "*/word/report.docx",
       "key": "sections.footer*",
-      "message_pattern": "^\"Page 2 of 2\" against \"Page 1 of 2\"$",
-      "cause": "Both sections' footers hold a PAGE field whose result Word last calculated as 1. The package never evaluates fields and reports that result; LibreOffice recalculates PAGE on import, and its Flat ODT export gives each page style's footer the number of the first page in that style, 2 for the second section. A page number in a footer is a different value on every page, not a fact of the footer, so the same holds for the footer the section's even and first pages show, which is the default footer in this document. The review cases write the fixture with comments added as .roc-docx/review/word/report.docx, whose footers are the same.",
-      "reference": "https://docs.oasis-open.org/office/OpenDocument/v1.3/os/part3-schema/OpenDocument-v1.3-os-part3-schema.html#element-text_page-number (text:page-number displays the current page number)",
-      "reviewed_on": "2026-11-09"
+      "message_pattern": "^\"Page [12] of [23]\" against \"Page 1 of 2\"$",
+      "cause": "Both sections' footers hold a PAGE and a NUMPAGES field whose results Word last calculated as 1 and 2. The package never evaluates fields and reports those results; LibreOffice recalculates both on import, and its Flat ODT export gives each page style's footer the number of the first page in that style, 2 for the second section, and the page count of its own layout. The document is set in Aptos, which no freely available font matches in metrics, so the count depends on the font the host substitutes: 2 pages on macOS, 3 on Ubuntu 24.04 with only the fonts libreoffice-writer brings, where the wider DejaVu Sans stands in. A page number in a footer is a different value on every page and a page count a value of one layout, not facts of the footer, so the same holds for the footer the section's even and first pages show, which is the default footer in this document. The review cases write the fixture with comments added as .roc-docx/review/word/report.docx, whose footers are the same.",
+      "reference": "https://docs.oasis-open.org/office/OpenDocument/v1.3/os/part3-schema/OpenDocument-v1.3-os-part3-schema.html#element-text_page-number (text:page-number displays the current page number) and #element-text_page-count (text:page-count displays the number of pages in the document)",
+      "reviewed_on": "2026-11-10"
     },
     {
       "oracle": "libreoffice",
@@ -77,6 +77,15 @@
       "message_pattern": "^\"Page [12] of 2\" against \"Page 1 of 1\"$",
       "cause": "The report example's footer holds a PAGE and a NUMPAGES field, which the builders write with the result 1, because the package lays out no pages. The report has two pages, the second a landscape section after a section break showing the first section's footer. LibreOffice recalculates both fields on import, and its Flat ODT export gives each page style's footer the number of the first page in that style and the page count, 2. As for word/report.docx, a page number in a footer is a value of each page, not a fact of the footer, and so of the footer its even and first pages show, which is the default one.",
       "reference": "https://docs.oasis-open.org/office/OpenDocument/v1.3/os/part3-schema/OpenDocument-v1.3-os-part3-schema.html#element-text_page-count (text:page-count displays the number of pages in the document)",
+      "reviewed_on": "2026-11-10"
+    },
+    {
+      "oracle": "libreoffice",
+      "document": "tests/fixtures/gdocs/resume.docx",
+      "key": "sections.margin_*",
+      "message_pattern": "^863 against 864$",
+      "cause": "Google Docs writes the section's bottom, left and right page margins as 863.9999999999999 twips, 0.6 inch less a rounding error, where the schema allows only whole numbers. LibreOffice 24.2 converts a measure without a unit to a whole number by truncating it, to 863; LibreOffice 26.2 rounds it to the nearest, 864, as the package does. The passed-through document holds the whole number 864, so LibreOffice 24.2's reading of the original differs from its reading of that document by the same twip.",
+      "reference": "https://github.com/LibreOffice/core/blob/libreoffice-24.2.7.2/writerfilter/source/ooxml/OOXMLPropertySet.cxx (OOXMLUniversalMeasureValue: static_cast<int>(val)); rounded with std::round in https://github.com/LibreOffice/core/blob/libreoffice-26.2.3.2/sw/source/writerfilter/ooxml/OOXMLPropertySet.cxx (OOXMLValue::createUniversalMeasure)",
       "reviewed_on": "2026-11-10"
     },
     {
