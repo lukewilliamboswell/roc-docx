@@ -39,3 +39,5 @@ main! = |args| {
 	}
 	Ok({})
 }
+
+badly_formatted   =    1
