@@ -1,9 +1,10 @@
 = Read and write the parts of a document
 
 This chapter opens a `.docx`, lists the parts inside it and writes them to a
-new package. It needs a Roc nightly on your `PATH` as `roc`. Until the first
-release, an application depends on the package by relative path from a
-checkout of the repository.
+new package. It needs a Roc nightly on your `PATH` as `roc`. The
+https://lukewilliamboswell.github.io/roc-docx/[documentation site]
+gives the latest release's package URL. The examples in this chapter run
+from a checkout and depend on its package by relative path.
 
 == What a document is made of
 

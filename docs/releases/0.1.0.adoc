@@ -1,0 +1,35 @@
+= roc-docx 0.1.0
+
+The first final release of roc-docx reads and writes Word documents in pure
+Roc, including comments and tracked changes. It is tested with Roc
+`nightly-2026-11-10-f7d1f19`.
+
+== Use this release
+
+[source,roc]
+----
+app [main!] {
+	docx: "{package-url}",
+}
+----
+
+== What it does
+
+* Reads documents from Word, LibreOffice, Google Docs and pandoc within
+  resource limits, preserving content outside its model when writing them
+  back.
+* Reads text, formatting, styles, lists, tables, links, notes, fields,
+  pictures, sections, headers, footers and document properties.
+* Reads, adds, replies to, resolves and removes threaded comments.
+* Reads, accepts and rejects tracked changes, and edits text, paragraphs
+  and tables silently or as tracked changes.
+* Writes the modelled parts as canonical, schema-valid XML.
+* Generates documents with headings, lists, tables, links, footnotes,
+  headers, footers and sections.
+
+The
+https://lukewilliamboswell.github.io/roc-docx/[manual and API reference]
+describe the supported content, resource limits and diagnostics. Independent
+schema, pandoc and LibreOffice checks cover the fixture corpus and generated
+documents; the repository's fuzz targets check round trips and allocation
+ceilings.
