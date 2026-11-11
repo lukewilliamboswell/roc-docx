@@ -1,6 +1,6 @@
 app [target] {
 	docx: "../../package/main.roc",
-	fuzz: platform "https://github.com/lukewilliamboswell/roc-fuzz/releases/download/0.5.0/9WT86CuwM7ZJBSs8iTd1jLyrUFTTiGp5hcJE63TwswGE.tar.zst",
+	fuzz: platform "https://github.com/lukewilliamboswell/roc-fuzz/releases/download/0.6.0/6uc3YKGydgEnS2nrCimSYWDNfT6drYcgU52VAwqrb6DS.tar.zst",
 }
 
 import fuzz.Fuzz
@@ -168,25 +168,25 @@ concatenated = |document, options| {
 	Ok($out)
 }
 
-# Measured on nightly-2026-11-07: `to_chunks` and every `next_chunk` of the
-# declared bodies, of 711 and 11,331 nodes, take 7,515 and 107,957
-# allocations, 10.6 and 9.5 a node, and hold 897,503 and 6,089,579 bytes
-# live, a DEFLATE compressor's state and 845 and 511 bytes a node: the
-# document as written, the part being rendered and its chunk. The exact
-# ceilings are those counts; the linear ones leave generated bodies, denser
-# in attributes, three times the declared bodies' share a node.
+# Exact chunk-writing ceilings measured on nightly-2026-11-10-f7d1f19
+# with roc-fuzz 0.6.0. The declared bodies have 711 and 11,331 nodes.
+# Other generated bodies use the linear bound below; the memory bound
+# covers the document, current part, current chunk and compressor state.
 chunk_allocation_ceiling : List(U8), U64 -> U64
 chunk_allocation_ceiling = |program, nodes|
 	if program == small_program {
-		7_515
+		7_494
 	} else if program == large_program {
-		107_957
+		107_932
 	} else {
 		2_048 + 32 * nodes
 	}
 
 chunk_memory_ceiling : U64 -> U64
-chunk_memory_ceiling = |nodes| 524_288 + 2_560 * nodes
+# Smallest uses the DEFLATE level-12 tables, whose fixed state alone is
+# 512 KiB. Allow another 64 KiB for the fixed document parts and archive
+# metadata, including when the generated main body is empty.
+chunk_memory_ceiling = |nodes| 589_824 + 2_560 * nodes
 
 # Writing allocates at most linearly in the written tree's nodes and
 # attributes, and the bytes it holds live beyond the body grow at most
@@ -220,13 +220,13 @@ linear_memory_ceiling : U64 -> U64
 linear_memory_ceiling = |nodes| 16_384 + 512 * nodes
 
 # Exact ceilings: the allocations and reallocations of writing each declared
-# body, as measured on nightly-2026-11-07 when the ceiling was set.
+# body, measured on nightly-2026-11-10-f7d1f19 with roc-fuzz 0.6.0.
 exact_ceiling : List(U8) -> Try(U64, [NotDeclared])
 exact_ceiling = |program|
 	if program == small_program {
-		Ok(965)
+		Ok(967)
 	} else if program == large_program {
-		Ok(15_189)
+		Ok(15_191)
 	} else {
 		Err(NotDeclared)
 	}
@@ -474,6 +474,7 @@ tracked_table = |variant| {
 target = Fuzz.target_with!({
 	name: "document-roundtrip",
 	examples: [
+		Fuzz.example({ name: "smallest-empty-body", revision: "1", make: || [2] }),
 		Fuzz.example({ name: "small-body", revision: "1", make: || small_program }),
 		Fuzz.example({ name: "large-body", revision: "1", make: || large_program }),
 	],

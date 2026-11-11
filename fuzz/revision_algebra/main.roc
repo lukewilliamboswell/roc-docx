@@ -1,6 +1,6 @@
 app [target] {
 	docx: "../../package/main.roc",
-	fuzz: platform "https://github.com/lukewilliamboswell/roc-fuzz/releases/download/0.5.0/9WT86CuwM7ZJBSs8iTd1jLyrUFTTiGp5hcJE63TwswGE.tar.zst",
+	fuzz: platform "https://github.com/lukewilliamboswell/roc-fuzz/releases/download/0.6.0/6uc3YKGydgEnS2nrCimSYWDNfT6drYcgU52VAwqrb6DS.tar.zst",
 }
 
 import fuzz.Fuzz
@@ -356,18 +356,17 @@ linear_memory_ceiling = |region, length|
 	}
 
 # Exact ceilings: the allocations and reallocations of each region of each
-# declared program, as measured on nightly-2026-11-07 when the ceiling was
-# set.
+# declared program, measured on nightly-2026-11-10-f7d1f19 with roc-fuzz 0.6.0.
 exact_ceilings : List(U8) -> Try(List((Str, U64)), [NotDeclared])
 exact_ceilings = |program|
 	if program == small_program {
-		Ok([("revisions-text", 2), ("docx-revisions", 77), ("docx-accept-all", 642), ("docx-reject-all", 586), ("docx-accept", 834), ("docx-reject", 840), ("docx-replace-text", 782), ("docx-insert-text", 776), ("docx-delete-text", 767), ("docx-insert-blocks", 417), ("docx-delete-blocks", 410)])
+		Ok([("revisions-text", 4), ("docx-revisions", 77), ("docx-accept-all", 641), ("docx-reject-all", 585), ("docx-accept", 833), ("docx-reject", 837), ("docx-replace-text", 764), ("docx-insert-text", 758), ("docx-delete-text", 749), ("docx-insert-blocks", 416), ("docx-delete-blocks", 406)])
 	} else if program == large_program {
-		Ok([("revisions-text", 4), ("docx-revisions", 1217), ("docx-accept-all", 9830), ("docx-reject-all", 8934), ("docx-accept", 12_798), ("docx-reject", 12_968), ("docx-replace-text", 11_769), ("docx-insert-text", 11_763), ("docx-delete-text", 11_754), ("docx-insert-blocks", 5937), ("docx-delete-blocks", 5930)])
+		Ok([("revisions-text", 12), ("docx-revisions", 1_217), ("docx-accept-all", 9_829), ("docx-reject-all", 8_933), ("docx-accept", 12_797), ("docx-reject", 12_965), ("docx-replace-text", 11_511), ("docx-insert-text", 11_505), ("docx-delete-text", 11_496), ("docx-insert-blocks", 5_936), ("docx-delete-blocks", 5_926)])
 	} else if program == few_changes {
-		Ok([("revisions-text", 2), ("docx-revisions", 31), ("docx-accept-all", 286), ("docx-reject-all", 282), ("docx-accept", 395), ("docx-reject", 386), ("docx-replace-text", 383), ("docx-insert-text", 377), ("docx-delete-text", 368), ("docx-insert-blocks", 228), ("docx-delete-blocks", 221)])
+		Ok([("revisions-text", 2), ("docx-revisions", 31), ("docx-accept-all", 285), ("docx-reject-all", 281), ("docx-accept", 394), ("docx-reject", 383), ("docx-replace-text", 377), ("docx-insert-text", 371), ("docx-delete-text", 362), ("docx-insert-blocks", 227), ("docx-delete-blocks", 217)])
 	} else if program == many_changes {
-		Ok([("revisions-text", 2), ("docx-revisions", 481), ("docx-accept-all", 4162), ("docx-reject-all", 4098), ("docx-accept", 5854), ("docx-reject", 5710), ("docx-replace-text", 5399), ("docx-insert-text", 5393), ("docx-delete-text", 5384), ("docx-insert-blocks", 2913), ("docx-delete-blocks", 2906)])
+		Ok([("revisions-text", 8), ("docx-revisions", 481), ("docx-accept-all", 4_161), ("docx-reject-all", 4_097), ("docx-accept", 5_853), ("docx-reject", 5_707), ("docx-replace-text", 5_333), ("docx-insert-text", 5_327), ("docx-delete-text", 5_318), ("docx-insert-blocks", 2_912), ("docx-delete-blocks", 2_902)])
 	} else {
 		Err(NotDeclared)
 	}
@@ -383,20 +382,12 @@ small_of = |program|
 		Err(NotAPair)
 	}
 
-# How many times its small example's bytes requested and held live a large
-# example may take: eighteen, the sixteen of the count and a margin of an
-# eighth, as `fuzz/comment_anchors` allows, since the sets, dictionaries and
-# lists that grow by doubling make an item's bytes rise and fall as counts
-# cross their capacities. The text edits take the most, 16.5 times
-# requested and 16.7 held, and that is growth, not copying: from 4 to 200
-# units of the program they request 69.5 to 74.5 KB a unit, rising and
-# falling without a trend, and hold 21.4 to 23.1 KB. The list of changes is
-# made at the size a count of them gives, so `docx-revisions` takes 16.0,
-# and accepting and rejecting, whose loops own the state they carry, at
-# most 15.8. Seventeen would leave the text edits under 2% margin. A
-# quadratic step costs sixteen times more again.
+# The large program repeats the small one sixteen times. On
+# nightly-2026-11-10-f7d1f19 the text region requests 8,160 bytes against
+# 416 for the small input, a ratio of 19.62, as string growth crosses
+# allocation capacities. Twenty allows this measured linear growth.
 byte_ratio : U64
-byte_ratio = 18
+byte_ratio = 20
 
 # The small and large declared programs repeat one program, the large one
 # sixteen times as often. Each declared program begins with a plain
