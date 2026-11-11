@@ -1,6 +1,6 @@
 app [target] {
 	docx: "../../package/main.roc",
-	fuzz: platform "https://github.com/lukewilliamboswell/roc-fuzz/releases/download/0.5.0/9WT86CuwM7ZJBSs8iTd1jLyrUFTTiGp5hcJE63TwswGE.tar.zst",
+	fuzz: platform "https://github.com/lukewilliamboswell/roc-fuzz/releases/download/0.6.0/6uc3YKGydgEnS2nrCimSYWDNfT6drYcgU52VAwqrb6DS.tar.zst",
 	parser: "https://github.com/lukewilliamboswell/roc-parser/releases/download/6.0.0-rc.1/73WRCGdN4doPdfzqKAHBkwKQksAxmtoAr4Fu3dzDMvTC.tar.zst",
 	zip: "https://github.com/lukewilliamboswell/roc-zip/releases/download/0.3.0-rc1/3vvx2cPVp1vjjVgrXcugJqqfrp55ZrURYQUcSArAUHdr.tar.zst",
 }
@@ -146,26 +146,17 @@ inflated = |bytes|
 		Err(_) => 0
 	}
 
-# Exact ceilings: the allocations and reallocations of checking each
-# declared example, as measured on nightly-2026-11-07 when the ceiling was
-# set. Writing comments from their threads gives each comment's last
-# paragraph an identifier in Word's `w14` namespace, declared ignorable on
-# the comments part, which the check reads: 15 more for the generated
-# examples, 18 for pandoc's comments and 15 for its review; the Word
-# comments and Google Docs documents lost the identifiers on every other
-# paragraph and fell by 19 and 6. The new document from the default
-# document kit takes 2,028 and the document made by every builder
-# 2,777, and the document whose odd, even and first pages have
-# their own headers and footers 2,583, each set when it was declared.
+# Exact allocation ceilings measured on nightly-2026-11-10-f7d1f19
+# with roc-fuzz 0.6.0 for each declared generated document and fixture.
 exact_ceiling : Input -> Try(U64, [NotDeclared])
 exact_ceiling = |input|
 	match input {
-		Generated(program) if program == small_program => Ok(1_348)
-		Generated(program) if program == large_program => Ok(9_117)
+		Generated(program) if program == small_program => Ok(1_352)
+		Generated(program) if program == large_program => Ok(9_121)
 		Fixture(index) => fixtures.get(index).map_ok(|fixture| fixture.allocations).map_err(|_| NotDeclared)
-		New => Ok(2_028)
-		Built => Ok(2_777)
-		Paged => Ok(2_583)
+		New => Ok(2_031)
+		Built => Ok(2_781)
+		Paged => Ok(2_587)
 		_ => Err(NotDeclared)
 	}
 
@@ -256,26 +247,26 @@ paged_document = {
 
 fixtures : List({ name : Str, bytes : List(U8), allocations : U64 })
 fixtures = [
-	{ name: "gdocs-resume", bytes: gdocs_resume, allocations: 8_378 },
-	{ name: "libreoffice-basics", bytes: libreoffice_basics, allocations: 5_397 },
-	{ name: "libreoffice-comments", bytes: libreoffice_comments, allocations: 5_322 },
-	{ name: "libreoffice-lists", bytes: libreoffice_lists, allocations: 8_106 },
-	{ name: "libreoffice-notes", bytes: libreoffice_notes, allocations: 5_345 },
-	{ name: "libreoffice-review", bytes: libreoffice_review, allocations: 7_182 },
-	{ name: "libreoffice-revisions", bytes: libreoffice_revisions, allocations: 5_114 },
-	{ name: "libreoffice-tables", bytes: libreoffice_tables, allocations: 7_848 },
-	{ name: "pandoc-basics", bytes: pandoc_basics, allocations: 6_274 },
-	{ name: "pandoc-comments", bytes: pandoc_comments, allocations: 6_101 },
-	{ name: "pandoc-lists", bytes: pandoc_lists, allocations: 7_034 },
-	{ name: "pandoc-notes", bytes: pandoc_notes, allocations: 5_962 },
-	{ name: "pandoc-review", bytes: pandoc_review, allocations: 6_764 },
-	{ name: "pandoc-revisions", bytes: pandoc_revisions, allocations: 5_954 },
-	{ name: "pandoc-tables", bytes: pandoc_tables, allocations: 6_425 },
-	{ name: "word-comments", bytes: word_comments, allocations: 6_556 },
-	{ name: "word-pages", bytes: word_pages, allocations: 6_926 },
-	{ name: "word-report", bytes: word_report, allocations: 7_432 },
-	{ name: "word-revisions", bytes: word_revisions, allocations: 6_814 },
-	{ name: "word-tables", bytes: word_tables, allocations: 6_057 },
+	{ name: "gdocs-resume", bytes: gdocs_resume, allocations: 8_382 },
+	{ name: "libreoffice-basics", bytes: libreoffice_basics, allocations: 5_403 },
+	{ name: "libreoffice-comments", bytes: libreoffice_comments, allocations: 5_328 },
+	{ name: "libreoffice-lists", bytes: libreoffice_lists, allocations: 8_112 },
+	{ name: "libreoffice-notes", bytes: libreoffice_notes, allocations: 5_351 },
+	{ name: "libreoffice-review", bytes: libreoffice_review, allocations: 7_188 },
+	{ name: "libreoffice-revisions", bytes: libreoffice_revisions, allocations: 5_119 },
+	{ name: "libreoffice-tables", bytes: libreoffice_tables, allocations: 7_853 },
+	{ name: "pandoc-basics", bytes: pandoc_basics, allocations: 6_280 },
+	{ name: "pandoc-comments", bytes: pandoc_comments, allocations: 6_106 },
+	{ name: "pandoc-lists", bytes: pandoc_lists, allocations: 7_039 },
+	{ name: "pandoc-notes", bytes: pandoc_notes, allocations: 5_967 },
+	{ name: "pandoc-review", bytes: pandoc_review, allocations: 6_769 },
+	{ name: "pandoc-revisions", bytes: pandoc_revisions, allocations: 5_959 },
+	{ name: "pandoc-tables", bytes: pandoc_tables, allocations: 6_430 },
+	{ name: "word-comments", bytes: word_comments, allocations: 6_562 },
+	{ name: "word-pages", bytes: word_pages, allocations: 6_932 },
+	{ name: "word-report", bytes: word_report, allocations: 7_439 },
+	{ name: "word-revisions", bytes: word_revisions, allocations: 6_820 },
+	{ name: "word-tables", bytes: word_tables, allocations: 6_063 },
 ]
 
 # ---- The check ----------------------------------------------------------

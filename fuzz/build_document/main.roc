@@ -1,6 +1,6 @@
 app [target] {
 	docx: "../../package/main.roc",
-	fuzz: platform "https://github.com/lukewilliamboswell/roc-fuzz/releases/download/0.5.0/9WT86CuwM7ZJBSs8iTd1jLyrUFTTiGp5hcJE63TwswGE.tar.zst",
+	fuzz: platform "https://github.com/lukewilliamboswell/roc-fuzz/releases/download/0.6.0/6uc3YKGydgEnS2nrCimSYWDNfT6drYcgU52VAwqrb6DS.tar.zst",
 	zip: "https://github.com/lukewilliamboswell/roc-zip/releases/download/0.3.0-rc1/3vvx2cPVp1vjjVgrXcugJqqfrp55ZrURYQUcSArAUHdr.tar.zst",
 }
 
@@ -597,17 +597,16 @@ linear_memory_ceiling = |region, calls, size|
 	}
 
 # Exact ceilings: the allocations and reallocations of each region of each
-# declared example, as measured on nightly-2026-11-07 when the ceiling was
-# set.
+# declared example, measured on nightly-2026-11-10-f7d1f19 with roc-fuzz 0.6.0.
 exact_ceilings : Input -> Try(List((Str, U64)), [NotDeclared])
 exact_ceilings = |input|
 	match input {
-		Program(program) if program == short_document => Ok([("build-footnote", 535), ("build-constructors", 1440), ("build-append", 74), ("build-page-setup", 0), ("build-properties", 204), ("build-new-section", 0), ("build-header", 99), ("build-footer", 172), ("docx-to-bytes", 23_760)])
-		Program(program) if program == long_document => Ok([("build-footnote", 7559), ("build-constructors", 23_040), ("build-append", 1070), ("build-page-setup", 0), ("build-properties", 3264), ("build-new-section", 0), ("build-header", 1586), ("build-footer", 2704), ("docx-to-bytes", 313_659)])
-		Gallery(Letter) => Ok([("build-constructors", 72), ("build-append", 1), ("docx-to-bytes", 4518)])
-		Gallery(Agreement) => Ok([("build-constructors", 65), ("build-append", 1), ("docx-to-bytes", 6181)])
-		Gallery(Minutes) => Ok([("build-constructors", 59), ("build-append", 1), ("docx-to-bytes", 5494)])
-		Gallery(Report) => Ok([("build-properties", 70), ("build-constructors", 300), ("build-header", 52), ("build-footer", 45), ("build-footnote", 110), ("build-append", 1), ("build-new-section", 0), ("docx-to-bytes", 8910)])
+		Program(program) if program == short_document => Ok([("build-footnote", 526), ("build-constructors", 1_440), ("build-append", 74), ("build-page-setup", 0), ("build-properties", 186), ("build-new-section", 0), ("build-header", 96), ("build-footer", 169), ("docx-to-bytes", 23_868)])
+		Program(program) if program == long_document => Ok([("build-footnote", 7_415), ("build-constructors", 23_040), ("build-append", 1_070), ("build-page-setup", 0), ("build-properties", 2_976), ("build-new-section", 0), ("build-header", 1_538), ("build-footer", 2_656), ("docx-to-bytes", 314_358)])
+		Gallery(Letter) => Ok([("build-constructors", 72), ("build-append", 1), ("docx-to-bytes", 4_572)])
+		Gallery(Agreement) => Ok([("build-constructors", 65), ("build-append", 1), ("docx-to-bytes", 6_231)])
+		Gallery(Minutes) => Ok([("build-constructors", 59), ("build-append", 1), ("docx-to-bytes", 5_532)])
+		Gallery(Report) => Ok([("build-properties", 65), ("build-constructors", 300), ("build-header", 50), ("build-footer", 44), ("build-footnote", 109), ("build-append", 1), ("build-new-section", 0), ("docx-to-bytes", 8_999)])
 		_ => Err(NotDeclared)
 	}
 
