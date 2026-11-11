@@ -16,6 +16,27 @@ pandoc and the shared release utility. LibreOffice is needed only for the
 LibreOffice lane and is found through `SOFFICE`, `PATH` or the macOS
 application bundle.
 
+== Check a published release on the nightly
+
+The daily `Nightly compatibility` workflow calls roc-automation's shared
+published-release workflow on Ubuntu. It selects the latest final release
+and the latest Roc nightly, then checks, builds and runs the examples in
+that release's immutable archive. The report job maintains one issue when
+those examples fail; the test jobs have read-only repository access.
+
+Run it manually from the default branch with both selectors empty to test
+the current pair. Set `nightly-tag` or `release-tag` to investigate a historical
+pair; an override run leaves the current pair's tracking issue unchanged.
+The shared workflow selects final releases, so a repository with only
+prereleases has no compatibility result until its first final release.
+
+The
+https://lukewilliamboswell.github.io/roc-automation/downstream-status/[downstream dashboard]
+links the run evidence and reports both release compatibility and the
+repository's direct roc-automation pins. A green compatibility badge requires
+a complete, recent pass; a green automation badge requires every pin to match
+the dashboard's observed roc-automation main revision.
+
 == Run the checks
 
 [source,sh]

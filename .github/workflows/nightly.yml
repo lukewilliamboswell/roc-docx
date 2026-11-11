@@ -1,0 +1,28 @@
+name: Nightly compatibility
+
+on:
+  schedule:
+    - cron: '23 14 * * *'
+  workflow_dispatch:
+    inputs:
+      nightly-tag:
+        description: Exact Roc nightly for a diagnostic run; empty resolves latest
+        type: string
+        default: ''
+      release-tag:
+        description: Exact final release for a diagnostic run; empty resolves latest
+        type: string
+        default: ''
+
+permissions: {}
+
+jobs:
+  compatibility:
+    permissions:
+      contents: read
+      issues: write
+    uses: lukewilliamboswell/roc-automation/.github/workflows/nightly-compatibility.yml@cc6d4081762c6d70bf95bf18c9abf99b5e9ade25
+    with:
+      nightly-tag: ${{ inputs.nightly-tag || '' }}
+      release-tag: ${{ inputs.release-tag || '' }}
+      runners: '["ubuntu-24.04"]'
