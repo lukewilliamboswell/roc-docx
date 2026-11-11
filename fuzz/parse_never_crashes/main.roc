@@ -1,6 +1,6 @@
 app [target] {
 	docx: "../../package/main.roc",
-	fuzz: platform "https://github.com/lukewilliamboswell/roc-fuzz/releases/download/0.5.0/9WT86CuwM7ZJBSs8iTd1jLyrUFTTiGp5hcJE63TwswGE.tar.zst",
+	fuzz: platform "https://github.com/lukewilliamboswell/roc-fuzz/releases/download/0.6.0/6uc3YKGydgEnS2nrCimSYWDNfT6drYcgU52VAwqrb6DS.tar.zst",
 	zip: "https://github.com/lukewilliamboswell/roc-zip/releases/download/0.3.0-rc1/3vvx2cPVp1vjjVgrXcugJqqfrp55ZrURYQUcSArAUHdr.tar.zst",
 }
 
@@ -217,55 +217,39 @@ within_share = |small, large, further, share|
 held : Fuzz.Stats -> U64
 held = |stats| stats.peak_live_bytes - stats.entry_live_bytes
 
-# The small example of a large one and the pair's shares, each the measured
-# share rounded up. The largest fixture, `word/report.docx`, reads 103,428
-# bytes more than the one-paragraph document; parsing and writing it take
-# 99.7 and 99.4 more allocations a KiB of them, request 36.7 and 80.1 more
-# bytes a byte and hold 7.3 and 2.4 more bytes live a byte. The large
-# generated document reads 23,841 bytes more than the small one, denser in
-# elements: 203.8 and 139.9 more allocations a KiB, 23.1 and 34.7 more bytes
-# requested and 9.1 and 4.1 more held a byte. Both small ones cost mostly a
-# package's and a DEFLATE compressor's constant, which the shares leave out.
+# The small example paired with a large one. Shares are the measured
+# marginal cost rounded up on nightly-2026-11-10-f7d1f19 with roc-fuzz 0.6.0.
+# They account for the further archive and inflated bytes beyond the small
+# example's fixed package and compressor cost.
 small_of : Input -> Try({ small : List(U8), shares : { parse : Share, write : Share } }, [NotLarge])
 small_of = |input|
 	match input {
 		Generated(program) if program == large_program => {
 			parse = { allocations_per_kib: 204, requested_per_byte: 24, held_per_byte: 10 }
-			write = { allocations_per_kib: 140, requested_per_byte: 35, held_per_byte: 5 }
+			write = { allocations_per_kib: 141, requested_per_byte: 36, held_per_byte: 5 }
 			Ok({ small: generated_package(small_program), shares: { parse, write } })
 		}
 
 		Fixture(index) if fixtures.get(index).map_ok(|fixture| fixture.name) == Ok("word-report") => {
-			parse = { allocations_per_kib: 100, requested_per_byte: 37, held_per_byte: 8 }
-			write = { allocations_per_kib: 100, requested_per_byte: 81, held_per_byte: 3 }
+			parse = { allocations_per_kib: 101, requested_per_byte: 37, held_per_byte: 8 }
+			write = { allocations_per_kib: 101, requested_per_byte: 81, held_per_byte: 3 }
 			Ok({ small: generated_package(one_paragraph_program), shares: { parse, write } })
 		}
 
 		_ => Err(NotLarge)
 	}
 
-# Exact ceilings: the allocations and reallocations of parsing and of
-# writing each declared document, as measured on nightly-2026-11-07 with
-# roc-zip 0.3.0-rc1 and roc-parser 6.0.0-rc.1 when the ceiling was set.
-# Writing comments and their threads from the model looks for the
-# comments part and its threads on every write, 3 more for each example's
-# writing, and writes the comments part and the parts beside it, reading
-# which entries the model does not hold and scanning every other part for
-# the identifiers comments must avoid: 37 more for the pandoc document,
-# whose comments part is empty, and 572 for the Google Docs export's two
-# comments. Reading comments as written, without processing them for
-# compatibility first, lowered parsing them by 5 and 337. Writing through
-# the write options and the emission step `to_bytes` shares with
-# `to_chunks` costs 2 more for each example, 3 for the Word and
-# pandoc fixtures.
+# Exact parsing and writing allocation ceilings measured on
+# nightly-2026-11-10-f7d1f19 with roc-fuzz 0.6.0, roc-zip 0.3.0-rc1
+# and roc-parser 6.0.0-rc.1.
 exact_ceiling : Input -> Try({ parse : U64, write : U64 }, [NotDeclared])
 exact_ceiling = |input|
 	match input {
-		Generated(program) if program == one_paragraph_program => Ok({ parse: 292, write: 456 })
-		Generated(program) if program == small_program => Ok({ parse: 579, write: 656 })
-		Generated(program) if program == large_program => Ok({ parse: 5_324, write: 3_913 })
-		Generated(program) if program == undeclared_program => Ok({ parse: 578, write: 766 })
-		Generated(program) if program == repaired_program => Ok({ parse: 749, write: 741 })
+		Generated(program) if program == one_paragraph_program => Ok({ parse: 304, write: 460 })
+		Generated(program) if program == small_program => Ok({ parse: 594, write: 667 })
+		Generated(program) if program == large_program => Ok({ parse: 5_339, write: 3_926 })
+		Generated(program) if program == undeclared_program => Ok({ parse: 593, write: 781 })
+		Generated(program) if program == repaired_program => Ok({ parse: 764, write: 752 })
 		Fixture(index) => fixtures.get(index).map_ok(|fixture| { parse: fixture.parse, write: fixture.write }).map_err(|_| NotDeclared)
 		_ => Err(NotDeclared)
 	}
@@ -304,10 +288,10 @@ program_unit = [7, 4, 3, 5, 1, 2, 6, 2, 0]
 # one table, and one from each of pandoc and LibreOffice.
 fixtures : List({ name : Str, bytes : List(U8), parse : U64, write : U64 })
 fixtures = [
-	{ name: "word-report", bytes: word_report, parse: 10_339, write: 10_488 },
-	{ name: "gdocs-resume", bytes: gdocs_resume, parse: 20_458, write: 17_792 },
-	{ name: "pandoc-basics", bytes: pandoc_basics, parse: 9_156, write: 8_361 },
-	{ name: "libreoffice-basics", bytes: libreoffice_basics, parse: 8_009, write: 7_547 },
+	{ name: "word-report", bytes: word_report, parse: 10_489, write: 10_642 },
+	{ name: "gdocs-resume", bytes: gdocs_resume, parse: 20_493, write: 17_885 },
+	{ name: "pandoc-basics", bytes: pandoc_basics, parse: 9_232, write: 8_460 },
+	{ name: "libreoffice-basics", bytes: libreoffice_basics, parse: 8_065, write: 7_636 },
 ]
 
 wordprocessingml : Str
