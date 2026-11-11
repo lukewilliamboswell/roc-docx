@@ -196,10 +196,8 @@ linear_allocation_ceiling = |nodes| 64 + 2 * nodes
 linear_memory_ceiling : U64 -> U64
 linear_memory_ceiling = |nodes| 16_384 + 1_024 * nodes
 
-# The small and large generated examples repeat one program, the large one
-# sixteen times as often. Processing them takes 104 and 1,550 allocations and
-# requests 34,292 and 431,680 bytes, ratios of 14.9 and 12.6 against the
-# sixteen the test allows.
+# The declared large tree repeats the small tree's program sixteen times.
+# The property compares their allocation and requested-byte growth directly.
 small_program : List(U8)
 small_program = List.join(List.repeat(program_unit, 4))
 
@@ -214,11 +212,11 @@ program_unit : List(U8)
 program_unit = [0, 53, 44, 19, 0, 7, 6, 24, 6, 2, 10, 28, 16, 6, 6, 10, 108, 0, 7, 6, 6, 6, 6]
 
 # Exact ceilings: the allocations of processing an example, as measured when
-# the ceiling was set.
+# measured on nightly-2026-11-10-f7d1f19 with roc-fuzz 0.6.0.
 examples_by_program : List({ program : List(U8), allocations : U64 })
 examples_by_program = [
-	{ program: small_program, allocations: 104 },
-	{ program: large_program, allocations: 1_550 },
+	{ program: small_program, allocations: 109 },
+	{ program: large_program, allocations: 1_556 },
 ]
 
 # Each fixture's processing allocations, how many elements and attributes in
@@ -226,26 +224,26 @@ examples_by_program = [
 # extension namespaces it uses without declaring them ignorable.
 fixtures : List({ name : Str, bytes : List(U8), allocations : U64, preserved : U64, undeclared : List(Str) })
 fixtures = [
-	{ name: "gdocs-resume", bytes: gdocs_resume, allocations: 5_675, preserved: 42, undeclared: [w14] },
-	{ name: "pandoc-basics", bytes: pandoc_basics, allocations: 3_546, preserved: 0, undeclared: [] },
-	{ name: "pandoc-comments", bytes: pandoc_comments, allocations: 3_377, preserved: 0, undeclared: [] },
-	{ name: "pandoc-lists", bytes: pandoc_lists, allocations: 4_012, preserved: 0, undeclared: [] },
-	{ name: "pandoc-notes", bytes: pandoc_notes, allocations: 3_304, preserved: 0, undeclared: [] },
-	{ name: "pandoc-review", bytes: pandoc_review, allocations: 3_822, preserved: 0, undeclared: [] },
-	{ name: "pandoc-revisions", bytes: pandoc_revisions, allocations: 3_307, preserved: 0, undeclared: [] },
-	{ name: "pandoc-tables", bytes: pandoc_tables, allocations: 3_652, preserved: 0, undeclared: [] },
-	{ name: "libreoffice-basics", bytes: libreoffice_basics, allocations: 3_172, preserved: 14, undeclared: [] },
-	{ name: "libreoffice-comments", bytes: libreoffice_comments, allocations: 3_121, preserved: 3, undeclared: [] },
-	{ name: "libreoffice-lists", bytes: libreoffice_lists, allocations: 4_933, preserved: 3, undeclared: [] },
-	{ name: "libreoffice-notes", bytes: libreoffice_notes, allocations: 3_139, preserved: 3, undeclared: [] },
-	{ name: "libreoffice-review", bytes: libreoffice_review, allocations: 4_287, preserved: 4, undeclared: [] },
-	{ name: "libreoffice-revisions", bytes: libreoffice_revisions, allocations: 3_040, preserved: 2, undeclared: [] },
-	{ name: "libreoffice-tables", bytes: libreoffice_tables, allocations: 4_824, preserved: 2, undeclared: [] },
-	{ name: "word-comments", bytes: word_comments, allocations: 3_627, preserved: 131, undeclared: [] },
-	{ name: "word-pages", bytes: word_pages, allocations: 3_738, preserved: 59, undeclared: [] },
-	{ name: "word-report", bytes: word_report, allocations: 4_158, preserved: 70, undeclared: [] },
-	{ name: "word-revisions", bytes: word_revisions, allocations: 4_066, preserved: 106, undeclared: [] },
-	{ name: "word-tables", bytes: word_tables, allocations: 3_599, preserved: 65, undeclared: [] },
+	{ name: "gdocs-resume", bytes: gdocs_resume, allocations: 5_717, preserved: 42, undeclared: [w14] },
+	{ name: "pandoc-basics", bytes: pandoc_basics, allocations: 3_599, preserved: 0, undeclared: [] },
+	{ name: "pandoc-comments", bytes: pandoc_comments, allocations: 3_434, preserved: 0, undeclared: [] },
+	{ name: "pandoc-lists", bytes: pandoc_lists, allocations: 4_063, preserved: 0, undeclared: [] },
+	{ name: "pandoc-notes", bytes: pandoc_notes, allocations: 3_358, preserved: 0, undeclared: [] },
+	{ name: "pandoc-review", bytes: pandoc_review, allocations: 3_878, preserved: 0, undeclared: [] },
+	{ name: "pandoc-revisions", bytes: pandoc_revisions, allocations: 3_358, preserved: 0, undeclared: [] },
+	{ name: "pandoc-tables", bytes: pandoc_tables, allocations: 3_703, preserved: 0, undeclared: [] },
+	{ name: "libreoffice-basics", bytes: libreoffice_basics, allocations: 3_216, preserved: 14, undeclared: [] },
+	{ name: "libreoffice-comments", bytes: libreoffice_comments, allocations: 3_171, preserved: 3, undeclared: [] },
+	{ name: "libreoffice-lists", bytes: libreoffice_lists, allocations: 4_982, preserved: 3, undeclared: [] },
+	{ name: "libreoffice-notes", bytes: libreoffice_notes, allocations: 3_191, preserved: 3, undeclared: [] },
+	{ name: "libreoffice-review", bytes: libreoffice_review, allocations: 4_341, preserved: 4, undeclared: [] },
+	{ name: "libreoffice-revisions", bytes: libreoffice_revisions, allocations: 3_084, preserved: 2, undeclared: [] },
+	{ name: "libreoffice-tables", bytes: libreoffice_tables, allocations: 4_868, preserved: 2, undeclared: [] },
+	{ name: "word-comments", bytes: word_comments, allocations: 3_681, preserved: 131, undeclared: [] },
+	{ name: "word-pages", bytes: word_pages, allocations: 3_824, preserved: 59, undeclared: [] },
+	{ name: "word-report", bytes: word_report, allocations: 4_241, preserved: 70, undeclared: [] },
+	{ name: "word-revisions", bytes: word_revisions, allocations: 4_112, preserved: 106, undeclared: [] },
+	{ name: "word-tables", bytes: word_tables, allocations: 3_645, preserved: 65, undeclared: [] },
 ]
 
 # Whether a diagnostic reports one of these namespaces used without being

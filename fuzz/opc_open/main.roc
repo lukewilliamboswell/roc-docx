@@ -126,21 +126,17 @@ open_memory_ceiling = |input_bytes, inflated_bytes| 16_384 + 32 * input_bytes + 
 read_memory_ceiling : U64 -> U64
 read_memory_ceiling = |part_bytes| 16_384 + part_bytes
 
-# Exact ceilings for the declared examples, as allocations plus
-# reallocations measured on nightly-2026-11-07 with roc-zip 0.3.0-rc1 and
-# roc-parser 6.0.0-rc.1, and a linear one for every other input. The packages
-# that open take 59 and 4, mostly the ZIP layer's decode tables and the
-# content types, which are read as a namespaced tree; the truthful bomb takes
-# 3 and is refused before anything is inflated, and so is the long part
-# name, in 3 too.
+# Exact allocation ceilings measured on nightly-2026-11-10-f7d1f19
+# with roc-fuzz 0.6.0, roc-zip 0.3.0-rc1 and roc-parser 6.0.0-rc.1.
+# Other inputs use the linear bound.
 allocation_ceiling : [MinimalPackage, TruthfulBomb, LyingBomb, CompressiblePackage, LongPartName, Generated], U64 -> U64
 allocation_ceiling = |example, input_bytes|
 	match example {
-		MinimalPackage => 63
+		MinimalPackage => 66
 		TruthfulBomb => 3
 		LongPartName => 3
-		LyingBomb => 63
-		CompressiblePackage => 63
+		LyingBomb => 66
+		CompressiblePackage => 66
 		Generated => 16 + input_bytes
 	}
 

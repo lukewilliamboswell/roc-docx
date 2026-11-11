@@ -421,31 +421,28 @@ check_resolve = |stats| {
 	{}
 }
 
-# Exact ceilings: the allocations of reading a declared table's numbering
-# part, measured on nightly-2026-11-07: about 98 a definition with its
-# instance (1,586 and 25,118, a ratio of 15.8) and 509,132 and 8,081,292
-# requested bytes, a ratio of 15.9, holding 123,560 and 1,979,240 bytes
-# live, a ratio of 16.0. Resolving allocates nothing at either size.
+# Exact allocation ceilings measured on nightly-2026-11-10-f7d1f19
+# with roc-fuzz 0.6.0. Resolving the declared tables allocates nothing.
 tables : List({ size : U64, allocations : U64 })
 tables = [
-	{ size: 16, allocations: 1_586 },
-	{ size: 256, allocations: 25_118 },
+	{ size: 16, allocations: 1_527 },
+	{ size: 256, allocations: 24_099 },
 ]
 
 # Each fixture's numbering-reading allocations and its instances.
 fixtures : List({ name : Str, bytes : List(U8), allocations : U64, instances : List(U32) })
 fixtures = [
-	{ name: "pandoc-basics", bytes: pandoc_basics, allocations: 432, instances: pandoc_instances },
-	{ name: "pandoc-comments", bytes: pandoc_comments, allocations: 432, instances: pandoc_instances },
-	{ name: "pandoc-lists", bytes: pandoc_lists, allocations: 1_735, instances: [1000, 1001, 1002, 1003, 1004, 1005] },
-	{ name: "pandoc-notes", bytes: pandoc_notes, allocations: 432, instances: pandoc_instances },
-	{ name: "pandoc-review", bytes: pandoc_review, allocations: 986, instances: [1000, 1001] },
-	{ name: "pandoc-revisions", bytes: pandoc_revisions, allocations: 432, instances: pandoc_instances },
-	{ name: "pandoc-tables", bytes: pandoc_tables, allocations: 432, instances: pandoc_instances },
-	{ name: "libreoffice-lists", bytes: libreoffice_lists, allocations: 4_102, instances: [1, 2, 3, 4, 5, 6, 7, 8] },
-	{ name: "libreoffice-review", bytes: libreoffice_review, allocations: 1_362, instances: [1, 2] },
-	{ name: "word-report", bytes: word_report, allocations: 702, instances: [1, 2] },
-	{ name: "gdocs-resume", bytes: gdocs_resume, allocations: 1_083, instances: [1, 2] },
+	{ name: "pandoc-basics", bytes: pandoc_basics, allocations: 437, instances: pandoc_instances },
+	{ name: "pandoc-comments", bytes: pandoc_comments, allocations: 437, instances: pandoc_instances },
+	{ name: "pandoc-lists", bytes: pandoc_lists, allocations: 1_749, instances: [1000, 1001, 1002, 1003, 1004, 1005] },
+	{ name: "pandoc-notes", bytes: pandoc_notes, allocations: 437, instances: pandoc_instances },
+	{ name: "pandoc-review", bytes: pandoc_review, allocations: 991, instances: [1000, 1001] },
+	{ name: "pandoc-revisions", bytes: pandoc_revisions, allocations: 437, instances: pandoc_instances },
+	{ name: "pandoc-tables", bytes: pandoc_tables, allocations: 437, instances: pandoc_instances },
+	{ name: "libreoffice-lists", bytes: libreoffice_lists, allocations: 4_113, instances: [1, 2, 3, 4, 5, 6, 7, 8] },
+	{ name: "libreoffice-review", bytes: libreoffice_review, allocations: 1_381, instances: [1, 2] },
+	{ name: "word-report", bytes: word_report, allocations: 714, instances: [1, 2] },
+	{ name: "gdocs-resume", bytes: gdocs_resume, allocations: 1_102, instances: [1, 2] },
 ]
 
 pandoc_instances : List(U32)

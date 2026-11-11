@@ -610,51 +610,46 @@ check_resolve = |stats| {
 	{}
 }
 
-# Exact ceilings: the allocations of reading a declared chain's styles,
-# measured on nightly-2026-11-07. Reading costs about the same a style at
-# every length from 16 to 4,096 styles: 52 allocations (839 and 13,331, a
-# ratio of 15.9) and, as buffer capacities round differently, 179,945 and
-# 2,923,705 requested bytes, a ratio of 16.25, which is why the pair allows
-# a seventeenth; they hold 37,816 and 535,504 bytes live, a ratio of 14.2.
-# Resolving takes no allocation at any length, because each style's chain
-# is merged once when the table is read and each resolution merges its
-# levels one into the next.
+# Exact allocation ceilings measured on nightly-2026-11-10-f7d1f19
+# with roc-fuzz 0.6.0. The compiler/platform update adds five allocations
+# to each declared styles read compared with nightly-2026-11-09;
+# resolving either chain still allocates nothing.
 chains : List({ length : U64, allocations : U64 })
 chains = [
-	{ length: 16, allocations: 839 },
-	{ length: 256, allocations: 13_331 },
+	{ length: 16, allocations: 844 },
+	{ length: 256, allocations: 13_336 },
 ]
 
 # Exact ceilings: the allocations of `Docx.paragraphs` over a declared body
-# of a new document, measured on nightly-2026-11-07.
+# of a new document, measured on nightly-2026-11-10-f7d1f19.
 bodies : List({ count : U64, allocations : U64 })
 bodies = [
-	{ count: 16, allocations: 2_814 },
-	{ count: 256, allocations: 3_114 },
+	{ count: 16, allocations: 2_741 },
+	{ count: 256, allocations: 3_041 },
 ]
 
 # Each fixture's styles-reading allocations and the styles it resolves.
 fixtures : List({ name : Str, bytes : List(U8), allocations : U64, styles : List(Str) })
 fixtures = [
-	{ name: "pandoc-basics", bytes: pandoc_basics, allocations: 7_050, styles: fixture_styles },
-	{ name: "pandoc-comments", bytes: pandoc_comments, allocations: 7_050, styles: fixture_styles },
-	{ name: "pandoc-lists", bytes: pandoc_lists, allocations: 7_050, styles: fixture_styles },
-	{ name: "pandoc-notes", bytes: pandoc_notes, allocations: 7_050, styles: fixture_styles },
-	{ name: "pandoc-review", bytes: pandoc_review, allocations: 7_050, styles: fixture_styles },
-	{ name: "pandoc-revisions", bytes: pandoc_revisions, allocations: 7_050, styles: fixture_styles },
-	{ name: "pandoc-tables", bytes: pandoc_tables, allocations: 7_050, styles: fixture_styles },
-	{ name: "libreoffice-basics", bytes: libreoffice_basics, allocations: 8_401, styles: fixture_styles },
-	{ name: "libreoffice-comments", bytes: libreoffice_comments, allocations: 8_401, styles: fixture_styles },
-	{ name: "libreoffice-lists", bytes: libreoffice_lists, allocations: 8_401, styles: fixture_styles },
-	{ name: "libreoffice-notes", bytes: libreoffice_notes, allocations: 8_490, styles: fixture_styles },
-	{ name: "libreoffice-review", bytes: libreoffice_review, allocations: 8_401, styles: fixture_styles },
-	{ name: "libreoffice-revisions", bytes: libreoffice_revisions, allocations: 8_401, styles: fixture_styles },
-	{ name: "libreoffice-tables", bytes: libreoffice_tables, allocations: 8_401, styles: fixture_styles },
-	{ name: "word-comments", bytes: word_comments, allocations: 2_842, styles: word_styles },
-	{ name: "word-pages", bytes: word_pages, allocations: 2_847, styles: List.concat(word_styles, ["Header", "Footer"]) },
-	{ name: "word-report", bytes: word_report, allocations: 2_842, styles: word_styles },
-	{ name: "word-revisions", bytes: word_revisions, allocations: 2_935, styles: word_styles },
-	{ name: "word-tables", bytes: word_tables, allocations: 2_847, styles: word_styles },
+	{ name: "pandoc-basics", bytes: pandoc_basics, allocations: 7_009, styles: fixture_styles },
+	{ name: "pandoc-comments", bytes: pandoc_comments, allocations: 7_009, styles: fixture_styles },
+	{ name: "pandoc-lists", bytes: pandoc_lists, allocations: 7_009, styles: fixture_styles },
+	{ name: "pandoc-notes", bytes: pandoc_notes, allocations: 7_009, styles: fixture_styles },
+	{ name: "pandoc-review", bytes: pandoc_review, allocations: 7_009, styles: fixture_styles },
+	{ name: "pandoc-revisions", bytes: pandoc_revisions, allocations: 7_009, styles: fixture_styles },
+	{ name: "pandoc-tables", bytes: pandoc_tables, allocations: 7_009, styles: fixture_styles },
+	{ name: "libreoffice-basics", bytes: libreoffice_basics, allocations: 8_357, styles: fixture_styles },
+	{ name: "libreoffice-comments", bytes: libreoffice_comments, allocations: 8_357, styles: fixture_styles },
+	{ name: "libreoffice-lists", bytes: libreoffice_lists, allocations: 8_357, styles: fixture_styles },
+	{ name: "libreoffice-notes", bytes: libreoffice_notes, allocations: 8_443, styles: fixture_styles },
+	{ name: "libreoffice-review", bytes: libreoffice_review, allocations: 8_357, styles: fixture_styles },
+	{ name: "libreoffice-revisions", bytes: libreoffice_revisions, allocations: 8_357, styles: fixture_styles },
+	{ name: "libreoffice-tables", bytes: libreoffice_tables, allocations: 8_357, styles: fixture_styles },
+	{ name: "word-comments", bytes: word_comments, allocations: 2_826, styles: word_styles },
+	{ name: "word-pages", bytes: word_pages, allocations: 2_831, styles: List.concat(word_styles, ["Header", "Footer"]) },
+	{ name: "word-report", bytes: word_report, allocations: 2_826, styles: word_styles },
+	{ name: "word-revisions", bytes: word_revisions, allocations: 2_918, styles: word_styles },
+	{ name: "word-tables", bytes: word_tables, allocations: 2_831, styles: word_styles },
 ]
 
 # The styles the pandoc and LibreOffice fixtures' documents use, from their
