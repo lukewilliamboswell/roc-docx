@@ -20,7 +20,7 @@ config = [
 	# The package, examples and fuzz targets: checked with the host's latest nightly.
 	Environment("package", [Expect(["roc"])]),
 	# Repository scripts run on a fixed compiler so they keep working while the package is broken.
-	Environment("tools", [Extend("package"), Programs([Fetch("roc-stable", Recipes.roc_nightly("nightly-2026-11-07-ad3a5d2"))]), RocPackages(["https://github.com/roc-lang/basic-cli/releases/download/0.27.0/9yjxqdGTP4xSpSEmDazwTmRsehfRZzA19pwEKkR6fj1g.tar.zst"])]),
+	Environment("tools", [Extend("package"), Programs([Fetch("roc-stable", Recipes.roc_nightly("nightly-2026-11-07-ad3a5d2"))]), RocPackages(["https://github.com/roc-lang/basic-cli/releases/download/0.28.0/2yhxoR7cZPSYbyUzPWULFw8AA6QEcdsgFNRmzu7pZbst.tar.zst"])]),
 	# Oracle adapters: pandoc is fetched; xmllint and python3 come from the host.
 	Environment("oracle", [Programs([Fetch("pandoc", pandoc)]), Expect(["python3", "xmllint"])]),
 	# The LibreOffice lane: LibreOffice is found through SOFFICE or PATH by the adapter that needs it.
@@ -35,11 +35,15 @@ config = [
 	Shell("default", [Use("dev")]),
 	# Everything a pull request must pass; the shared release workflow runs it too.
 	Task("check", [Use("dev"), Run(["scripts/check_all.roc"])]),
-	Task("fmt", [Use("package"), Run(["roc", "fmt", "--check", "package", "examples", "fuzz", "tests"])]),
+	Task("fmt", [Use("package"), Run(["roc", "fmt", "--check", "package", "examples", "fuzz", "tests", "playground"])]),
 	Task("fmt-scripts", [Use("tools"), Run(["roc-stable", "fmt", "--check", "scripts"])]),
 	Task("lint", [Use("tools"), Run(["scripts/lint.roc"])]),
 	Task("scripts-test", [Use("tools"), Run(["roc-stable", "test", "scripts/src/Lint.roc"])]),
 	Task("test", [Use("package"), Run(["roc", "test", "package/main.roc"])]),
+	Task("playground", [Use("package"), Run(["sh", "-c", "cd playground && roc signals.roc build"])]),
+	Task("playground-serve", [Use("package"), Run(["sh", "-c", "cd playground && roc signals.roc serve"])]),
+	Task("playground-specs", [Use("package"), Run(["sh", "-c", "cd playground && roc signals.roc test"])]),
+	Task("playground-test", [Use("package"), Run(["roc", "test", "playground/main.roc"])]),
 	Task("cases", [Use("package"), Run(["roc", "tests/main.roc"])]),
 	Task("manual", [Use("package"), Run(["roc", "tests/manual.roc"])]),
 	Task("cases-update", [Use("package"), Run(["roc", "tests/main.roc", "--update"])]),

@@ -66,6 +66,9 @@ blueprint tasks          # each check on its own, and the fixture and release ta
 | test
 | Every `expect` reachable from `package/main.roc` passes
 
+| playground-test, playground-specs, playground-build
+| The playground's expects and native worker specs pass, and the released signals tool builds its browser module and matching runtime
+
 | cases
 | Every data-driven case under `tests/` reports what its expectation records: each fixture passes through, and the package's snapshot of it is the one in `tests/snapshots/`
 
@@ -454,6 +457,8 @@ page gives the release's package URL, its examples archive and its API
 reference, restored from the release's documentation archive, and offers a
 newer release candidate beside it. The default branch's manual, its PDF and
 its API reference are published under `unreleased/`. The `docs` workflow
+builds the playground with the published signals tool and places its output
+at `playground/` beside the release front page and the unreleased manual. It
 assembles the site from the working tree and the release assets, so nothing
 rendered is committed. It builds the site on every pull request, as the
 `docs` check, whose `github-pages` artifact is the site to preview, and
@@ -466,3 +471,28 @@ One change per pull request, small enough for one reviewer. The description
 says what changed, what was run and what it reported, and names anything
 discovered and deliberately left for later. Baselines, snapshots and fixture
 regenerations are reviewed as diffs; CI never updates them.
+
+== Develop the playground
+
+The playground carries the published `signals.roc` entry point beside its
+`main.roc`. From `playground/`, run:
+
+[source,sh]
+----
+roc signals.roc serve    # local server with live reload
+roc signals.roc build    # deployment files in dist/
+roc signals.roc test     # native specs, including real worker jobs
+----
+
+From the repository root, the corresponding Blueprint tasks are
+`playground-serve`, `playground` and `playground-specs`.
+`blueprint run playground-test` also runs its Roc expects. All tests and the
+build run in `check`.
+
+The signals tool supplies the runtime and worker matching its release,
+rewrites page URLs to hashed assets, and manages the compiler's supported
+optimization level. Serve `playground/dist/` at `/playground/` beside the
+manual so the manual links and page-relative font URLs resolve. The local
+server serves the playground alone, with system fonts when the manual fonts
+are unavailable. It watches files inside `playground/`; restart it after
+changing `package/`.

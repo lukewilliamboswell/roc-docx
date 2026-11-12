@@ -1,6 +1,6 @@
 #!/usr/bin/env roc-stable
 app [main!] {
-	cli: platform "https://github.com/roc-lang/basic-cli/releases/download/0.27.0/9yjxqdGTP4xSpSEmDazwTmRsehfRZzA19pwEKkR6fj1g.tar.zst",
+	cli: platform "https://github.com/roc-lang/basic-cli/releases/download/0.28.0/2yhxoR7cZPSYbyUzPWULFw8AA6QEcdsgFNRmzu7pZbst.tar.zst",
 	roc: "nightly-2026-11-07-ad3a5d2",
 }
 
@@ -24,12 +24,15 @@ checks : List({ name : Str, argv : List(Str) })
 checks = [
 	# The schema oracle's standards corpus, verified against the ledger.
 	{ name: "oracle-provision", argv: ["python3", "-I", "oracle/provision.py"] },
-	{ name: "fmt", argv: ["roc", "fmt", "--check", "package", "examples", "fuzz", "tests"] },
+	{ name: "fmt", argv: ["roc", "fmt", "--check", "package", "examples", "fuzz", "tests", "playground"] },
 	{ name: "fmt-scripts", argv: ["roc-stable", "fmt", "--check", "scripts"] },
 	# The mechanical checks in scripts/src/Lint.roc, and that module's own expects.
 	{ name: "lint", argv: ["scripts/lint.roc"] },
 	{ name: "scripts-test", argv: ["roc-stable", "test", "scripts/src/Lint.roc"] },
 	{ name: "test", argv: ["roc", "test", "package/main.roc"] },
+	{ name: "playground-test", argv: ["roc", "test", "playground/main.roc"] },
+	{ name: "playground-specs", argv: ["sh", "-c", "cd playground && roc signals.roc test"] },
+	{ name: "playground-build", argv: ["sh", "-c", "cd playground && roc signals.roc build"] },
 	# The data-driven cases under tests/: every fixture passes through as its expectation records.
 	{ name: "cases", argv: ["roc", "tests/main.roc"] },
 	# Every Roc snippet the manual includes compiles and runs.

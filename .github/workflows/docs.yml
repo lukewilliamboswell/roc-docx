@@ -40,6 +40,7 @@ jobs:
       - run: blueprint run docs -- --docs-version "$LABEL" --site-url "${SITE}unreleased/"
         env:
           LABEL: ${{ github.event_name == 'pull_request' && format('unreleased (pull request {0})', github.event.number) || 'unreleased' }}
+      - run: blueprint run playground
       - name: Assemble the site from the manual and the release assets
         env:
           GH_TOKEN: ${{ github.token }}
@@ -51,6 +52,7 @@ jobs:
           work=.docs-out/assemble
           mkdir "$pages" "$work"
           mv .docs-out/site "$pages/unreleased"
+          cp -R playground/dist "$pages/playground"
 
           # GitHub's latest release is never a prerelease; until the first one
           # the endpoint answers 404.
@@ -102,6 +104,8 @@ jobs:
               printf '## Release candidate %s\n\nA candidate for the next release, published to be tried in real applications before it is released. Report what does not work as an issue.\n\n' "$candidate"
               release "$candidate" "$candidate/api"
             fi
+            printf '## Playground\n\n'
+            printf 'Explore a Word document, review its comments and tracked changes, or generate a letter in the [browser playground](%splayground/). Documents stay in your browser; the playground runs the current source.\n\n' "$SITE"
             printf '## Unreleased\n\n'
             printf 'The [manual](%sunreleased/index.html), its [PDF](%sunreleased/%s.pdf) and the [API reference](%sunreleased/api/index.html) of the default branch, which may describe changes not yet released.\n' "$SITE" "$SITE" "$name" "$SITE"
           } > "$work/index.md"

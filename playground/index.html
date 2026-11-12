@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>roc-docx playground</title>
+  <meta name="description" content="See inside a Word document, stage by stage, with roc-docx compiled to WebAssembly.">
+  <!-- Keep manual font URLs relative to the page when CSS is hashed. -->
+  <style>
+@font-face { font-family: "Inter"; src: url("../_roc-docs/fonts/Inter-Regular.ttf") format("truetype"); font-weight: 400; font-display: swap; }
+@font-face { font-family: "Inter"; src: url("../_roc-docs/fonts/Inter-Bold.ttf") format("truetype"); font-weight: 700; font-display: swap; }
+@font-face { font-family: "Inter"; src: url("../_roc-docs/fonts/Inter-Italic.ttf") format("truetype"); font-weight: 400; font-style: italic; font-display: swap; }
+@font-face { font-family: "Merriweather"; src: url("../_roc-docs/fonts/Merriweather-Regular.ttf") format("truetype"); font-weight: 400; font-display: swap; }
+@font-face { font-family: "Merriweather"; src: url("../_roc-docs/fonts/Merriweather-Bold.ttf") format("truetype"); font-weight: 700; font-display: swap; }
+@font-face { font-family: "Merriweather"; src: url("../_roc-docs/fonts/Merriweather-Italic.ttf") format("truetype"); font-weight: 400; font-style: italic; font-display: swap; }
+@font-face { font-family: "Fira Code"; src: url("../_roc-docs/fonts/FiraCode-Regular.ttf") format("truetype"); font-weight: 400; font-display: swap; }
+  </style>
+  <link rel="stylesheet" href="playground.css">
+</head>
+<body>
+  <p id="loading" class="loading">Loading roc-docx…</p>
+  <div id="app"></div>
+  <noscript>The playground runs roc-docx in your browser and needs JavaScript and WebAssembly.</noscript>
+  <script type="module" src="docx-file.mjs"></script>
+  <script type="module">
+    import { mountRocEngineApp } from "./runtime.mjs";
+    await mountRocEngineApp({ wasmUrl: "app.wasm", root: document.getElementById("app"), onWorkerFault: (f) => console.warn("roc-docx playground: worker stopped", f) });
+    document.getElementById("loading").remove();
+  </script>
+</body>
+</html>
