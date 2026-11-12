@@ -20,7 +20,7 @@ config = [
 	# The package, examples and fuzz targets: checked with the host's latest nightly.
 	Environment("package", [Expect(["roc"])]),
 	# Repository scripts run on a fixed compiler so they keep working while the package is broken.
-	Environment("tools", [Extend("package"), Programs([Fetch("roc-stable", Recipes.roc_nightly("nightly-2026-11-07-ad3a5d2"))]), RocPackages(["https://github.com/roc-lang/basic-cli/releases/download/0.27.0/9yjxqdGTP4xSpSEmDazwTmRsehfRZzA19pwEKkR6fj1g.tar.zst"])]),
+	Environment("tools", [Extend("package"), Programs([Fetch("roc-stable", Recipes.roc_nightly("nightly-2026-11-07-ad3a5d2"))]), RocPackages(["https://github.com/roc-lang/basic-cli/releases/download/0.28.0/2yhxoR7cZPSYbyUzPWULFw8AA6QEcdsgFNRmzu7pZbst.tar.zst"])]),
 	# Oracle adapters: pandoc is fetched; xmllint and python3 come from the host.
 	Environment("oracle", [Programs([Fetch("pandoc", pandoc)]), Expect(["python3", "xmllint"])]),
 	# The LibreOffice lane: LibreOffice is found through SOFFICE or PATH by the adapter that needs it.
