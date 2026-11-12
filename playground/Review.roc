@@ -18,8 +18,8 @@ Review := [].{
 
 	Reviewed : { model : Explore.Model, base64 : Str, size : U64 }
 
-	review : Worker.Program(Request, Try(Reviewed, Explore.Problem))
-	review = Worker.fallible("roc-docx/playground/review", Review.reviewed)
+	review : Worker.Task(Request, Reviewed, Explore.Problem)
+	review = Worker.task({ name: "roc-docx/playground/review", run!: |input| Review.reviewed(input) })
 
 	reviewed : Request -> Try(Reviewed, Explore.Problem)
 	reviewed = |{ doc, edits, author, date }| {

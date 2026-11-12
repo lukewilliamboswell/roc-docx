@@ -45,6 +45,9 @@ blueprint tasks          # each check on its own, and the fixture and release ta
 | test
 | Every `expect` reachable from `package/main.roc` passes
 
+| playground-test, playground-build
+| The playground's expects pass and its WebAssembly module builds with the matching, digest-verified browser runtime
+
 | cases
 | Every data-driven case under `tests/` reports what its expectation records: each fixture passes through, and the package's snapshot of it is the one in `tests/snapshots/`
 
@@ -431,3 +434,15 @@ One change per pull request, small enough for one reviewer. The description
 says what changed, what was run and what it reported, and names anything
 discovered and deliberately left for later. Baselines, snapshots and fixture
 regenerations are reviewed as diffs; CI never updates them.
+
+== Build the playground
+
+`blueprint run playground` builds `dist/playground/`, including the browser
+module and the matching roc-signals runtime and worker. The build needs
+`curl` and `shasum` and verifies the downloaded JavaScript against its release
+digests. Serve the directory at `/playground/` beside the manual so its fonts
+and manual links resolve. `blueprint run playground-test` runs its Roc tests.
+
+The build uses development optimization because the current compiler crashes
+when optimizing roc-signals applications; see
+https://github.com/roc-lang/roc/issues/12976[the compiler issue].

@@ -24,12 +24,14 @@ checks : List({ name : Str, argv : List(Str) })
 checks = [
 	# The schema oracle's standards corpus, verified against the ledger.
 	{ name: "oracle-provision", argv: ["python3", "-I", "oracle/provision.py"] },
-	{ name: "fmt", argv: ["roc", "fmt", "--check", "package", "examples", "fuzz", "tests"] },
+	{ name: "fmt", argv: ["roc", "fmt", "--check", "package", "examples", "fuzz", "tests", "playground"] },
 	{ name: "fmt-scripts", argv: ["roc-stable", "fmt", "--check", "scripts"] },
 	# The mechanical checks in scripts/src/Lint.roc, and that module's own expects.
 	{ name: "lint", argv: ["scripts/lint.roc"] },
 	{ name: "scripts-test", argv: ["roc-stable", "test", "scripts/src/Lint.roc"] },
 	{ name: "test", argv: ["roc", "test", "package/main.roc"] },
+	{ name: "playground-test", argv: ["roc", "test", "playground/main.roc"] },
+	{ name: "playground-build", argv: ["sh", "scripts/playground.sh"] },
 	# The data-driven cases under tests/: every fixture passes through as its expectation records.
 	{ name: "cases", argv: ["roc", "tests/main.roc"] },
 	# Every Roc snippet the manual includes compiles and runs.

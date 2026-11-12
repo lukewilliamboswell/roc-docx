@@ -85,14 +85,14 @@ Explore := [].{
 	## Why a run could not read the document.
 	Problem : [Unreadable(Str)]
 
-	model : Worker.Program(Wire.Bytes, Try(Model, Problem))
-	model = Worker.fallible("roc-docx/playground/model", |doc| Explore.read(doc.to_list()))
+	model : Worker.Task(Wire.Bytes, Model, Problem)
+	model = Worker.task({ name: "roc-docx/playground/model", run!: |doc| Explore.read(doc.to_list()) })
 
-	part_xml : Worker.Program({ doc : Wire.Bytes, part : Str }, Try(List(XmlLine), Problem))
-	part_xml = Worker.fallible("roc-docx/playground/part-xml", |{ doc, part }| Explore.xml_lines(doc.to_list(), part))
+	part_xml : Worker.Task({ doc : Wire.Bytes, part : Str }, List(XmlLine), Problem)
+	part_xml = Worker.task({ name: "roc-docx/playground/part-xml", run!: |{ doc, part }| Explore.xml_lines(doc.to_list(), part) })
 
-	round_trip : Worker.Program(Wire.Bytes, Try(Written, Problem))
-	round_trip = Worker.fallible("roc-docx/playground/round-trip", |doc| Explore.written(doc.to_list()))
+	round_trip : Worker.Task(Wire.Bytes, Written, Problem)
+	round_trip = Worker.task({ name: "roc-docx/playground/round-trip", run!: |doc| Explore.written(doc.to_list()) })
 
 	## Read a parsed document into a [Model]. [Review] and [Generate] call it
 	## on the documents they make.
@@ -111,31 +111,29 @@ Explore := [].{
 		limits = {}
 		total = parts.fold(0, |sum, p| sum + p.size)
 		largest = parts.fold(0, |most, p| if (p.size > most) p.size else most)
-		Ok(
-			{
-				zip: parts.map(|p| Explore.entry(pkg, p)),
-				bounds: [
-					{ name: "Entries", used: parts.len(), limit: limits.max_entries },
-					{ name: "Largest part (bytes)", used: largest, limit: limits.max_part_bytes },
-					{ name: "All parts (bytes)", used: total, limit: limits.max_total_bytes },
-				],
-				package_relationships: Explore.relationships(Opc.relationships(pkg, "/") ?? []),
-				parts: parts.map(|p| { name: p.name, content_type: p.content_type, size: p.size, relationships: Explore.relationships(Opc.relationships(pkg, p.name) ?? []) }),
-				xml_parts: parts.keep_if(|p| Explore.is_xml(p.content_type)).map(|p| p.name),
-				properties: Explore.core(Docx.core_properties(document)),
-				blocks: shown,
-				comments: comments.comments.map(|c| Explore.comment(c, shown)),
-				changes: Docx.revisions(document).map(Explore.change),
-				diagnostics: read_diagnostics.map(|d| { stage: "Model", text: Str.inspect(d) })
-					.concat(comments.diagnostics.map(|d| { stage: "Comments", text: Str.inspect(d) }))
-					.concat(styles.diagnostics.map(|d| { stage: "Styles", text: Str.inspect(d) }))
-					.concat(numbering.diagnostics.map(|d| { stage: "Numbering", text: Str.inspect(d) })),
-				text: Docx.text(document),
-				final_text: Docx.final_text(document),
-				original_text: Docx.original_text(document),
-				tracking: Docx.tracks_revisions(document),
-			},
-		)
+		Ok({
+			zip: parts.map(|p| Explore.entry(pkg, p)),
+			bounds: [
+				{ name: "Entries", used: parts.len(), limit: limits.max_entries },
+				{ name: "Largest part (bytes)", used: largest, limit: limits.max_part_bytes },
+				{ name: "All parts (bytes)", used: total, limit: limits.max_total_bytes },
+			],
+			package_relationships: Explore.relationships(Opc.relationships(pkg, "/") ?? []),
+			parts: parts.map(|p| { name: p.name, content_type: p.content_type, size: p.size, relationships: Explore.relationships(Opc.relationships(pkg, p.name) ?? []) }),
+			xml_parts: parts.keep_if(|p| Explore.is_xml(p.content_type)).map(|p| p.name),
+			properties: Explore.core(Docx.core_properties(document)),
+			blocks: shown,
+			comments: comments.comments.map(|c| Explore.comment(c, shown)),
+			changes: Docx.revisions(document).map(Explore.change),
+			diagnostics: read_diagnostics.map(|d| { stage: "Model", text: Str.inspect(d) })
+				.concat(comments.diagnostics.map(|d| { stage: "Comments", text: Str.inspect(d) }))
+				.concat(styles.diagnostics.map(|d| { stage: "Styles", text: Str.inspect(d) }))
+				.concat(numbering.diagnostics.map(|d| { stage: "Numbering", text: Str.inspect(d) })),
+			text: Docx.text(document),
+			final_text: Docx.final_text(document),
+			original_text: Docx.original_text(document),
+			tracking: Docx.tracks_revisions(document),
+		})
 	}
 
 	read : List(U8) -> Try(Model, Problem)
@@ -646,8 +644,8 @@ Explore := [].{
 	is_dropped : XmlTree.Name, List(XmlTree.Attribute) -> Bool
 	is_dropped = |name, attributes|
 		name.local == "proofErr"
-		or name.local == "lastRenderedPageBreak"
-		or (name.local == "bookmarkStart" and attributes.any(|a| a.name.local == "name" and a.value == "_GoBack"))
+			or name.local == "lastRenderedPageBreak"
+			or (name.local == "bookmarkStart" and attributes.any(|a| a.name.local == "name" and a.value == "_GoBack"))
 
 	is_dropped_attribute : XmlTree.Attribute -> Bool
 	is_dropped_attribute = |a| a.name.local.starts_with("rsid")

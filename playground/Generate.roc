@@ -27,8 +27,8 @@ Generate := [].{
 		created: "2026-11-10T09:00:00Z",
 	}
 
-	letter : Worker.Program(Letter, Try(Review.Reviewed, Explore.Problem))
-	letter = Worker.fallible("roc-docx/playground/letter", Generate.generated)
+	letter : Worker.Task(Letter, Review.Reviewed, Explore.Problem)
+	letter = Worker.task({ name: "roc-docx/playground/letter", run!: |input| Generate.generated(input) })
 
 	generated : Letter -> Try(Review.Reviewed, Explore.Problem)
 	generated = |l| {
@@ -105,14 +105,12 @@ Generate := [].{
 			"\t\tBuild.paragraph({}, [Build.text(${q(l.subject)}, { bold: On })]),",
 		]
 			.concat(body)
-			.concat(
-				[
-					"\t\tBuild.paragraph({}, [Build.text(${q(l.closing)}, {})]),",
-					"\t\tBuild.paragraph({}, [Build.text(${q(l.signature)}, {})]),",
-					"\t],",
-					")",
-				],
-			)
+			.concat([
+				"\t\tBuild.paragraph({}, [Build.text(${q(l.closing)}, {})]),",
+				"\t\tBuild.paragraph({}, [Build.text(${q(l.signature)}, {})]),",
+				"\t],",
+				")",
+			])
 			.concat(comment)
 		Str.join_with(lines, "\n")
 	}

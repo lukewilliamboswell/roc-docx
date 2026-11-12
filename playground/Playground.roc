@@ -43,15 +43,13 @@ Playground := [].{
 	program : Engine.Program
 	program =
 		Engine.program_boot({ storage_keys: [], max_inflight: 32 }, |boot| Engine.state(Playground.initial(boot.url), Playground.view))
-			.with_workers(
-				[
-					Explore.model.registration(),
-					Explore.part_xml.registration(),
-					Explore.round_trip.registration(),
-					Review.review.registration(),
-					Generate.letter.registration(),
-				],
-			)
+			.with_workers([
+				Explore.model.registration(),
+				Explore.part_xml.registration(),
+				Explore.round_trip.registration(),
+				Review.review.registration(),
+				Generate.letter.registration(),
+			])
 
 	stages : List(Stage)
 	stages = [Zip, Package, Xml, Document, Annotations, Text, RoundTrip, Problems]
@@ -314,7 +312,7 @@ Playground := [].{
 			|| Engine.element("main", [], [Playground.welcome(st, "See inside a Word document", "Drop a .docx to follow it through roc-docx: the ZIP archive, the package of parts, the XML, and the typed document an application works with.")]),
 		)
 
-	explored : State(ctx, S), Val(ctx, Worker.Remote(Try(Explore.Model, Explore.Problem))) -> Elem(ctx)
+	explored : State(ctx, S), Val(ctx, Engine.Remote(Explore.Model, Worker.Error(Explore.Problem))) -> Elem(ctx)
 	explored = |st, remote| {
 		m = remote.map(Playground.model_of)
 		Html.div(
@@ -348,28 +346,28 @@ Playground := [].{
 		)
 	}
 
-	model_of : Worker.Remote(Try(Explore.Model, Explore.Problem)) -> Explore.Model
+	model_of : Engine.Remote(Explore.Model, Worker.Error(Explore.Problem)) -> Explore.Model
 	model_of = |r|
 		match r.answer {
-			Done(Ok(m)) => m
+			Answered(m) => m
 			_ => Playground.no_model
 		}
 
 	no_model : Explore.Model
 	no_model = { zip: [], bounds: [], package_relationships: [], parts: [], xml_parts: [], properties: [], blocks: [], comments: [], changes: [], diagnostics: [], text: "", final_text: "", original_text: "", tracking: Bool.False }
 
-	status : Worker.Remote(Try(a, Explore.Problem)) -> Str
-	status = |{ running, answer }|
+	status : Engine.Remote(a, Worker.Error(Explore.Problem)) -> Str
+	status = |{ request, answer }|
 		match answer {
-			Nothing => if (running) "Reading…" else ""
-			Done(Ok(_)) => if (running) "Reading…" else ""
-			Done(Err(Unreadable(why))) => "roc-docx could not read this document: ${why}"
+			Unanswered => if (request == Pending) "Reading…" else ""
+			Answered(_) => if (request == Pending) "Reading…" else ""
 			Failed(error) => Playground.problem(error)
 		}
 
-	problem : Worker.Error -> Str
+	problem : Worker.Error(Explore.Problem) -> Str
 	problem = |error|
 		match error {
+			Failed(Unreadable(why)) => "roc-docx could not read this document: ${why}"
 			Timeout => "This took too long."
 			Refused => "Too much is running; try again."
 			Lost(fault) => "The worker stopped: ${Str.inspect(fault)}."
@@ -690,10 +688,10 @@ Playground := [].{
 			],
 		)
 
-	keyed_lines : Worker.Remote(Try(List(Explore.XmlLine), Explore.Problem)) -> List({ key : Str, depth : U64, tag : Str, attributes : Str, dropped : Str, text : Str, class : Str })
+	keyed_lines : Engine.Remote(List(Explore.XmlLine), Worker.Error(Explore.Problem)) -> List({ key : Str, depth : U64, tag : Str, attributes : Str, dropped : Str, text : Str, class : Str })
 	keyed_lines = |r|
 		match r.answer {
-			Done(Ok(lines)) => lines.map_with_index(|l, i| { key: i.to_str(), depth: l.depth, tag: l.tag, attributes: l.attributes, dropped: l.dropped, text: l.text, class: l.class })
+			Answered(lines) => lines.map_with_index(|l, i| { key: i.to_str(), depth: l.depth, tag: l.tag, attributes: l.attributes, dropped: l.dropped, text: l.text, class: l.class })
 			_ => []
 		}
 
@@ -1062,7 +1060,7 @@ Playground := [].{
 				w = remote.map(
 					|r|
 						match r.answer {
-							Done(Ok(written)) => written
+							Answered(written) => written
 							_ => { compared: [], size: 0, equivalent: Bool.False, base64: "" }
 						},
 				)
@@ -1157,12 +1155,12 @@ Playground := [].{
 			|| Engine.element("main", [], [Playground.welcome(st, "Review a document", "Accept and reject tracked changes, reply to and resolve comments, and download the result. Start with the tracked changes sample, or drop a document of your own.")]),
 		)
 
-	reviewing : State(ctx, S), Val(ctx, Worker.Remote(Try(Review.Reviewed, Explore.Problem))) -> Elem(ctx)
+	reviewing : State(ctx, S), Val(ctx, Engine.Remote(Review.Reviewed, Worker.Error(Explore.Problem))) -> Elem(ctx)
 	reviewing = |st, remote| {
 		r = remote.map(
 			|x|
 				match x.answer {
-					Done(Ok(reviewed)) => reviewed
+					Answered(reviewed) => reviewed
 					_ => { model: Playground.no_model, base64: "", size: 0 }
 				},
 		)
@@ -1323,7 +1321,7 @@ Playground := [].{
 								r = remote.map(
 									|x|
 										match x.answer {
-											Done(Ok(made)) => made
+											Answered(made) => made
 											_ => { model: Playground.no_model, base64: "", size: 0 }
 										},
 								)
@@ -1336,7 +1334,7 @@ Playground := [].{
 											[
 												Playground.download(r.map(|x| x.base64), "letter.docx", "Download letter.docx"),
 												Html.button("Explore this document", [Engine.class("quiet")], st.lift().update_by(r.map(|x| x.base64), |s, b| Playground.opened(s, "letter.docx", b))),
-												Html.span_v(remote.map(|x| if (x.running) "Building…" else ""), [Engine.class("muted")]),
+												Html.span_v(remote.map(|x| if (x.request == Pending) "Building…" else ""), [Engine.class("muted")]),
 											],
 										),
 										Html.p_v(remote.map(Playground.status), [Engine.class("status")]),
