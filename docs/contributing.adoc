@@ -45,8 +45,8 @@ blueprint tasks          # each check on its own, and the fixture and release ta
 | test
 | Every `expect` reachable from `package/main.roc` passes
 
-| playground-test, playground-build
-| The playground's expects pass and its WebAssembly module builds with the matching, digest-verified browser runtime
+| playground-test, playground-specs, playground-build
+| The playground's expects and native worker specs pass, and the released signals tool builds its browser module and matching runtime
 
 | cases
 | Every data-driven case under `tests/` reports what its expectation records: each fixture passes through, and the package's snapshot of it is the one in `tests/snapshots/`
@@ -435,14 +435,27 @@ says what changed, what was run and what it reported, and names anything
 discovered and deliberately left for later. Baselines, snapshots and fixture
 regenerations are reviewed as diffs; CI never updates them.
 
-== Build the playground
+== Develop the playground
 
-`blueprint run playground` builds `dist/playground/`, including the browser
-module and the matching roc-signals runtime and worker. The build needs
-`curl` and `shasum` and verifies the downloaded JavaScript against its release
-digests. Serve the directory at `/playground/` beside the manual so its fonts
-and manual links resolve. `blueprint run playground-test` runs its Roc tests.
+The playground carries the published `signals.roc` entry point beside its
+`main.roc`. From `playground/`, run:
 
-The build uses development optimization because the current compiler crashes
-when optimizing roc-signals applications; see
-https://github.com/roc-lang/roc/issues/12976[the compiler issue].
+[source,sh]
+----
+roc signals.roc serve    # local server with live reload
+roc signals.roc build    # deployment files in dist/
+roc signals.roc test     # native specs, including real worker jobs
+----
+
+From the repository root, the corresponding Blueprint tasks are
+`playground-serve`, `playground` and `playground-specs`.
+`blueprint run playground-test` also runs its Roc expects. All tests and the
+build run in `check`.
+
+The signals tool supplies the runtime and worker matching its release,
+rewrites page URLs to hashed assets, and manages the compiler's supported
+optimization level. Serve `playground/dist/` at `/playground/` beside the
+manual so the manual links and page-relative font URLs resolve. The local
+server serves the playground alone, with system fonts when the manual fonts
+are unavailable. It watches files inside `playground/`; restart it after
+changing `package/`.

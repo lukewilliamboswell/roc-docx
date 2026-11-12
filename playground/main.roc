@@ -7,7 +7,7 @@ import pf.Engine
 import Playground
 
 ## The roc-docx playground, served at /playground/ beside the manual.
-## `blueprint run playground` builds dist/playground with the matching
+## `blueprint run playground` builds playground/dist with the matching
 ## roc-signals runtime and worker. The manual's fonts belong at
 ## ../_roc-docs/fonts/ relative to the served playground.
 main : Engine.Program

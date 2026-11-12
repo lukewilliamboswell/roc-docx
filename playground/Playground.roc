@@ -1068,7 +1068,7 @@ Playground := [].{
 					"round-trip",
 					[
 						Html.p_v(remote.map(Playground.status), [Engine.class("status")]),
-						Html.p_v(w.map(|x| if (x.size == 0) "" else if (x.equivalent) "✓ Written in ${Playground.bytes(x.size)}, and it reads as the same document." else "✗ Written in ${Playground.bytes(x.size)}, but it reads differently."), [Engine.class_v(w.map(|x| if (x.equivalent) "verdict good" else "verdict"))]),
+						Html.p_v(w.map(|x| if (x.size == 0) "" else if (x.equivalent) "✓ Written in ${Playground.bytes(x.size)}, and it reads as the same document." else "✗ Written in ${Playground.bytes(x.size)}, but it reads differently."), [Engine.class_v(w.map(|x| if (x.equivalent) "verdict good" else "verdict")), Engine.test_id("round-trip-verdict")]),
 						Playground.download(w.map(|x| x.base64), "written.docx", "Download the written document"),
 						Playground.table(
 							["Part", "After writing", "Read", "Written"],
