@@ -457,6 +457,8 @@ page gives the release's package URL, its examples archive and its API
 reference, restored from the release's documentation archive, and offers a
 newer release candidate beside it. The default branch's manual, its PDF and
 its API reference are published under `unreleased/`. The `docs` workflow
+builds the playground with the published signals tool and places its output
+at `playground/` beside the release front page and the unreleased manual. It
 assembles the site from the working tree and the release assets, so nothing
 rendered is committed. It builds the site on every pull request, as the
 `docs` check, whose `github-pages` artifact is the site to preview, and

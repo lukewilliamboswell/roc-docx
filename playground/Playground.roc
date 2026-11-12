@@ -209,8 +209,8 @@ Playground := [].{
 					"nav",
 					[Engine.class("links"), Html.aria_label("Elsewhere")],
 					[
-						Html.link("Manual", "../", []),
-						Html.link("API", "../api/", []),
+						Html.link("Manual", "../unreleased/", []),
+						Html.link("API", "../unreleased/api/", []),
 						Html.link("GitHub", "https://github.com/lukewilliamboswell/roc-docx", []),
 					],
 				),

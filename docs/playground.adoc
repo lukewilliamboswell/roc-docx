@@ -1,0 +1,43 @@
+= Try roc-docx in your browser
+
+The https://lukewilliamboswell.github.io/roc-docx/playground/[playground] runs roc-docx in your browser. Start with
+one of its four sample documents, or choose a `.docx` of your own. Your
+document stays on the page: reading, editing and writing run in Web Workers,
+using roc-docx compiled to WebAssembly.
+
+== Explore a document
+
+Explore follows the same pipeline an application uses: the ZIP archive and
+its limits, the package of parts and relationships, each part's XML, the
+structured document, its comments and tracked changes, and its text. Select
+a block to inspect its properties, styles, Roc value, source XML and the
+Roc call that reaches it. The text view compares the document as it stands
+with its changes accepted and rejected.
+
+Round trip writes the document and reads the result back, reports whether
+the documents are equivalent, and compares every part. The output may have
+different XML bytes because roc-docx writes its canonical form. Download it
+to inspect it in your editor.
+
+A sample's mode, stage and selected block are recorded in the URL, so you
+can share that view. A document you open yourself is never embedded in the
+URL.
+
+== Review changes and comments
+
+Review accepts or rejects tracked changes, replies to comments and resolves
+them, and turns change tracking on or off. Each edit rebuilds the result in
+a worker, writes it and reads it back. Undo removes the last edit; Download
+saves the written document. Enter the reviewer name you want the new
+comments and edits to carry.
+
+== Generate a letter
+
+Generate builds a letter from its form using the same builders as the
+letter example. Edit a field to rebuild the letter, inspect the Roc that
+builds it, and download the document or open it in Explore.
+
+The structure view helps explain the document model. It does not reproduce
+Word's pagination or page layout. The playground runs the current source;
+the site's primary API reference describes the latest release. Its Manual
+and API links open the documentation for the source it runs.

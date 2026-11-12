@@ -48,6 +48,8 @@ in the manual.
 
 - [The documentation site](https://lukewilliamboswell.github.io/roc-docx/):
   the latest release's package URL, examples and API reference.
+- [The browser playground](https://lukewilliamboswell.github.io/roc-docx/playground/):
+  explore a document, review comments and tracked changes, or generate a letter locally in your browser.
 - [The manual](docs/index.adoc), for application authors and contributors:
   what the package is, how to use it, the enduring
   [architecture](docs/architecture.adoc) and how to
