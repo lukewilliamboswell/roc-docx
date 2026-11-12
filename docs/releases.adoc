@@ -4,3 +4,5 @@ Each release's notes record what changed for application authors, the exact
 package URL and the compiler it was tested with.
 
 include::releases/0.1.0.adoc[leveloffset=+1]
+
+include::releases/0.1.0-rc1.adoc[leveloffset=+1]

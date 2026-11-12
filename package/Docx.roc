@@ -203,8 +203,9 @@ Docx :: [].{
 
 	## A document's footnotes in the order of their part, as [WmlRead.notes]
 	## reads them from the part the main document's footnotes relationship
-	## targets; a note reference names a note by its place in this list. A
-	## document without footnotes has none.
+	## targets, or as the document holds them once a footnote is built, as
+	## [Document.notes] gives them; a note reference names a note by its
+	## place in this list. A document without footnotes has none.
 	footnotes : Document -> List(Document.Note)
 	footnotes = |document| notes(document, footnotes_relationship)
 
@@ -792,7 +793,7 @@ resolved_everywhere = |document, resolve| {
 			Ok(part) => {
 				context = part_context(part, read_ids)
 				var $notes = List.with_capacity(8)
-				for note in WmlRead.notes(part.tree, context) {
+				for note in part_notes(document, part, read_ids) {
 					$notes = List.append($notes, { ..note, content: resolve(note.content, Bool.True)? })
 				}
 				written = WmlWrite.notes(part.tree, $notes, writing(context, read_ids, Set.with_capacity(0), 0))?
@@ -855,12 +856,18 @@ unchanged = |comments| {
 Written : { body : List(Document.Block), comments : List(Document.Comment), kept : Comments.Kept, places : List(List(U64)) }
 
 # What reading and writing the main document part need from the rest of the
-# package: its relationships and its notes' and comments' identifiers.
+# package: its relationships and its notes' and comments' identifiers, those
+# of notes held as the model as writing them gives them.
 main_context : Document, Str, List(Opc.Relationship) -> WmlRead.Context
 main_context = |document, name, relationships| {
 	ids = |kind|
 		match Document.related(document, name, kind) {
-			Ok(part) => WmlRead.note_ids(part.tree)
+			Ok(part) =>
+				match Document.notes(document, part.name) {
+					Ok(held) => WmlWrite.note_ids(part.tree, held.len())
+					Err(Whole) => WmlRead.note_ids(part.tree)
+				}
+
 			Err(NotFound) => []
 		}
 	comments = match Document.related(document, name, comments_relationship) {
@@ -916,7 +923,7 @@ written_with = |document, change| {
 	for kind in [footnotes_relationship, endnotes_relationship] {
 		match Document.related(document, main.name, kind) {
 			Ok(part) => {
-				read_notes = WmlRead.notes(part.tree, part_context(part, read_ids))
+				read_notes = part_notes(document, part, read_ids)
 				placed = if (change.places.is_empty()) read_notes else read_notes.map(|note| { ..note, content: Comments.relabel(note.content, change.places) })
 				$stories = List.append($stories, { part, content: Notes(placed) })
 			}
@@ -1152,10 +1159,19 @@ notes = |document, kind| {
 		Err(NotFound) => Err(NotFound)
 	}
 	match found {
-		Ok(part) => WmlRead.notes(part.tree, part_context(part, comment_ids(document)))
+		Ok(part) => part_notes(document, part, comment_ids(document))
 		Err(NotFound) => []
 	}
 }
+
+# The notes of a footnotes or endnotes part: those the document holds as the
+# model, or those read from its tree with the comments' identifiers.
+part_notes : Document, Document.XmlPart, List(Str) -> List(Document.Note)
+part_notes = |document, part, comments|
+	match Document.notes(document, part.name) {
+		Ok(held) => held
+		Err(Whole) => WmlRead.notes(part.tree, part_context(part, comments))
+	}
 
 comments_relationship : Str
 comments_relationship = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments"

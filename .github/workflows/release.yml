@@ -23,9 +23,20 @@ jobs:
       contents: write
       id-token: write
       attestations: write
-    uses: lukewilliamboswell/roc-automation/.github/workflows/release-package.yml@8f0bb2254540fcdd746bdb4ed10851b4c34c8203
+    uses: lukewilliamboswell/roc-automation/.github/workflows/release-package.yml@c55acc440d5aa7564ef01a7c320500307b4ee81a
     with:
       version: ${{ inputs.version || '' }}
       nightly-tag: ${{ inputs.nightly-tag || '' }}
       check-task: check
       setup-command: '["sudo", "apt-get", "install", "-y", "--no-install-recommends", "libxml2-utils"]'
+  # A release changes what the site leads with: once it is published, the
+  # site is built by a read-only job and deployed by one holding only the
+  # Pages permissions.
+  Site:
+    needs: Release
+    if: inputs.version != ''
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/docs.yml

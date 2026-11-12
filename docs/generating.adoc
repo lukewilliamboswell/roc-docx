@@ -47,7 +47,10 @@ include::../tests/manual.roc[tag=build,indent=0]
 
 `Build.append` adds blocks at the end of the body, before the end of its
 final section; the one empty paragraph of a new document gives way to the
-first blocks appended.
+first blocks appended. It extends the body in place while nothing else
+holds the document, as `Build.page_setup` and `Build.new_section` change
+it, so a long document can be built a paragraph at a time: keep only the
+document each call returns.
 
 `Build.paragraph` sets a paragraph's `style`, the normal style by default, a
 heading's with `Heading(1)` to `Heading(6)` or any style by its identifier
@@ -85,7 +88,10 @@ given one.
 reference to place in a paragraph, which shows the note's number. The note
 is a paragraph in the footnote text style starting with its number. A
 document without footnotes is given a footnotes part with the separator
-lines drawn above the notes.
+lines drawn above the notes. From the first footnote added, the document
+holds its footnotes as the model, as it holds the body, and adds each one in
+place while nothing else holds the document; a note takes its identifier,
+and any relationship its content needs, when the document is written.
 
 `Build.header` and `Build.footer` give the final section a header or
 footer, from blocks as the body's are, in a part of their own that is added

@@ -1,6 +1,6 @@
 app [target] {
 	docx: "../../package/main.roc",
-	fuzz: platform "https://github.com/lukewilliamboswell/roc-fuzz/releases/download/0.5.0/9WT86CuwM7ZJBSs8iTd1jLyrUFTTiGp5hcJE63TwswGE.tar.zst",
+	fuzz: platform "https://github.com/lukewilliamboswell/roc-fuzz/releases/download/0.6.0/6uc3YKGydgEnS2nrCimSYWDNfT6drYcgU52VAwqrb6DS.tar.zst",
 }
 
 import fuzz.Fuzz
@@ -150,7 +150,7 @@ exact_ceiling = |program|
 # requests 95,520 and 1,494,484 bytes and holds 60,590 and 947,810 live,
 # ratios of 15.6, 15.6 and 15.6 against the
 # sixteen the test allows. Reading the part as written, without markup
-# compatibility processing first (G2.7a), lowered them from 880 and 13,551.
+# compatibility processing first, lowered them from 880 and 13,551.
 small_program : List(U8)
 small_program = List.join(List.repeat(program_unit, 4))
 

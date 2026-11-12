@@ -1,9 +1,10 @@
 = Read and write the parts of a document
 
 This chapter opens a `.docx`, lists the parts inside it and writes them to a
-new package. It needs a Roc nightly on your `PATH` as `roc`. Until the first
-release, an application depends on the package by relative path from a
-checkout of the repository.
+new package. It needs a Roc nightly on your `PATH` as `roc`. The
+https://lukewilliamboswell.github.io/roc-docx/[documentation site]
+gives the latest release's package URL. The examples in this chapter run
+from a checkout and depend on its package by relative path.
 
 == What a document is made of
 
@@ -230,7 +231,8 @@ exactly as the archive stored it; the parts, their content types and their
 relationships are those of the original, with any relationship a part
 written from its model needs added, in the order `Opc.writer` fixes.
 The same document always gives the same bytes. A document holds the
-archive's bytes, the body's model and the trees of its other XML parts;
+archive's bytes, the body's model, the footnotes' model once a footnote is
+built, and the trees of its other XML parts;
 reading and writing it hold one part's bytes beyond them, and reading the
 main document holds one block's tree. `Document.from_package` reads a
 package you opened yourself, with limits of your choosing, every XML part

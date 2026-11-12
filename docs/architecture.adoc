@@ -28,13 +28,13 @@ The implementation is defined against a pinned standards corpus, recorded with d
 * *ZIP* as the PKWARE APPNOTE 6.3 describes it, with *DEFLATE* (RFC 1951).
 * *Unicode* as the Roc `Str` type carries it.
 
-Output targets the *Transitional* namespaces and schemas. Strict-namespace documents are accepted on input by namespace mapping once a slice delivers it; they are never produced. Word writes Transitional, LibreOffice and pandoc write Transitional, and a Strict output would be the least interoperable choice available.
+Output targets the *Transitional* namespaces and schemas. Strict-namespace documents are not read yet; when they are, it will be by mapping their namespaces to the Transitional ones, and they are never produced. Word writes Transitional, LibreOffice and pandoc write Transitional, and a Strict output would be the least interoperable choice available.
 
 Standards and extension-specification updates are reviewed changes to the ledger. An oracle or validator upgrade never silently changes what the package claims to conform to.
 
 == Scope and claims
 
-The package makes four distinct, testable claims. A capability is claimed only when the implementation plan records the evidence for it.
+The package makes four distinct, testable claims. A capability is claimed only when its evidence is in the repository and runs in CI: cases checked against the oracles, and fuzz properties with their ceilings.
 
 * *Reads.* A document produced by the supported producers parses into the typed model without error, with every supported construct recovered and every unsupported construct either preserved or reported, never dropped silently.
 * *Preserves.* Parsing a document and writing it back loses no part, no modelled fact and no preserved extension. Equivalence is defined in xref:architecture.adoc#fidelity-and-preservation[Fidelity and preservation].
@@ -69,7 +69,7 @@ The package does not open the binary `.doc` format, RTF or OpenDocument; does no
 
 == Core invariants
 
-These hold for every slice and are enforced by tests, fuzz targets and the oracle lanes:
+These hold for every change and are enforced by tests, fuzz targets and the oracle lanes:
 
 . *Pure Roc, no native dependencies.* The package and all of its runtime dependencies are pure Roc. External tools are test oracles only; nothing in `package/` invokes or links them.
 . *Never crash on input.* Parsing any byte sequence returns `Ok` or a structured `Err`. Resource use is bounded by explicit limits on archive size, part count, uncompressed size, XML depth and element count, so a hostile document fails fast with a named limit error. Each limit is checked before the memory it bounds is allocated: the ZIP central directory is checked against the limits before any entry is inflated, and inflation stops at the entry's limit.
@@ -78,7 +78,7 @@ These hold for every slice and are enforced by tests, fuzz targets and the oracl
 . *Deterministic.* The package reads no clock, draws no random numbers and depends on no host state. Dates and author identities come from the caller. Identifier allocation is a pure function of the model.
 . *Facts flow forward.* Each pipeline stage consumes facts the previous stage established and never re-derives them from incidental data. The WordprocessingML reader does not re-parse XML text; the writer does not inspect bytes it emitted earlier.
 . *Typed, structured errors.* Errors and diagnostics are tag unions with locations (part name, element path, offset) and never free-text only.
-. *Linear cost.* Parsing and writing are linear in input size for the modelled constructs. Evidence of allocation behaviour is part of a slice's completion, as xref:architecture.adoc#performance-and-storage[Performance and storage] says.
+. *Linear cost.* Parsing and writing are linear in input size for the modelled constructs. Evidence of allocation behaviour is part of every change that adds or alters an operation, as xref:architecture.adoc#performance-and-storage[Performance and storage] says.
 . *Bounded working set.* Opening a package costs memory proportional to its central directory. A part is inflated only when a stage consumes it, into a buffer sized from its checked declared size. Beyond the model, reading holds one part's bytes and its parse state; writing holds one part's serialized and compressed bytes and the central directory. Measured ceilings enforce these bounds.
 
 == The package as a pipeline
@@ -239,9 +239,9 @@ The same `Document` therefore produces the same bytes on every host, which the t
 
 == Resource bounds and security
 
-Documents are untrusted input. The reader enforces caps on compressed size, uncompressed size per entry and in total, entry count, part name length, XML nesting depth, element count and attribute count, each returning a named limit error. Defaults are generous for business documents and adjustable through parse options with an explicit upper bound. Relationship targets are resolved within the package; a target that escapes the package root is an error. No content is ever interpreted as a path on the host, a URL to fetch or code to run.
+Documents are untrusted input. The reader enforces caps on compressed size, uncompressed size per entry and in total, entry count, part name length, XML nesting depth, element count and attribute count, each returning a named limit error. Defaults are generous for business documents and adjustable through parse options; the value a caller gives is the bound, with no cap above it, so a caller that raises a limit for documents it trusts owns that choice. Relationship targets are resolved within the package; a target that escapes the package root is an error. No content is ever interpreted as a path on the host, a URL to fetch or code to run.
 
-Fuzz targets replay these guarantees continuously; the never-crash target is the first target every slice keeps green.
+Fuzz targets replay these guarantees continuously; the never-crash target is the first target every change keeps green.
 
 == Performance and storage
 
@@ -338,6 +338,7 @@ The fuzz inventory is part of the architecture because each target encodes a rul
 |Target |Property
 |`parse_never_crashes` |Any bytes parse to `Ok` or `Err` within the limits, and parsing is deterministic
 |`zip_opc_roundtrip` |A generated part set packages and unpacks to the same parts
+|`opc_open` |Any bytes open to a package or a structured error, the same way twice; every part reads back as the size it declares or as an error, and a part name over the limit is refused before anything is inflated
 |`xml_namespace_roundtrip` |A generated namespaced tree serializes and parses to an equivalent tree
 |`mce_processing` |MCE selection agrees with a reference implementation of the Part 3 rules on generated trees
 |`document_roundtrip` |A generated document writes and parses to an equivalent document, and writes to identical bytes twice
@@ -345,6 +346,9 @@ The fuzz inventory is part of the architecture because each target encodes a rul
 |`revision_algebra` |Accept and reject obey their laws: accept after tracked edit equals untracked edit; reject restores; final and original text agree with the untracked documents
 |`comment_anchors` |Adding, replying to, resolving and removing comments preserves text and keeps every range balanced and every identifier unique
 |`style_resolution` |Effective properties are idempotent under re-resolution and agree with a direct evaluation of the inheritance chain
+|`numbering_resolution` |List levels resolve to the format and start, or the reason they are not listed, that a direct evaluation of the numbering rules gives
+|`table_reading` |A body of generated tables reads back as written: rows with their skipped grid columns, cells with their text, spans and vertical merges, nested tables, and content controls in place, each repaired width with one diagnostic
+|`build_document` |A document built by the builders writes and reads back equivalent to what was built, and each builder costs at most a constant a call
 |===
 
 Allocation ceilings are asserted inside these targets as xref:architecture.adoc#performance-and-storage[Performance and storage] describes; nothing in CI accepts or updates a baseline.
@@ -360,6 +364,7 @@ A rule that lives only in guidance is followed until someone forgets it. Where a
 * every fuzz target declares examples and carries a measurement or ceiling;
 * every `TODO` names a GitHub issue;
 * every top-level `expect` in the package has a doc comment, so a failing test prints its name;
+* no loop in the package starts from a parameter as given when the parameter is a record holding a list, set, dictionary or string; it starts from an owned copy, a record update of the parameter, so its collections are updated in place;
 * every `.docx` outside the fixture corpus is byte-identical to a fixture, so it inherits that fixture's provenance;
 * every manual chapter opens with a title and is included by the manual's index;
 * every Roc listing in the manual is a tagged region of the compiled snippet program or an include of an example, never written out.
@@ -375,7 +380,9 @@ Formatting, fixture regeneration and schema validation are mechanical checks of 
 [source,text]
 ----
 package/main.roc        package root: the public module list and dependencies
+package/Build.roc       builders: paragraphs, runs, lists, tables, notes, headers, sections
 package/Docx.roc        facade: parse, write, query, edit, author
+package/Kit.roc         the default document kit a new document starts from
 package/Document.roc    the typed model and its equivalence
 package/Styles.roc      style table and effective-property resolution
 package/Numbering.roc   numbering definitions and list membership
@@ -388,10 +395,10 @@ package/Mce.roc         markup compatibility processing
 package/WmlRead.roc     XML trees to model
 package/WmlWrite.roc    model to XML trees, canonical order, identifiers
 package/Limits.roc      resource bounds and limit errors
-package/Error.roc       the error and diagnostic vocabulary
+package/Lenient.roc     values real producers write outside the schema, and their repairs
 ----
 
-Dependencies point downward only: the facade depends on the model and the readers and writers; readers and writers depend on OPC, XML and MCE; nothing below the model knows WordprocessingML. Fuzz targets, examples, tests and scripts live outside `package/` so the bundle contains only what a user needs.
+Dependencies point downward only: the builders depend on the facade; the facade depends on the model, the kit and the readers and writers; readers and writers depend on OPC, XML and MCE; nothing below the model knows WordprocessingML. There is no shared error module: each module declares the error and diagnostic tags it raises, with payloads that carry the facts, and the unions merge through `?` at each call, so a caller's error type names exactly what can reach it. Fuzz targets, examples, tests and scripts live outside `package/` so the bundle contains only what a user needs.
 
 == Dependencies
 
@@ -412,7 +419,7 @@ The ZIP and DEFLATE packages are pinned from the maintainer's forks because the 
 
 The repository follows the roc-automation manual's pure-package profile: `Blueprint.roc` and `Blueprint.lock` declare and pin tooling; `package/` is the bundle; `examples/` depend on the working tree by relative path; `fuzz/`, `tests/`, `oracle/` and `scripts/` sit outside the bundle; releases go through the shared release workflow and publish an immutable bundle, an examples archive and notes. Oracle adapters are the one place a language other than Roc is used in the repository, and only because independence from the package is their purpose.
 
-Work lands on an integration branch through small reviewed pull requests and reaches `main` at gate boundaries, as the implementation plan describes.
+Work lands on `main` through small reviewed pull requests, each stating what it ran and what that reported.
 
 == Rejected alternatives
 

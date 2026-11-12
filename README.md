@@ -5,8 +5,8 @@ including their comments and tracked changes.
 
 roc-docx is for applications that handle business documents: read what Word,
 LibreOffice or Google Docs produced, change it without losing anything, and
-generate new documents that open cleanly. It is under construction; the gates
-in [implementation-plan.md](implementation-plan.md) say what is verified.
+generate new documents that open cleanly. Each capability below is claimed
+because the tests, the oracles and the fuzz targets in this repository check it.
 
 **Comments.** roc-docx reads the comments Word, LibreOffice, Google Docs and
 pandoc write: each comment's author, date and content, the text it is anchored
@@ -36,12 +36,22 @@ LibreOffice reads the edited documents as the package does, and Word for
 Mac's *Accept All* and *Reject All* give the same text as the package on the
 documents it was tried on. See [Tracked changes](docs/tracked-changes.adoc) in the manual.
 
+**Generating.** roc-docx makes new documents from a default kit of styles,
+lists and properties: paragraphs, formatted text, lists, tables, links,
+footnotes, headers and footers with page numbers, page setups, section breaks
+and properties. Every generated document validates against the schemas and
+LibreOffice reads it as the package built it; Word for Mac opens the example
+gallery's letter, agreement, minutes and report without repair. Building a
+long document a paragraph, footnote or chapter at a time costs a constant
+number of allocations a call. See [Generate a document](docs/generating.adoc)
+in the manual.
+
+- [The documentation site](https://lukewilliamboswell.github.io/roc-docx/):
+  the latest release's package URL, examples and API reference.
 - [The manual](docs/index.adoc), for application authors and contributors:
   what the package is, how to use it, the enduring
   [architecture](docs/architecture.adoc) and how to
   [contribute](docs/contributing.adoc).
-- [implementation-plan.md](implementation-plan.md): the development plan
-  until the first release, after which it is removed.
 - [AGENTS.md](AGENTS.md): the principles everyone changing this repository
   follows.
 

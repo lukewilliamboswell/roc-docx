@@ -1,0 +1,34 @@
+= roc-docx 0.1.0-rc1
+
+The release candidate for the first release, 0.1.0. It was tested with the
+Roc compiler `nightly-2026-11-09-9e85de7`. Try it in an application and
+report what does not work before 0.1.0 is cut.
+
+== Use this release
+
+[source,roc]
+----
+app [main!] {
+	docx: "{package-url}",
+}
+----
+
+== What it does
+
+* Reads a `.docx` from Word, LibreOffice, Google Docs or pandoc within
+  resource limits, and writes it back with everything it did not change
+  kept: xref:getting-started.adoc#read-and-write-the-parts-of-a-document[Read and write the parts of a document]
+  and xref:limits-and-diagnostics.adoc#read-untrusted-and-imperfect-documents[Read untrusted and imperfect documents].
+* Reads a document's text, paragraphs, runs, formatting, styles, lists,
+  tables, links, notes, fields, pictures, sections, headers, footers and
+  properties: xref:reading-text.adoc#read-a-documents-text[Read a document's text].
+* Reads, adds, replies to, resolves and removes comments, with their
+  threads: xref:comments.adoc#read-a-documents-comments[Read a document's comments].
+* Reads, accepts and rejects tracked changes, and edits text, paragraphs
+  and tables silently or as tracked changes:
+  xref:tracked-changes.adoc#read-a-documents-tracked-changes[Read a document's tracked changes].
+* Writes every part it models in one canonical, schema-valid form:
+  xref:writing.adoc#write-a-document[Write a document].
+* Builds new documents with headings, lists, tables, links, footnotes,
+  headers, footers and sections:
+  xref:generating.adoc#generate-a-document[Generate a document].

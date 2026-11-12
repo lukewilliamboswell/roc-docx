@@ -255,34 +255,46 @@ Build :: [].{
 	## The document with `blocks` at the end of its body, before the end of
 	## its final section. A document whose body is the one empty paragraph a
 	## new document has, as [Docx.new_document] makes it, loses it to the
-	## first blocks appended.
+	## first blocks appended. The body is extended in place when nothing else
+	## holds the document, so appending a block at a time costs what the
+	## blocks cost.
 	append : Document, List(Document.Block) -> Document
-	append = |document, blocks| {
-		{ content, final } = split_final(Docx.body(document))
-		kept = if (!blocks.is_empty() and content == [empty_paragraph]) [] else content
-		Document.with_body(document, List.append(List.concat(kept, blocks), Section(final)))
-	}
+	append = |document, blocks|
+		body_changed(
+			document,
+			|body| {
+				{ content, final } = split_final(body)
+				kept = if (!blocks.is_empty() and content.len() == 1 and content.first() == Ok(empty_paragraph)) [] else content
+				List.append(List.concat(kept, blocks), Section(final))
+			},
+		)
 
 	## The document with a footnote of `content` after its footnotes, and a
 	## reference to it to place in a paragraph: a run in the footnote
 	## reference style that shows the note's number. The note is a
 	## paragraph in the footnote text style that starts with its number and
 	## a space. A document without footnotes is given a footnotes part, with
-	## the separator lines Word and LibreOffice draw above notes.
+	## the separator lines Word and LibreOffice draw above notes. The
+	## footnotes are kept as the model from the first footnote added, as
+	## [Document.with_notes] keeps them, and added to in place when nothing
+	## else holds the document, so adding a footnote costs what the note
+	## costs; the note is written into the part, with its identifier and any
+	## relationship it needs, when the document is written.
 	footnote : Document, List(Document.Inline) -> Try({ document : Document, reference : Document.Inline }, Error)
 	footnote = |document, content| {
-		main = main_part(document)?
-		with_part = match Document.related(document, main.name, footnotes_relationship) {
-			Ok(_) => document
-			Err(NotFound) => Document.with_new_part(document, { source: main.name, kind: footnotes_relationship, name: free_name(document, "footnotes", One), content_type: wordprocessingml_type("footnotes") }, footnotes_shell)
-		}
-		part = Document.related(with_part, main.name, footnotes_relationship) ? |_| NoMainDocument
-		notes = Docx.footnotes(with_part)
+		main = main_name(document)?
+		has_notes = Document.related(document, main, footnotes_relationship).is_ok()
+		with_part = if (has_notes) document else Document.with_new_part(document, { source: main, kind: footnotes_relationship, name: free_name(document, "footnotes", One), content_type: wordprocessingml_type("footnotes") }, footnotes_shell)
+		part = Document.related(with_part, main, footnotes_relationship) ? |_| NoMainDocument
 		mark = Run({ properties: { ..Document.no_run_properties, style: Style("FootnoteReference") }, content: [NoteMark(Footnote)] })
 		note = { kind: Note, content: [Paragraph({ properties: { ..Document.no_paragraph_properties, style: Style("FootnoteText") }, content: List.concat([mark, Build.text(" ", {})], content) })] }
-		written = WmlWrite.notes(part.tree, List.append(notes, note), part_context(with_part, main.name, part.relationships))?
-		reference = Run({ properties: { ..Document.no_run_properties, style: Style("FootnoteReference") }, content: [NoteReference({ kind: Footnote, note: notes.len() })] })
-		Ok({ document: Document.with_part(with_part, part.name, written.tree, written.relationships), reference })
+		_ = WmlWrite.notes(w("footnotes", [], []), [note], part_context(with_part, main, part.relationships))?
+		held = match Document.notes(with_part, part.name) {
+			Ok(_) => with_part
+			Err(Whole) => Document.with_notes(with_part, part.name, Docx.footnotes(with_part))
+		}
+		place = Document.notes(held, part.name).map_ok(|notes| notes.len()) ?? 0
+		Ok({ document: Document.map_notes(held, part.name, |notes| List.append(notes, note)), reference: reference_to(place) })
 	}
 
 	## The document with `content` as the header of the pages of its final
@@ -305,10 +317,14 @@ Build :: [].{
 	## The document with its final section's page set as `setup` says; the
 	## section keeps its headers, footers and everything else it states.
 	page_setup : Document, PageSetup -> Document
-	page_setup = |document, setup| {
-		{ content, final } = split_final(Docx.body(document))
-		Document.with_body(document, List.append(content, Section(with_setup(final, setup))))
-	}
+	page_setup = |document, setup|
+		body_changed(
+			document,
+			|body| {
+				{ content, final } = split_final(body)
+				List.append(content, Section(with_setup(final, setup)))
+			},
+		)
 
 	## The document with its final section ended where its body ends, keeping
 	## its page, headers and footers, and a new final section after it whose
@@ -318,15 +334,19 @@ Build :: [].{
 	## a paragraph's mark, so a body that does not end with a paragraph is
 	## given an empty one.
 	new_section : Document, PageSetup -> Document
-	new_section = |document, setup| {
-		{ content, final } = split_final(Docx.body(document))
-		ended = match content.last() {
-			Ok(Paragraph(_)) => content
-			_ => List.append(content, empty_paragraph)
-		}
-		next = { ..with_setup(final, setup), columns: final.columns, page_numbers: Unset, title_page: Unset, headers: [], footers: [], change: [] }
-		Document.with_body(document, List.concat(ended, [Section(final), Section(next)]))
-	}
+	new_section = |document, setup|
+		body_changed(
+			document,
+			|body| {
+				{ content, final } = split_final(body)
+				ended = match content.last() {
+					Ok(Paragraph(_)) => content
+					_ => List.append(content, empty_paragraph)
+				}
+				next = { ..with_setup(final, setup), columns: final.columns, page_numbers: Unset, title_page: Unset, headers: [], footers: [], change: [] }
+				List.append(List.append(ended, Section(final)), Section(next))
+			},
+		)
 
 	## The document with its core properties as `properties` gives them over
 	## those it has, as [Docx.set_properties] sets them; a date that is not in
@@ -336,9 +356,14 @@ Build :: [].{
 	properties = |document, given| Docx.set_properties(document, given)
 }
 
-# The main document part.
-main_part : Document -> Try(Document.XmlPart, [NoMainDocument])
-main_part = |document| Document.related(document, "/", Opc.officedocument_relationship).map_err(|_| NoMainDocument)
+# The main document part's name. Only the name is kept, so that adding a
+# relationship to the part does not copy the relationships it has.
+main_name : Document -> Try(Str, [NoMainDocument])
+main_name = |document|
+	match Document.related(document, "/", Opc.officedocument_relationship) {
+		Ok(part) => Ok(part.name)
+		Err(NotFound) => Err(NoMainDocument)
+	}
 
 # What writing a notes, header or footer part needs: its relationships and
 # the comments' identifiers, which a range or reference in it names.
@@ -351,14 +376,38 @@ part_context = |document, main, relationships| {
 	{ relationships, footnotes: [], endnotes: [], comments }
 }
 
+# The document with its body as `change` makes it, in place when nothing
+# else holds the document; a body its main document part's tree holds is
+# read first.
+body_changed : Document, (List(Document.Block) -> List(Document.Block)) -> Document
+body_changed = |document, change| {
+	held = match Document.body(document) {
+		Ok(_) => document
+		Err(Whole) => Document.with_body(document, Docx.body(document))
+	}
+	Document.map_body(held, change)
+}
+
 # A body's content and its final section, the last block where it is a
 # section, or a section that states nothing.
 split_final : List(Document.Block) -> { content : List(Document.Block), final : Document.Section }
 split_final = |blocks|
 	match blocks.last() {
 		Ok(Section(final)) => { content: blocks.drop_last(1), final }
-		_ => { content: blocks, final: { start: Unset, page_size: Unset, margins: Unset, columns: Unset, page_numbers: Unset, title_page: Unset, headers: [], footers: [], preserved: [], change: [] } }
+		_ => { content: blocks, final: no_section }
 	}
+
+# A body's final section, as [split_final] finds it, read without taking
+# the body apart.
+final_of : List(Document.Block) -> Document.Section
+final_of = |blocks|
+	match blocks.last() {
+		Ok(Section(final)) => final
+		_ => no_section
+	}
+
+no_section : Document.Section
+no_section = { start: Unset, page_size: Unset, margins: Unset, columns: Unset, page_numbers: Unset, title_page: Unset, headers: [], footers: [], preserved: [], change: [] }
 
 # A section with its page and start as `setup` says.
 with_setup : Document.Section, Build.PageSetup -> Document.Section
@@ -388,12 +437,12 @@ with_setup = |section, setup| {
 # and a first page the section's title page.
 region : Document, List(Document.Block), [Header, Footer], [Default, Even, First] -> Try(Document, Build.Error)
 region = |document, content, which, pages| {
-	main = main_part(document)?
+	main = main_name(document)?
 	(kind, local, root) = match which {
 		Header => (header_relationship, "header", "hdr")
 		Footer => (footer_relationship, "footer", "ftr")
 	}
-	{ content: body, final } = split_final(Docx.body(document))
+	final = final_of(Docx.body(document))
 	listed = match which {
 		Header => final.headers
 		Footer => final.footers
@@ -406,7 +455,7 @@ region = |document, content, which, pages| {
 		Ok(found) => (document, found)
 		Err(NotFound) => {
 			added = free_name(document, local, Many)
-			(Document.with_new_part(document, { source: main.name, kind, name: added, content_type: wordprocessingml_type(local) }, w(root, [], [])), added)
+			(Document.with_new_part(document, { source: main, kind, name: added, content_type: wordprocessingml_type(local) }, w(root, [], [])), added)
 		}
 	}
 	part = Document.xml_part(with_part, name) ? |_| NoMainDocument
@@ -414,14 +463,18 @@ region = |document, content, which, pages| {
 		Ok(Paragraph(_)) => content
 		_ => List.append(content, empty_paragraph)
 	}
-	written = WmlWrite.header_footer(w(root, [], []), ended, part_context(with_part, main.name, part.relationships))?
+	written = WmlWrite.header_footer(w(root, [], []), ended, part_context(with_part, main, part.relationships))?
 	referenced = List.append(listed.drop_if(|reference| reference.kind == pages), { kind: pages, part: name })
-	titled = if (pages == First) { ..final, title_page: On } else final
-	section = match which {
-		Header => { ..titled, headers: referenced }
-		Footer => { ..titled, footers: referenced }
+	referring = |body| {
+		{ content: blocks, final: last } = split_final(body)
+		titled = if (pages == First) { ..last, title_page: On } else last
+		section = match which {
+			Header => { ..titled, headers: referenced }
+			Footer => { ..titled, footers: referenced }
+		}
+		List.append(blocks, Section(section))
 	}
-	with_region = Document.with_body(Document.with_part(with_part, name, written.tree, written.relationships), List.append(body, Section(section)))
+	with_region = body_changed(Document.with_part(with_part, name, written.tree, written.relationships), referring)
 	if pages == Even {
 		Ok(Docx.set_different_odd_and_even(with_region, On) ? |_| NoMainDocument)
 	} else {
@@ -437,11 +490,15 @@ free_name : Document, Str, [One, Many] -> Str
 free_name = |document, local, how_many| {
 	name = |number| if (number == 1 and how_many == One) "/word/${local}.xml" else "/word/${local}${number.to_str()}.xml"
 	var $number = 1.U64
-	while Document.xml_part(document, name($number)).is_ok() {
+	while Document.has_part(document, name($number)) {
 		$number = $number + 1
 	}
 	name($number)
 }
+
+# A reference to the footnote at `place` among a document's footnotes.
+reference_to : U64 -> Document.Inline
+reference_to = |place| Run({ properties: { ..Document.no_run_properties, style: Style("FootnoteReference") }, content: [NoteReference({ kind: Footnote, note: place })] })
 
 # A run's content: the text between tabs and line feeds, a tab for each tab
 # and a line break for each line feed.
@@ -655,6 +712,42 @@ expect {
 				_ => []
 			}
 			notes.map(|note| note.kind) == [Separator, ContinuationSeparator, Note, Note] and texts == [" First source.", " Second source."] and references == [{ kind: Footnote, note: 2 }, { kind: Footnote, note: 3 }]
+		}
+
+		Err(_) => Bool.False
+	}
+}
+
+## Footnotes added one by one, one of them holding a bookmark, are written
+## with the lowest identifiers after the separators' and read back in place
+## with their text and the bookmark.
+expect {
+	built_notes = |{}| {
+		created = Docx.new_document({}) ? |_| Unbuilt
+		first = Build.footnote(created, [Build.text("Plain.", {})]) ? |_| Unbuilt
+		second = Build.footnote(first.document, [BookmarkStart("cited"), Build.text("Marked.", {}), BookmarkEnd("cited")]) ? |_| Unbuilt
+		third = Build.footnote(second.document, [Build.text("Last.", {})]) ? |_| Unbuilt
+		body = Build.append(third.document, [Build.paragraph({}, [first.reference, second.reference, third.reference])])
+		read = round_trip(body) ? |_| Unbuilt
+		ids = match Document.related(read, "/word/document.xml", footnotes_relationship) {
+			Ok(part) => WmlRead.note_ids(part.tree)
+			Err(NotFound) => []
+		}
+		Ok({ ids, read })
+	}
+	match built_notes({}) {
+		Ok({ ids, read }) => {
+			notes = Docx.footnotes(read).drop_first(2)
+			marked = match notes.get(1) {
+				Ok(note) => note.content.any(
+					|block| match block {
+						Paragraph(paragraph) => paragraph.content.contains(BookmarkStart("cited"))
+						_ => Bool.False
+					},
+				)
+				Err(_) => Bool.False
+			}
+			ids == ["-1", "0", "1", "2", "3"] and notes.map(|note| Str.join_with(note.content.map(block_text), "")) == [" Plain.", " Marked.", " Last."] and marked
 		}
 
 		Err(_) => Bool.False

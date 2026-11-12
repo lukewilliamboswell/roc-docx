@@ -1,0 +1,132 @@
+name: Documentation
+
+# The site leads with the latest release: its install snippet, examples and API
+# reference, restored from its assets. A release candidate newer than it is
+# offered beside it, and the default branch's manual and API reference are
+# published under unreleased/. Nothing rendered is committed; the site is
+# assembled here from the working tree and the release assets, built on every
+# pull request and deployed from the default branch. release.yml calls this
+# workflow after it publishes, because a release changes what the site shows.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  workflow_call:
+
+permissions: {}
+
+jobs:
+  docs:
+    name: docs
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    env:
+      # Where the site is published; the front page links into it absolutely, as a PDF must.
+      SITE: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: lukewilliamboswell/roc-automation/actions/setup-blueprint@c55acc440d5aa7564ef01a7c320500307b4ee81a
+        with:
+          cache: 'true'
+          cache-workload: docs
+      # `roc docs` generates the API reference beside the manual.
+      - uses: roc-lang/setup-roc@f5a74bf90aa694b43ab4a7cbfdb19273bc6aa697
+        with:
+          version: nightly-new-compiler
+      - run: blueprint run docs -- --docs-version "$LABEL" --site-url "${SITE}unreleased/"
+        env:
+          LABEL: ${{ github.event_name == 'pull_request' && format('unreleased (pull request {0})', github.event.number) || 'unreleased' }}
+      - name: Assemble the site from the manual and the release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          name="${REPO#*/}"
+          pages=.docs-out/pages
+          work=.docs-out/assemble
+          mkdir "$pages" "$work"
+          mv .docs-out/site "$pages/unreleased"
+
+          # GitHub's latest release is never a prerelease; until the first one
+          # the endpoint answers 404.
+          if gh api "repos/$REPO/releases/latest" > "$work/latest.json" 2> "$work/latest.err"; then
+            latest="$(jq -r .tag_name "$work/latest.json")"
+            since="$(jq -r .published_at "$work/latest.json")"
+          elif grep -q 'HTTP 404' "$work/latest.err"; then
+            latest=''
+            since=''
+          else
+            cat "$work/latest.err" >&2
+            exit 1
+          fi
+          # The candidate is the newest prerelease published after the latest release.
+          candidate="$(gh api "repos/$REPO/releases?per_page=100" | jq -r --arg since "$since" \
+            '[.[] | select(.prerelease and (.draft | not) and .published_at > $since)] | sort_by(.published_at) | last | .tag_name // empty')"
+
+          # Restores a release's API reference from its documentation archive
+          # to the given directory, and writes its install snippet and links.
+          release() {
+            version="$1"
+            api="$2"
+            gh api "repos/$REPO/releases/tags/$version" > "$work/release.json"
+            bundle="$(jq -r '[.assets[] | select(.name | endswith(".tar.zst")) | .browser_download_url] | if length == 1 then .[0] else error("expected one bundle") end' "$work/release.json")"
+            examples="$(jq -r --arg n "$name-examples-$version.zip" '.assets[] | select(.name == $n) | .browser_download_url' "$work/release.json")"
+            test -n "$examples"
+            gh release download "$version" --repo "$REPO" --pattern "$name-docs-$version.zip" --dir "$work/$version"
+            unzip -q "$work/$version/$name-docs-$version.zip" -d "$work/$version/docs"
+            test -f "$work/$version/docs/$version/index.html"
+            mkdir -p "$(dirname "$pages/$api")"
+            mv "$work/$version/docs/$version" "$pages/$api"
+            # shellcheck disable=SC2016 # the backquotes are Markdown
+            printf 'Depend on it from the header of your application:\n\n```roc\napp [main!] {\n\tdocx: "%s",\n}\n```\n\n' "$bundle"
+            printf -- '- [API reference](%s%s/index.html)\n' "$SITE" "$api"
+            printf -- '- [Examples](%s), every example of the release as a ZIP archive\n' "$examples"
+            printf -- '- [Release notes](https://github.com/%s/releases/tag/%s)\n\n' "$REPO" "$version"
+          }
+
+          {
+            # shellcheck disable=SC2016 # the backquotes are Markdown
+            printf '# roc-docx\n\nroc-docx reads and writes Word documents (`.docx`) in pure Roc, including their comments and tracked changes.\n\n'
+            if [ -n "$latest" ]; then
+              printf '## roc-docx %s\n\nThe latest release.\n\n' "$latest"
+              release "$latest" api
+            else
+              printf '## No release yet\n\nroc-docx has not made its first release.\n\n'
+            fi
+            if [ -n "$candidate" ]; then
+              printf '## Release candidate %s\n\nA candidate for the next release, published to be tried in real applications before it is released. Report what does not work as an issue.\n\n' "$candidate"
+              release "$candidate" "$candidate/api"
+            fi
+            printf '## Unreleased\n\n'
+            printf 'The [manual](%sunreleased/index.html), its [PDF](%sunreleased/%s.pdf) and the [API reference](%sunreleased/api/index.html) of the default branch, which may describe changes not yet released.\n' "$SITE" "$SITE" "$name" "$SITE"
+          } > "$work/index.md"
+
+          renderer="$(blueprint run docs-path)"
+          "$renderer" render "$work/index.md" "$work/front" --title "$name" --version "${latest:-no release yet}" --pdf-filename "$name-releases.pdf"
+          mv "$work/front/"* "$pages/"
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9
+        with:
+          path: .docs-out/pages/
+
+  deploy:
+    if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    needs: docs
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    # Deployments run one at a time and in order; every run deploys the whole site.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346

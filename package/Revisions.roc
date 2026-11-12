@@ -300,6 +300,11 @@ Revisions :: [].{
 # one follows directly, if it comes next.
 Walk : { listed : List(Revisions.Listed), sources : List(Str), destinations : List(Str), previous : Try(U64, [NoChange]) }
 
+# A walk owned by the loop that carries it, as [owned] makes resolving's
+# state.
+owned_walk : Walk -> Walk
+owned_walk = |walk| { ..walk, previous: walk.previous }
+
 # A change of structure, listed where it stands, which no change follows.
 Structural : { kind : Revisions.Kind, of : Revisions.Subject, author : Str, date : [Unset, Date(Document.Timestamp)] }
 
@@ -389,7 +394,7 @@ structural = |walk, changes, covered|
 # its mark.
 list_content : Walk, List(Document.Inline) -> Walk
 list_content = |walk, content| {
-	var $walk = walk
+	var $walk = owned_walk(walk)
 	var $previous = walk.previous
 	for inline in content {
 		match inline {
@@ -595,6 +600,11 @@ hidden = |kind, view|
 	}
 
 TextState : { text : List(U8), joining : Bool }
+
+# The text so far owned by the loop that carries it, as [owned] makes
+# resolving's state.
+owned_text : TextState -> TextState
+owned_text = |state| { ..state, joining: state.joining }
 
 block_text : TextState, Document.Block, Revisions.View -> TextState
 block_text = |state, block, view|
@@ -1303,6 +1313,11 @@ no_edit = {
 	mark: [],
 }
 
+# An edit owned by the loop that carries it, as [owned] makes resolving's
+# state.
+owned_edit : Editing -> Editing
+owned_edit = |state| { ..state, at: state.at }
+
 # How an edit is made, its date read as an instant.
 made_by : Revisions.Context -> Try([Untracked, Tracked(Document.Change)], [NotADate(Str)])
 made_by = |context|
@@ -1336,7 +1351,7 @@ edit_line = |state| {
 
 edit_blocks : List(Document.Block), Editing -> { blocks : List(Document.Block), state : Editing }
 edit_blocks = |blocks, state| {
-	var $state = state
+	var $state = owned_edit(state)
 	var $out = List.with_capacity(blocks.len())
 	for block in blocks {
 		match block {
@@ -1387,7 +1402,7 @@ edit_table_content = |item, state|
 		}
 
 		Container({ element, content }) => {
-			var $inner = state
+			var $inner = owned_edit(state)
 			var $edited = List.with_capacity(content.len())
 			for child in content {
 				out = edit_table_content(child, $inner)
@@ -1409,7 +1424,7 @@ edit_row_content = |item, state|
 		}
 
 		Container({ element, content }) => {
-			var $inner = state
+			var $inner = owned_edit(state)
 			var $edited = List.with_capacity(content.len())
 			for child in content {
 				out = edit_row_content(child, $inner)
@@ -1644,7 +1659,7 @@ added = |properties, state| {
 # going before the next inline there.
 edit_inlines : List(Document.Inline), Editing, Bool -> { inlines : List(Document.Inline), state : Editing }
 edit_inlines = |inlines, state, current| {
-	var $state = state
+	var $state = owned_edit(state)
 	var $out = List.with_capacity(inlines.len() + 1)
 	for inline in inlines {
 		if current and $state.pending {
@@ -1826,7 +1841,7 @@ BlockEdit : List(Document.Block), U64, TextState -> Try(List(Document.Block), Bl
 # of all the blocks.
 at_block : List(Document.Block), TextState, U64, BlockEdit -> { state : TextState, outcome : Found(List(Document.Block)) }
 at_block = |blocks, state, at, apply| {
-	var $state = state
+	var $state = owned_text(state)
 	var $index = 0.U64
 	for block in blocks {
 		if begins(block) and line_start($state) and $state.text.len() == at {
@@ -1863,7 +1878,7 @@ at_block = |blocks, state, at, apply| {
 
 at_table : List(Document.TableContent), TextState, U64, BlockEdit -> { state : TextState, outcome : Found(List(Document.TableContent)) }
 at_table = |items, state, at, apply| {
-	var $state = state
+	var $state = owned_text(state)
 	var $index = 0.U64
 	for item in items {
 		inner = match item {
@@ -1893,7 +1908,7 @@ at_table = |items, state, at, apply| {
 
 at_row : List(Document.RowContent), TextState, U64, BlockEdit -> { state : TextState, outcome : Found(List(Document.RowContent)) }
 at_row = |items, state, at, apply| {
-	var $state = state
+	var $state = owned_text(state)
 	var $index = 0.U64
 	for item in items {
 		inner = match item {
@@ -2130,7 +2145,7 @@ previous_of = |properties| {
 # of sections and other content without text up to the next block.
 deleted_at : List(Document.Block), U64, TextState, { start : U64, end : U64 }, [Untracked, Tracked(Document.Change)] -> Try(List(Document.Block), BlockProblem)
 deleted_at = |items, index, state, span, made| {
-	var $state = state
+	var $state = owned_text(state)
 	var $last = Err(NotFound)
 	var $at = index
 	for block in items.drop_first(index) {
