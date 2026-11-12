@@ -16,13 +16,13 @@ class DocxFile extends HTMLElement {
     const root = this.attachShadow({ mode: "open" });
     root.innerHTML = `
       <style>
-        label { display: grid; gap: .25rem; place-items: center; min-height: 9rem; padding: 1.5rem;
-          border: 2px dashed var(--rule); border-radius: 10px; background: var(--panel); cursor: pointer;
+        label { display: grid; gap: .2rem; place-content: center; min-height: 8rem; padding: 1.5rem;
+          border: 1px dashed var(--edge); border-radius: var(--radius); background: var(--panel); cursor: pointer;
           text-align: center; transition: border-color .15s, background .15s; }
-        label:hover, label.over { border-color: var(--link); }
+        label:hover, label.over { border-color: var(--link); background: var(--select); }
         label:focus-within { outline: 2px solid var(--link); outline-offset: 3px; }
-        strong { font: 700 1.05rem "Merriweather", Georgia, serif; }
-        span { color: var(--muted); font-size: .9rem; }
+        strong { font-weight: 700; }
+        span { color: var(--muted); font-size: .85rem; }
         input { position: absolute; opacity: 0; width: 1px; height: 1px; }
       </style>
       <label part="zone">
