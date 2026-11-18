@@ -36,7 +36,7 @@ jobs:
       # `roc docs` generates the API reference beside the manual.
       - uses: roc-lang/setup-roc@dd81390553b0a1236aedb61cdd4c0ed7cf7eaec4
         with:
-          version: nightly-new-compiler
+          version: nightly
       - run: blueprint run docs -- --docs-version "$LABEL" --site-url "${SITE}unreleased/"
         env:
           LABEL: ${{ github.event_name == 'pull_request' && format('unreleased (pull request {0})', github.event.number) || 'unreleased' }}
