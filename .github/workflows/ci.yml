@@ -24,7 +24,7 @@ jobs:
           cache-workload: check
       - uses: roc-lang/setup-roc@dd81390553b0a1236aedb61cdd4c0ed7cf7eaec4
         with:
-          version: nightly-new-compiler
+          version: nightly
       # xmllint validates every written part against the ECMA-376 schemas.
       - run: sudo apt-get install -y --no-install-recommends libxml2-utils
       # The ledger-pinned standards downloads, keyed by the ledger that pins them.
@@ -49,7 +49,7 @@ jobs:
       # The lane's pass-through cases write the documents LibreOffice reads back.
       - uses: roc-lang/setup-roc@dd81390553b0a1236aedb61cdd4c0ed7cf7eaec4
         with:
-          version: nightly-new-compiler
+          version: nightly
       # The distribution's LibreOffice; the lane prints the version it compared against.
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libreoffice-writer
       - run: blueprint run libreoffice
