@@ -1,0 +1,32 @@
+= roc-docx 0.1.1
+
+This patch updates the package and its examples for Roc
+`nightly-2026-11-18-a520eed`. The document model and public API are unchanged.
+
+== Upgrade an application
+
+Update the package URL and use a platform compatible with your compiler.
+The maintained command-line examples use basic-cli 0.28.1:
+
+[source,roc]
+----
+app [main!] {
+	cli: platform "https://github.com/roc-lang/basic-cli/releases/download/0.28.1/7brgwR8YUqfeGrkdfF1V4GPPN7DnP7ftqub9KcrTEZtr.tar.zst",
+	docx: "{package-url}",
+}
+----
+
+Command-line entry points take `List(OsStr)`; convert arguments directly to
+paths with `Path.from_os_str`.
+
+== Compiler and dependency compatibility
+
+An explicit type on the style-toggle helper supports the newer compiler's
+inference, and local names no longer shadow module declarations. The ZIP
+dependency uses CRC32 2.0.1, whose tests compile on this nightly; the XML
+dependency is roc-parser 6.0.0-rc.3.
+
+Repository tooling uses the same nightly as its fixed `roc-stable`
+compiler, with basic-cli 0.28.1 and roc-fuzz 0.7.0. The package itself carries
+no compiler pin. The browser playground uses Signals 0.6.0 and its matching
+runtime, with explicit reporting of worker payload failures.
