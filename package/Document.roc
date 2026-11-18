@@ -817,8 +817,8 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 			return { pkg, graph, trees, body: held, notes: models }
 		}
 		holds_body = graph.relationships.any(|rel| rel.kind == Opc.officedocument_relationship and rel.mode == Internal and Str.caseless_ascii_equals(rel.target, name))
-		body = if (holds_body) Whole else held
-		{ pkg, graph: { relationships: graph.relationships, parts: related_by(graph.parts, name, |_| relationships) }, trees: trees.insert(name, tree), body, notes: models.drop_if(|model| model.part == name) }
+		next_body = if (holds_body) Whole else held
+		{ pkg, graph: { relationships: graph.relationships, parts: related_by(graph.parts, name, |_| relationships) }, trees: trees.insert(name, tree), body: next_body, notes: models.drop_if(|model| model.part == name) }
 	}
 
 	## An XML part as reading left it: its name, its tree, and the
@@ -866,9 +866,9 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 	## [Document.to_bytes] writes every XML part.
 	with_new_part : Document, { source : Str, kind : Str, name : Str, content_type : Str }, XmlTree.Node -> Document
 	with_new_part = |document, new, tree| {
-		{ pkg, graph, trees, body, notes: models } = document
+		{ pkg, graph, trees, body: held_body, notes: models } = document
 		if graph.parts.any(|part| part.name == new.name) or (new.source != "/" and !graph.parts.any(|part| part.name == new.source)) {
-			return { pkg, graph, trees, body, notes: models }
+			return { pkg, graph, trees, body: held_body, notes: models }
 		}
 		related_from = |relationships| {
 			var $number = 1.U64
@@ -880,7 +880,7 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 		parts = if (new.source == "/") graph.parts else related_by(graph.parts, new.source, related_from)
 		added = List.append(parts, { name: new.name, content_type: new.content_type, relationships: [] })
 		package_relationships = if (new.source == "/") related_from(graph.relationships) else graph.relationships
-		{ pkg, graph: { relationships: package_relationships, parts: added }, trees: trees.insert(new.name, tree), body, notes: models }
+		{ pkg, graph: { relationships: package_relationships, parts: added }, trees: trees.insert(new.name, tree), body: held_body, notes: models }
 	}
 
 	## The document with `blocks` as the body of its main document part,
@@ -901,8 +901,8 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 	## whose main document part's tree holds its body is returned as it is.
 	map_body : Document, (List(Block) -> List(Block)) -> Document
 	map_body = |document, change| {
-		{ pkg, graph, trees, body, notes: models } = document
-		match body {
+		{ pkg, graph, trees, body: held_body, notes: models } = document
+		match held_body {
 			Blocks({ part, body: read }) => { pkg, graph, trees, body: Blocks({ part, body: { blocks: change(read.blocks), diagnostics: [] } }), notes: models }
 			Whole => { pkg, graph, trees, body: Whole, notes: models }
 		}
@@ -927,10 +927,10 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 	## nothing.
 	with_notes : Document, Str, List(Note) -> Document
 	with_notes = |document, name, held| {
-		{ pkg, graph, trees, body, notes: models } = document
+		{ pkg, graph, trees, body: held_body, notes: models } = document
 		match trees.get(name) {
-			Ok(tree) => { pkg, graph, trees: trees.insert(name, notes_shell(tree)), body, notes: List.append(models.drop_if(|other| other.part == name), { part: name, notes: held }) }
-			Err(_) => { pkg, graph, trees, body, notes: models }
+			Ok(tree) => { pkg, graph, trees: trees.insert(name, notes_shell(tree)), body: held_body, notes: List.append(models.drop_if(|other| other.part == name), { part: name, notes: held }) }
+			Err(_) => { pkg, graph, trees, body: held_body, notes: models }
 		}
 	}
 
@@ -941,8 +941,8 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 	## part whose tree holds its notes is returned as it is.
 	map_notes : Document, Str, (List(Note) -> List(Note)) -> Document
 	map_notes = |document, name, change| {
-		{ pkg, graph, trees, body, notes: models } = document
-		{ pkg, graph, trees, body, notes: held_by(models, name, change) }
+		{ pkg, graph, trees, body: held_body, notes: models } = document
+		{ pkg, graph, trees, body: held_body, notes: held_by(models, name, change) }
 	}
 
 	## A document built rather than read: the parts and relationships of
@@ -954,11 +954,11 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 	## fails with `MissingPart`. A graph without a main document has no body.
 	from_trees : Opc.Graph, Dict(Str, XmlTree.Node), List(Block) -> Document
 	from_trees = |graph, trees, blocks| {
-		body = match graph.relationships.find_first(|rel| rel.kind == Opc.officedocument_relationship and rel.mode == Internal) {
+		built_body = match graph.relationships.find_first(|rel| rel.kind == Opc.officedocument_relationship and rel.mode == Internal) {
 			Ok(main) => Blocks({ part: main.target, body: { blocks, diagnostics: [] } })
 			Err(_) => Whole
 		}
-		{ pkg: Opc.empty, graph, trees, body, notes: [] }
+		{ pkg: Opc.empty, graph, trees, body: built_body, notes: [] }
 	}
 
 	## Every XML part of the document, in the order of its part graph.

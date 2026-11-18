@@ -2116,7 +2116,7 @@ cell_properties = |children, diagnostics, start, tracking| {
 						}
 
 					Element(element) if is_w(element.name, "vAlign") and $properties.alignment == Unset =>
-						match alignment(element) {
+						match cell_alignment(element) {
 							Ok(value) => {
 								$properties = { ..$properties, alignment: value }
 							}
@@ -2286,8 +2286,8 @@ merge = |element| {
 	}
 }
 
-alignment : Element -> Try([Unset, Top, Center, Bottom, Both], [CannotHold])
-alignment = |element| {
+cell_alignment : Element -> Try([Unset, Top, Center, Bottom, Both], [CannotHold])
+cell_alignment = |element| {
 	if !holds(element, ["val"]) {
 		return Err(CannotHold)
 	}

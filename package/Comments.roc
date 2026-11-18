@@ -43,18 +43,18 @@ Comments :: [].{
 		walked = line_end(body.fold(start, walk_block))
 		var $out = List.with_capacity(comments.len())
 		var $id = 0.U64
-		for comment in comments {
-			mark = walked.marks.get($id) ?? { begun: NotYet, range: NoRange }
-			anchor = match mark.range {
+		for one_comment in comments {
+			anchor_mark = walked.marks.get($id) ?? { begun: NotYet, range: NoRange }
+			anchor = match anchor_mark.range {
 				Open(from) => Range(text_between(walked.text, from, walked.text.len()))
 				Closed({ begin: from, end: to }) => Range(text_between(walked.text, from, to))
-				NoRange => if (mark.begun == NotYet) Unanchored else Point
+				NoRange => if (anchor_mark.begun == NotYet) Unanchored else Point
 			}
-			order = match mark.begun {
+			order = match anchor_mark.begun {
 				Begun(event) => event
 				NotYet => walked.events + $id
 			}
-			$out = List.append($out, { order, anchored: { id: $id, comment, anchor } })
+			$out = List.append($out, { order, anchored: { id: $id, comment: one_comment, anchor } })
 			$id = $id + 1
 		}
 		$out
@@ -118,10 +118,10 @@ Comments :: [].{
 		}
 		var $out = List.with_capacity(comments.len())
 		var $index = 0.U64
-		for comment in comments {
+		for one_comment in comments {
 			paragraph = paragraphs.get($index) ?? ""
 			threaded = if paragraph == "" {
-				comment
+				one_comment
 			} else {
 				extended = $extended.get(paragraph) ?? { parent: "", done: Bool.False }
 				durable = $durable.get(paragraph)
@@ -142,7 +142,7 @@ Comments :: [].{
 					Ok(place) if extended.parent != "" and place != $index => Parent(place)
 					_ => Unset
 				}
-				{ ..comment, parent, resolved: extended.done, durable_id, utc_date }
+				{ ..one_comment, parent, resolved: extended.done, durable_id, utc_date }
 			}
 			$out = List.append($out, threaded)
 			$index = $index + 1
@@ -297,10 +297,10 @@ Comments :: [].{
 				},
 		)
 		var $place = 0.U64
-		for comment in comments {
+		for one_comment in comments {
 			paragraph = paragraphs.get($place) ?? ""
 			if paragraph != "" {
-				parent = match comment.parent {
+				parent = match one_comment.parent {
 					Parent(other) if other != $place =>
 						match paragraphs.get(other) {
 							Ok(found) if found != "" => [named(w15, "paraIdParent", found)]
@@ -309,13 +309,13 @@ Comments :: [].{
 
 					_ => []
 				}
-				done = named(w15, "done", if (comment.resolved) "1" else "0")
+				done = named(w15, "done", if (one_comment.resolved) "1" else "0")
 				$extended = List.append($extended, extension_element(w15, "commentEx", List.join([[named(w15, "paraId", paragraph)], parent, [done]]), []))
-				match comment.durable_id {
+				match one_comment.durable_id {
 					DurableId(id) => {
 						durable = hex8(id)
 						$ids = List.append($ids, extension_element(w16cid, "commentId", [named(w16cid, "paraId", paragraph), named(w16cid, "durableId", durable)], []))
-						date = match comment.utc_date {
+						date = match one_comment.utc_date {
 							Date(stamp) => [named(w16cex, "dateUtc", stamp.written)]
 							Unset => []
 						}

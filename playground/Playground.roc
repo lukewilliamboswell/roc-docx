@@ -1,4 +1,4 @@
-import pf.Engine exposing [Elem, State, Val]
+import pf.Engine exposing [Elem, Signal, State]
 import pf.Html
 import pf.Wire
 import pf.Worker
@@ -172,12 +172,12 @@ Playground := [].{
 
 	view : State(ctx, S) -> Elem(ctx)
 	view = |st| {
-		v = st.val()
+		v = st.signal()
 		Html.div(
 			"app",
 			[
 				Engine.element("now-clock", [Engine.on("change", st.set_value(|s, now| { ..s, now, letter: { ..s.letter, created: now } }))], []),
-				Engine.watch(v.map(Playground.fragment), |f| [Replace(f)], st.on_result(|s, _, _| s)),
+				Engine.watch(v.map(Playground.fragment), |f| [Engine.command(Replace(f))], st.on_result(|s, _, _| s)),
 				Playground.top_bar(st),
 				Engine.switch(
 					v.map(|s| s.mode),
@@ -223,7 +223,7 @@ Playground := [].{
 			"button",
 			[
 				Engine.attr("type", "button"),
-				Engine.class_v(st.val().map(|s| if (s.mode == mode) "mode current" else "mode")),
+				Engine.class_s(st.signal().map(|s| if (s.mode == mode) "mode current" else "mode")),
 				Engine.on("click", st.update(|s| { ..s, mode })),
 			],
 			[Engine.text(label)],
@@ -241,8 +241,8 @@ Playground := [].{
 				Engine.element("h1", [], [Engine.text(heading)]),
 				Engine.element("p", [Engine.class("lede")], [Engine.text(lede)]),
 				Engine.element("docx-file", [Html.aria_label("Word document"), Engine.on("change", st.set_value(Playground.dropped))], []),
-				Html.p_v(
-					st.val().map(
+				Html.p_s(
+					st.signal().map(
 						|s|
 							match s.file {
 								BadFile(name) => "${name} is not a document roc-docx can read as base64; try another file."
@@ -280,11 +280,11 @@ Playground := [].{
 			"div",
 			[Engine.class("file-bar")],
 			[
-				Html.span_v(
-					st.val().map(
+				Html.span_s(
+					st.signal().map(
 						|s|
 							match s.file {
-								Loaded({ name, doc }) => "${name} · ${Playground.bytes(doc.to_list().len())}"
+								Loaded({ name, doc }) => "${name} · ${Playground.byte_size(doc.to_list().len())}"
 								_ => ""
 							},
 					),
@@ -299,29 +299,29 @@ Playground := [].{
 	explore : State(ctx, S) -> Elem(ctx)
 	explore = |st|
 		Engine.when(
-			st.val().map(Playground.is_loaded),
+			st.signal().map(Playground.is_loaded),
 			||
 				Engine.element(
 					"main",
 					[Engine.class("explore")],
 					[
 						Playground.file_bar(st),
-						Worker.derive_when(Explore.model, st.val().map(Playground.document_of), |remote| Playground.explored(st.lift(), remote)),
+						Worker.resource_when(Explore.model, st.signal().map(Playground.document_of), |remote| Playground.explored(st.lift(), remote)),
 					],
 				),
 			|| Engine.element("main", [], [Playground.welcome(st, "See inside a Word document", "Drop a .docx to follow it through roc-docx: the ZIP archive, the package of parts, the XML, and the typed document an application works with.")]),
 		)
 
-	explored : State(ctx, S), Val(ctx, Engine.Remote(Explore.Model, Worker.Error(Explore.Problem))) -> Elem(ctx)
+	explored : State(ctx, S), Signal(ctx, Engine.Remote(Explore.Model, Worker.Error(Explore.Problem))) -> Elem(ctx)
 	explored = |st, remote| {
 		m = remote.map(Playground.model_of)
 		Html.div(
 			"explored",
 			[
-				Html.p_v(remote.map(Playground.status), [Engine.class("status")]),
+				Html.p_s(remote.map(Playground.status), [Engine.class("status")]),
 				Playground.rail(st, m),
 				Engine.switch(
-					st.val().map(|s| s.stage),
+					st.signal().map(|s| s.stage),
 					Playground.stages,
 					|stage|
 						Engine.element(
@@ -370,11 +370,14 @@ Playground := [].{
 			Failed(Unreadable(why)) => "roc-docx could not read this document: ${why}"
 			Timeout => "This took too long."
 			Refused => "Too much is running; try again."
+			NanKeys => "The worker result has an invalid numeric key."
+			TooDeep => "The worker payload is nested too deeply."
+			TooManyFiles => "The worker result contains too many files."
 			Lost(fault) => "The worker stopped: ${Str.inspect(fault)}."
 		}
 
 	## The pipeline, one button per stage, each with what it found.
-	rail : State(ctx, S), Val(ctx, Explore.Model) -> Elem(ctx)
+	rail : State(ctx, S), Signal(ctx, Explore.Model) -> Elem(ctx)
 	rail = |st, m|
 		Engine.element(
 			"nav",
@@ -385,12 +388,12 @@ Playground := [].{
 						"button",
 						[
 							Engine.attr("type", "button"),
-							Engine.class_v(st.val().map(|s| if (s.stage == stage) "step current" else "step")),
+							Engine.class_s(st.signal().map(|s| if (s.stage == stage) "step current" else "step")),
 							Engine.on("click", st.update(|s| { ..s, stage })),
 						],
 						[
 							Engine.element("span", [Engine.class("step-name")], [Engine.text(Playground.stage_name(stage))]),
-							Html.span_v(m.map(|model| Playground.found(model, stage)), [Engine.class("step-found")]),
+							Html.span_s(m.map(|model| Playground.found(model, stage)), [Engine.class("step-found")]),
 						],
 					),
 			),
@@ -499,7 +502,7 @@ Playground := [].{
 
 	# ── ZIP and package ────────────────────────────────────────────────────
 
-	zip : Val(ctx, Explore.Model) -> Elem(ctx)
+	zip : Signal(ctx, Explore.Model) -> Elem(ctx)
 	zip = |m|
 		Html.div(
 			"columns",
@@ -517,8 +520,8 @@ Playground := [].{
 									[
 										Playground.cell(row.field(|e| e.name), "mono"),
 										Playground.cell(row.field(|e| e.method), ""),
-										Playground.cell(row.field(|e| Playground.bytes(e.compressed)), "num"),
-										Playground.cell(row.field(|e| Playground.bytes(e.size)), "num"),
+										Playground.cell(row.field(|e| Playground.byte_size(e.compressed)), "num"),
+										Playground.cell(row.field(|e| Playground.byte_size(e.size)), "num"),
 										Playground.cell(row.field(|e| e.crc), "mono"),
 									],
 								),
@@ -538,9 +541,9 @@ Playground := [].{
 									"div",
 									[Engine.class("bound")],
 									[
-										Html.p_v(row.field(|b| b.name), []),
-										Engine.element("div", [Engine.class("meter")], [Engine.element("span", [Engine.attr_v("style", row.field(Playground.meter))], [])]),
-										Html.p_v(row.field(|b| "${b.used.to_str()} of ${b.limit.to_str()}"), [Engine.class("muted")]),
+										Html.p_s(row.field(|b| b.name), []),
+										Engine.element("div", [Engine.class("meter")], [Engine.element("span", [Engine.attr_s("style", row.field(Playground.meter))], [])]),
+										Html.p_s(row.field(|b| "${b.used.to_str()} of ${b.limit.to_str()}"), [Engine.class("muted")]),
 									],
 								),
 						),
@@ -556,7 +559,7 @@ Playground := [].{
 		"width: ${percent.to_str()}%"
 	}
 
-	parts : Val(ctx, Explore.Model) -> Elem(ctx)
+	parts : Signal(ctx, Explore.Model) -> Elem(ctx)
 	parts = |m|
 		Html.div(
 			"package",
@@ -576,8 +579,8 @@ Playground := [].{
 									"li",
 									[Engine.class("part")],
 									[
-										Html.p_v(row.field(|p| p.name), [Engine.class("mono strong")]),
-										Html.p_v(row.field(|p| "${p.content_type} · ${Playground.bytes(p.size)}"), [Engine.class("muted")]),
+										Html.p_s(row.field(|p| p.name), [Engine.class("mono strong")]),
+										Html.p_s(row.field(|p| "${p.content_type} · ${Playground.byte_size(p.size)}"), [Engine.class("muted")]),
 										Playground.relationships(row.field(|p| p.relationships)),
 									],
 								),
@@ -587,7 +590,7 @@ Playground := [].{
 			],
 		)
 
-	relationships : Val(ctx, List(Explore.Relationship)) -> Elem(ctx)
+	relationships : Signal(ctx, List(Explore.Relationship)) -> Elem(ctx)
 	relationships = |rels|
 		Engine.element(
 			"ul",
@@ -601,9 +604,9 @@ Playground := [].{
 							"li",
 							[],
 							[
-								Html.span_v(row.field(|r| r.kind), [Engine.class("kind")]),
-								Html.span_v(row.field(|r| if (r.external) "→ ${r.target} (external)" else "→ ${r.target}"), [Engine.class("mono")]),
-								Html.span_v(row.field(|r| r.id), [Engine.class("muted")]),
+								Html.span_s(row.field(|r| r.kind), [Engine.class("kind")]),
+								Html.span_s(row.field(|r| if (r.external) "→ ${r.target} (external)" else "→ ${r.target}"), [Engine.class("mono")]),
+								Html.span_s(row.field(|r| r.id), [Engine.class("muted")]),
 							],
 						),
 				),
@@ -612,7 +615,7 @@ Playground := [].{
 
 	# ── XML ────────────────────────────────────────────────────────────────
 
-	xml : State(ctx, S), Val(ctx, Explore.Model) -> Elem(ctx)
+	xml : State(ctx, S), Signal(ctx, Explore.Model) -> Elem(ctx)
 	xml = |st, m|
 		Html.div(
 			"xml-stage",
@@ -629,10 +632,10 @@ Playground := [].{
 									"button",
 									[
 										Engine.attr("type", "button"),
-										Engine.class_v(row.select(Engine.keyed(st.val().map(|s| s.part), "part-name current", "part-name"))),
+										Engine.class_s(row.select(Engine.keyed(st.signal().map(|s| s.part), "part-name current", "part-name"))),
 										Engine.on("click", st.lift_row().update_by(row.key(), |s, part| { ..s, part })),
 									],
-									[Engine.text_v(row.key())],
+									[Engine.text_s(row.key())],
 								),
 						),
 					],
@@ -650,9 +653,9 @@ Playground := [].{
 								Engine.element("span", [Engine.class("x dropped")], [Engine.text("editor state, dropped")]),
 							],
 						),
-						Worker.derive_when(
+						Worker.resource_when(
 							Explore.part_xml,
-							st.val().map(
+							st.signal().map(
 								|s|
 									match s.file {
 										Loaded({ doc, .. }) => Run({ doc, part: s.part })
@@ -663,20 +666,20 @@ Playground := [].{
 								Html.div(
 									"xml-lines",
 									[
-										Html.p_v(remote.map(Playground.status), [Engine.class("status")]),
+										Html.p_s(remote.map(Playground.status), [Engine.class("status")]),
 										Engine.each(
 											remote.map(Playground.keyed_lines),
 											|l| l.key,
 											|row|
 												Engine.element(
 													"div",
-													[Engine.class_v(row.field(|l| "x ${l.class}")), Engine.attr_v("style", row.field(|l| "padding-left: ${(l.depth * 14 + 6).to_str()}px"))],
+													[Engine.class_s(row.field(|l| "x ${l.class}")), Engine.attr_s("style", row.field(|l| "padding-left: ${(l.depth * 14 + 6).to_str()}px"))],
 													[
-														Html.span_v(row.field(|l| if (l.tag == "") "" else "<${l.tag}"), [Engine.class("tag")]),
-														Html.span_v(row.field(|l| l.attributes), [Engine.class("attributes")]),
-														Html.span_v(row.field(|l| l.dropped), [Engine.class("gone")]),
-														Html.span_v(row.field(|l| if (l.tag == "") "" else ">"), [Engine.class("tag")]),
-														Html.span_v(row.field(|l| l.text), [Engine.class("text")]),
+														Html.span_s(row.field(|l| if (l.tag == "") "" else "<${l.tag}"), [Engine.class("tag")]),
+														Html.span_s(row.field(|l| l.attributes), [Engine.class("attributes")]),
+														Html.span_s(row.field(|l| l.dropped), [Engine.class("gone")]),
+														Html.span_s(row.field(|l| if (l.tag == "") "" else ">"), [Engine.class("tag")]),
+														Html.span_s(row.field(|l| l.text), [Engine.class("text")]),
 													],
 												),
 										),
@@ -697,7 +700,7 @@ Playground := [].{
 
 	# ── Document ───────────────────────────────────────────────────────────
 
-	document : State(ctx, S), Val(ctx, Explore.Model) -> Elem(ctx)
+	document : State(ctx, S), Signal(ctx, Explore.Model) -> Elem(ctx)
 	document = |st, m|
 		Html.div(
 			"document",
@@ -707,7 +710,7 @@ Playground := [].{
 			],
 		)
 
-	properties : Val(ctx, Explore.Model) -> Elem(ctx)
+	properties : Signal(ctx, Explore.Model) -> Elem(ctx)
 	properties = |m|
 		Engine.element(
 			"dl",
@@ -716,14 +719,14 @@ Playground := [].{
 				Engine.each(
 					m.map(|x| x.properties),
 					|(k, _)| k,
-					|row| Engine.element("div", [], [Engine.element("dt", [], [Engine.text_v(row.field(|(k, _)| k))]), Engine.element("dd", [], [Engine.text_v(row.field(|(_, v)| v))])]),
+					|row| Engine.element("div", [], [Engine.element("dt", [], [Engine.text_s(row.field(|(k, _)| k))]), Engine.element("dd", [], [Engine.text_s(row.field(|(_, v)| v))])]),
 				),
 			],
 		)
 
 	## The blocks as roc-docx reads them: an outline of the document's
 	## structure, not a page layout.
-	structure : State(ctx, S), Val(ctx, List(Explore.Block)), Bool -> Elem(ctx)
+	structure : State(ctx, S), Signal(ctx, List(Explore.Block)), Bool -> Elem(ctx)
 	structure = |st, blocks, selectable|
 		Engine.element(
 			"ol",
@@ -738,7 +741,7 @@ Playground := [].{
 							(
 								if selectable {
 									[
-										Engine.class_v(row.select(Engine.keyed(st.val().map(|s| s.selected), "block selected", "block"))),
+										Engine.class_s(row.select(Engine.keyed(st.signal().map(|s| s.selected), "block selected", "block"))),
 										Engine.on("click", st.lift_row().update_by(row.key(), |s, selected| { ..s, selected })),
 									]
 								} else {
@@ -748,7 +751,7 @@ Playground := [].{
 							[
 								Engine.element(
 									"div",
-									[Engine.class_v(row.field(Playground.block_class))],
+									[Engine.class_s(row.field(Playground.block_class))],
 									[
 										Engine.switch(
 											row.field(|b| if (b.kind == "table") 1.U8 else if (b.segments.is_empty() and b.kind != "paragraph") 2 else 0),
@@ -757,18 +760,18 @@ Playground := [].{
 												if shape == 1 {
 													Playground.grid(row.field(|b| b.rows))
 												} else if shape == 2 {
-													Html.span_v(row.field(Playground.block_label), [Engine.class("label")])
+													Html.span_s(row.field(Playground.block_label), [Engine.class("label")])
 												} else {
 													Engine.each(
 														row.field(|b| b.segments.map_with_index(|s, i| { key: i.to_str(), text: s.text, marks: s.marks })),
 														|s| s.key,
-														|seg| Engine.element("span", [Engine.class_v(seg.field(|s| s.marks))], [Engine.text_v(seg.field(|s| s.text))]),
+														|seg| Engine.element("span", [Engine.class_s(seg.field(|s| s.marks))], [Engine.text_s(seg.field(|s| s.text))]),
 													)
 												},
 										),
 									],
 								),
-								Html.span_v(row.field(|b| if (b.comments.is_empty()) "" else "💬 ${b.comments.len().to_str()}"), [Engine.class("badge")]),
+								Html.span_s(row.field(|b| if (b.comments.is_empty()) "" else "💬 ${b.comments.len().to_str()}"), [Engine.class("badge")]),
 							],
 						),
 				),
@@ -795,7 +798,7 @@ Playground := [].{
 			Str.join_with(b.segments.map(|s| s.text), "")
 		}
 
-	grid : Val(ctx, List(List(Str))) -> Elem(ctx)
+	grid : Signal(ctx, List(List(Str))) -> Elem(ctx)
 	grid = |rows|
 		Engine.element(
 			"table",
@@ -808,7 +811,7 @@ Playground := [].{
 						Engine.each(
 							rows.map(|rs| rs.map_with_index(|cells, i| { key: i.to_str(), cells: cells.map_with_index(|c, j| (j.to_str(), c)) })),
 							|r| r.key,
-							|row| Engine.element("tr", [], [Engine.each(row.field(|r| r.cells), |(k, _)| k, |c| Engine.element("td", [], [Engine.text_v(c.field(|(_, t)| t))]))]),
+							|row| Engine.element("tr", [], [Engine.each(row.field(|r| r.cells), |(k, _)| k, |c| Engine.element("td", [], [Engine.text_s(c.field(|(_, t)| t))]))]),
 						),
 					],
 				),
@@ -816,14 +819,14 @@ Playground := [].{
 		)
 
 	## The selected block, four ways.
-	inspector : State(ctx, S), Val(ctx, Explore.Model) -> Elem(ctx)
+	inspector : State(ctx, S), Signal(ctx, Explore.Model) -> Elem(ctx)
 	inspector = |st, m| {
-		b = Val.map2(m, st.val(), |model, s| Playground.block_at(model, s.selected))
+		b = Signal.map2(m, st.signal(), |model, s| Playground.block_at(model, s.selected))
 		Engine.element(
 			"aside",
 			[Engine.class("inspector")],
 			[
-				Html.p_v(b.map(|x| "Block ${x.index.to_str()} · ${Playground.kind_name(x)}"), [Engine.class("inspector-title")]),
+				Html.p_s(b.map(|x| "Block ${x.index.to_str()} · ${Playground.kind_name(x)}"), [Engine.class("inspector-title")]),
 				Engine.element(
 					"div",
 					[Engine.class("panes"), Engine.attr("role", "tablist")],
@@ -833,7 +836,7 @@ Playground := [].{
 								"button",
 								[
 									Engine.attr("type", "button"),
-									Engine.class_v(st.val().map(|s| if (s.pane == pane) "pane current" else "pane")),
+									Engine.class_s(st.signal().map(|s| if (s.pane == pane) "pane current" else "pane")),
 									Engine.on("click", st.update(|s| { ..s, pane })),
 								],
 								[Engine.text(Playground.pane_name(pane))],
@@ -841,7 +844,7 @@ Playground := [].{
 					),
 				),
 				Engine.switch(
-					st.val().map(|s| s.pane),
+					st.signal().map(|s| s.pane),
 					Playground.panes,
 					|pane|
 						match pane {
@@ -856,11 +859,11 @@ Playground := [].{
 												Engine.each(
 													b.map(Playground.facts),
 													|(k, _)| k,
-													|row| Engine.element("div", [], [Engine.element("dt", [], [Engine.text_v(row.field(|(k, _)| k))]), Engine.element("dd", [], [Engine.text_v(row.field(|(_, v)| v))])]),
+													|row| Engine.element("div", [], [Engine.element("dt", [], [Engine.text_s(row.field(|(k, _)| k))]), Engine.element("dd", [], [Engine.text_s(row.field(|(_, v)| v))])]),
 												),
 											],
 										),
-										Playground.block_comments(Val.map2(m, b, |model, x| model.comments.keep_if(|c| x.comments.contains(c.id)))),
+										Playground.block_comments(Signal.map2(m, b, |model, x| model.comments.keep_if(|c| x.comments.contains(c.id)))),
 									],
 								)
 							Model => Playground.code_pane("The Document.Block value roc-docx made of this block, as Str.inspect prints it.", b.map(|x| x.model))
@@ -912,12 +915,12 @@ Playground := [].{
 	facts : Explore.Block -> List((Str, Str))
 	facts = |b| {
 		style = if (b.style_chain.is_empty()) [] else [("Style", Str.join_with(b.style_chain, " → "))]
-		table = if (b.kind == "table") [("Rows", b.rows.len().to_str()), ("Cells", b.rows.fold(0.U64, |n, r| n + r.len()).to_str())] else []
+		table_facts = if (b.kind == "table") [("Rows", b.rows.len().to_str()), ("Cells", b.rows.fold(0.U64, |n, r| n + r.len()).to_str())] else []
 		comments = if (b.comments.is_empty()) [] else [("Comments", Str.join_with(b.comments.map(|id| id.to_str()), ", "))]
-		[("Kind", Playground.kind_name(b))].concat(style).concat(b.stated).concat(table).concat(comments)
+		[("Kind", Playground.kind_name(b))].concat(style).concat(b.stated).concat(table_facts).concat(comments)
 	}
 
-	block_comments : Val(ctx, List(Explore.Comment)) -> Elem(ctx)
+	block_comments : Signal(ctx, List(Explore.Comment)) -> Elem(ctx)
 	block_comments = |comments|
 		Engine.element(
 			"ul",
@@ -925,9 +928,9 @@ Playground := [].{
 			[Engine.each(comments, |c| c.id.to_str(), |row| Playground.comment_card(row.field(|c| c)))],
 		)
 
-	code_pane : Str, Val(ctx, Str) -> Elem(ctx)
+	code_pane : Str, Signal(ctx, Str) -> Elem(ctx)
 	code_pane = |about, code|
-		Html.div("code-pane", [Engine.element("p", [Engine.class("muted")], [Engine.text(about)]), Engine.element("pre", [], [Engine.element("code", [], [Engine.text_v(code)])])])
+		Html.div("code-pane", [Engine.element("p", [Engine.class("muted")], [Engine.text(about)]), Engine.element("pre", [], [Engine.element("code", [], [Engine.text_s(code)])])])
 
 	roc_for : Explore.Block -> Str
 	roc_for = |b| {
@@ -948,7 +951,7 @@ Playground := [].{
 
 	# ── Comments and changes ───────────────────────────────────────────────
 
-	annotations : State(ctx, S), Val(ctx, Explore.Model) -> Elem(ctx)
+	annotations : State(ctx, S), Signal(ctx, Explore.Model) -> Elem(ctx)
 	annotations = |st, m|
 		Html.div(
 			"columns",
@@ -957,7 +960,7 @@ Playground := [].{
 					"column",
 					[
 						Engine.element("h3", [], [Engine.text("Comments")]),
-						Html.p_v(m.map(|x| if (x.comments.is_empty()) "This document has no comments." else ""), [Engine.class("muted")]),
+						Html.p_s(m.map(|x| if (x.comments.is_empty()) "This document has no comments." else ""), [Engine.class("muted")]),
 						Engine.element(
 							"ul",
 							[Engine.class("thread")],
@@ -980,38 +983,38 @@ Playground := [].{
 					"column",
 					[
 						Engine.element("h3", [], [Engine.text("Tracked changes")]),
-						Html.p_v(m.map(|x| if (x.changes.is_empty()) "This document has no tracked changes." else ""), [Engine.class("muted")]),
+						Html.p_s(m.map(|x| if (x.changes.is_empty()) "This document has no tracked changes." else ""), [Engine.class("muted")]),
 						Engine.element("ul", [Engine.class("changes")], [Engine.each(m.map(|x| x.changes), |c| c.id.to_str(), |row| Playground.change_card(row.field(|c| c)))]),
 					],
 				),
 			],
 		)
 
-	comment_card : Val(ctx, Explore.Comment) -> Elem(ctx)
+	comment_card : Signal(ctx, Explore.Comment) -> Elem(ctx)
 	comment_card = |c| Engine.element("li", [], [Playground.comment_body(c)])
 
-	comment_body : Val(ctx, Explore.Comment) -> Elem(ctx)
+	comment_body : Signal(ctx, Explore.Comment) -> Elem(ctx)
 	comment_body = |c|
 		Engine.element(
 			"article",
-			[Engine.class_v(c.map(|x| if (x.reply) "comment reply" else "comment"))],
+			[Engine.class_s(c.map(|x| if (x.reply) "comment reply" else "comment"))],
 			[
-				Html.p_v(c.map(|x| "${x.author}${if (x.resolved) " · resolved" else ""}"), [Engine.class("who")]),
-				Html.p_v(c.map(|x| Playground.when_line(x.date, if (x.reply) "reply to ${x.parent.to_str()}" else "comment ${x.id.to_str()}")), [Engine.class("muted")]),
-				Html.p_v(c.map(|x| if (x.anchor == "") "" else "“${x.anchor}”"), [Engine.class("anchor")]),
-				Html.p_v(c.map(|x| x.text), []),
+				Html.p_s(c.map(|x| "${x.author}${if (x.resolved) " · resolved" else ""}"), [Engine.class("who")]),
+				Html.p_s(c.map(|x| Playground.when_line(x.date, if (x.reply) "reply to ${x.parent.to_str()}" else "comment ${x.id.to_str()}")), [Engine.class("muted")]),
+				Html.p_s(c.map(|x| if (x.anchor == "") "" else "“${x.anchor}”"), [Engine.class("anchor")]),
+				Html.p_s(c.map(|x| x.text), []),
 			],
 		)
 
-	change_card : Val(ctx, Explore.Change) -> Elem(ctx)
+	change_card : Signal(ctx, Explore.Change) -> Elem(ctx)
 	change_card = |c|
 		Engine.element(
 			"li",
 			[Engine.class("change")],
 			[
-				Html.p_v(c.map(|x| "${x.kind} ${x.subject}"), [Engine.class_v(c.map(|x| "kind ${Playground.change_class(x.kind)}"))]),
-				Html.p_v(c.map(|x| Playground.when_line(x.date, "${x.author} · change ${x.id.to_str()}")), [Engine.class("muted")]),
-				Html.p_v(c.map(|x| x.text), [Engine.class_v(c.map(|x| "changed ${Playground.change_class(x.kind)}"))]),
+				Html.p_s(c.map(|x| "${x.kind} ${x.subject}"), [Engine.class_s(c.map(|x| "kind ${Playground.change_class(x.kind)}"))]),
+				Html.p_s(c.map(|x| Playground.when_line(x.date, "${x.author} · change ${x.id.to_str()}")), [Engine.class("muted")]),
+				Html.p_s(c.map(|x| x.text), [Engine.class_s(c.map(|x| "changed ${Playground.change_class(x.kind)}"))]),
 			],
 		)
 
@@ -1030,7 +1033,7 @@ Playground := [].{
 
 	# ── Text, round trip and diagnostics ──────────────────────────────────
 
-	texts : Val(ctx, Explore.Model) -> Elem(ctx)
+	texts : Signal(ctx, Explore.Model) -> Elem(ctx)
 	texts = |m|
 		Html.div(
 			"texts",
@@ -1041,21 +1044,21 @@ Playground := [].{
 			],
 		)
 
-	reading : Str, Str, Val(ctx, Str) -> Elem(ctx)
+	reading : Str, Str, Signal(ctx, Str) -> Elem(ctx)
 	reading = |title, call, text|
 		Html.div(
 			"reading",
 			[
 				Engine.element("h3", [], [Engine.text(title), Engine.element("code", [], [Engine.text(call)])]),
-				Engine.element("pre", [Engine.class("prose")], [Engine.text_v(text)]),
+				Engine.element("pre", [Engine.class("prose")], [Engine.text_s(text)]),
 			],
 		)
 
 	round_trip : State(ctx, S) -> Elem(ctx)
 	round_trip = |st|
-		Worker.derive_when(
+		Worker.resource_when(
 			Explore.round_trip,
-			st.val().map(Playground.document_of),
+			st.signal().map(Playground.document_of),
 			|remote| {
 				w = remote.map(
 					|r|
@@ -1067,8 +1070,8 @@ Playground := [].{
 				Html.div(
 					"round-trip",
 					[
-						Html.p_v(remote.map(Playground.status), [Engine.class("status")]),
-						Html.p_v(w.map(|x| if (x.size == 0) "" else if (x.equivalent) "✓ Written in ${Playground.bytes(x.size)}, and it reads as the same document." else "✗ Written in ${Playground.bytes(x.size)}, but it reads differently."), [Engine.class_v(w.map(|x| if (x.equivalent) "verdict good" else "verdict")), Engine.test_id("round-trip-verdict")]),
+						Html.p_s(remote.map(Playground.status), [Engine.class("status")]),
+						Html.p_s(w.map(|x| if (x.size == 0) "" else if (x.equivalent) "✓ Written in ${Playground.byte_size(x.size)}, and it reads as the same document." else "✗ Written in ${Playground.byte_size(x.size)}, but it reads differently."), [Engine.class_s(w.map(|x| if (x.equivalent) "verdict good" else "verdict")), Engine.test_id("round-trip-verdict")]),
 						Playground.download(w.map(|x| x.base64), "written.docx", "Download the written document"),
 						Playground.table(
 							["Part", "After writing", "Read", "Written"],
@@ -1082,9 +1085,9 @@ Playground := [].{
 											[],
 											[
 												Playground.cell(row.field(|c| c.name), "mono"),
-												Engine.element("td", [], [Html.span_v(row.field(|c| c.outcome), [Engine.class_v(row.field(|c| "outcome ${c.outcome}"))])]),
-												Playground.cell(row.field(|c| if (c.before == 0) "—" else Playground.bytes(c.before)), "num"),
-												Playground.cell(row.field(|c| if (c.after == 0) "—" else Playground.bytes(c.after)), "num"),
+												Engine.element("td", [], [Html.span_s(row.field(|c| c.outcome), [Engine.class_s(row.field(|c| "outcome ${c.outcome}"))])]),
+												Playground.cell(row.field(|c| if (c.before == 0) "—" else Playground.byte_size(c.before)), "num"),
+												Playground.cell(row.field(|c| if (c.after == 0) "—" else Playground.byte_size(c.after)), "num"),
 											],
 										),
 								),
@@ -1095,24 +1098,24 @@ Playground := [].{
 			},
 		)
 
-	download : Val(ctx, Str), Str, Str -> Elem(ctx)
+	download : Signal(ctx, Str), Str, Str -> Elem(ctx)
 	download = |base64, name, label|
 		Engine.element(
 			"a",
 			[
-				Engine.class_v(base64.map(|b| if (b == "") "button hidden" else "button")),
+				Engine.class_s(base64.map(|b| if (b == "") "button hidden" else "button")),
 				Engine.attr("download", name),
-				Engine.attr_v("href", base64.map(|b| if (b == "") "#" else "data:application/vnd.openxmlformats-officedocument.wordprocessingml.document;base64,${b}")),
+				Engine.attr_s("href", base64.map(|b| if (b == "") "#" else "data:application/vnd.openxmlformats-officedocument.wordprocessingml.document;base64,${b}")),
 			],
 			[Engine.text(label)],
 		)
 
-	problems : Val(ctx, Explore.Model) -> Elem(ctx)
+	problems : Signal(ctx, Explore.Model) -> Elem(ctx)
 	problems = |m|
 		Html.div(
 			"diagnostics",
 			[
-				Html.p_v(m.map(|x| if (x.diagnostics.is_empty()) "Reading took everything exactly as written." else ""), [Engine.class("muted")]),
+				Html.p_s(m.map(|x| if (x.diagnostics.is_empty()) "Reading took everything exactly as written." else ""), [Engine.class("muted")]),
 				Engine.element(
 					"ul",
 					[],
@@ -1120,7 +1123,7 @@ Playground := [].{
 						Engine.each(
 							m.map(|x| x.diagnostics.map_with_index(|d, i| { key: i.to_str(), stage: d.stage, text: d.text })),
 							|d| d.key,
-							|row| Engine.element("li", [], [Html.span_v(row.field(|d| d.stage), [Engine.class("kind")]), Html.span_v(row.field(|d| d.text), [Engine.class("mono")])]),
+							|row| Engine.element("li", [], [Html.span_s(row.field(|d| d.stage), [Engine.class("kind")]), Html.span_s(row.field(|d| d.text), [Engine.class("mono")])]),
 						),
 					],
 				),
@@ -1132,16 +1135,16 @@ Playground := [].{
 	review : State(ctx, S) -> Elem(ctx)
 	review = |st|
 		Engine.when(
-			st.val().map(Playground.is_loaded),
+			st.signal().map(Playground.is_loaded),
 			||
 				Engine.element(
 					"main",
 					[Engine.class("review")],
 					[
 						Playground.file_bar(st),
-						Worker.derive_when(
+						Worker.resource_when(
 							Review.review,
-							st.val().map(
+							st.signal().map(
 								|s|
 									match s.file {
 										Loaded({ doc, .. }) => Run({ doc, edits: s.edits, author: s.reviewer, date: s.now })
@@ -1155,7 +1158,7 @@ Playground := [].{
 			|| Engine.element("main", [], [Playground.welcome(st, "Review a document", "Accept and reject tracked changes, reply to and resolve comments, and download the result. Start with the tracked changes sample, or drop a document of your own.")]),
 		)
 
-	reviewing : State(ctx, S), Val(ctx, Engine.Remote(Review.Reviewed, Worker.Error(Explore.Problem))) -> Elem(ctx)
+	reviewing : State(ctx, S), Signal(ctx, Engine.Remote(Review.Reviewed, Worker.Error(Explore.Problem))) -> Elem(ctx)
 	reviewing = |st, remote| {
 		r = remote.map(
 			|x|
@@ -1165,7 +1168,7 @@ Playground := [].{
 				},
 		)
 		m = r.map(|x| x.model)
-		v = st.val()
+		v = st.signal()
 		Html.div(
 			"reviewing",
 			[
@@ -1176,14 +1179,14 @@ Playground := [].{
 						Html.text_input(Engine.const("Reviewer"), "text", v.map(|s| s.reviewer), [Engine.class("reviewer")], st.set_value(|s, reviewer| { ..s, reviewer })),
 						Html.button("Accept all", [], st.update(|s| { ..s, edits: List.append(s.edits, AcceptAll) })),
 						Html.button("Reject all", [], st.update(|s| { ..s, edits: List.append(s.edits, RejectAll) })),
-						Html.button_v(m.map(|x| if (x.tracking) "Stop tracking changes" else "Track changes"), [], st.update_by(m.map(|x| x.tracking), |s, on| { ..s, edits: List.append(s.edits, Tracking(!on)) })),
+						Html.button_s(m.map(|x| if (x.tracking) "Stop tracking changes" else "Track changes"), [], st.update_by(m.map(|x| x.tracking), |s, on| { ..s, edits: List.append(s.edits, Tracking(!on)) })),
 						Html.action_button(Engine.const("Undo"), v.map(|s| s.edits.is_empty()), [], st.update(|s| { ..s, edits: s.edits.drop_last(1) })),
 						Playground.download(r.map(|x| x.base64), "reviewed.docx", "Download"),
 						Html.button("Explore this version", [Engine.class("quiet")], st.update_by(r.map(|x| x.base64), |s, b| Playground.opened(s, "reviewed.docx", b))),
 					],
 				),
-				Html.p_v(remote.map(Playground.status), [Engine.class("status")]),
-				Html.p_v(v.map(|s| if (s.edits.is_empty()) "No edits yet. Each edit is applied by roc-docx in a worker, and the document below is the written result read back." else Str.join_with(s.edits.map(Review.describe), " · ")), [Engine.class("edits")]),
+				Html.p_s(remote.map(Playground.status), [Engine.class("status")]),
+				Html.p_s(v.map(|s| if (s.edits.is_empty()) "No edits yet. Each edit is applied by roc-docx in a worker, and the document below is the written result read back." else Str.join_with(s.edits.map(Review.describe), " · ")), [Engine.class("edits")]),
 				Html.div(
 					"review-grid",
 					[
@@ -1193,7 +1196,7 @@ Playground := [].{
 							[Engine.class("review-side")],
 							[
 								Engine.element("h3", [], [Engine.text("Tracked changes")]),
-								Html.p_v(m.map(|x| if (x.changes.is_empty()) "No tracked changes remain." else ""), [Engine.class("muted")]),
+								Html.p_s(m.map(|x| if (x.changes.is_empty()) "No tracked changes remain." else ""), [Engine.class("muted")]),
 								Engine.element(
 									"ul",
 									[Engine.class("changes")],
@@ -1221,7 +1224,7 @@ Playground := [].{
 									],
 								),
 								Engine.element("h3", [], [Engine.text("Comments")]),
-								Html.p_v(m.map(|x| if (x.comments.is_empty()) "No comments." else ""), [Engine.class("muted")]),
+								Html.p_s(m.map(|x| if (x.comments.is_empty()) "No comments." else ""), [Engine.class("muted")]),
 								Engine.element(
 									"ul",
 									[Engine.class("thread")],
@@ -1245,13 +1248,13 @@ Playground := [].{
 															],
 														),
 														Engine.when(
-															row.select(Engine.keyed(st.val().map(|s| s.replying), Bool.True, Bool.False)),
+															row.select(Engine.keyed(st.signal().map(|s| s.replying), Bool.True, Bool.False)),
 															||
 																Engine.element(
 																	"div",
 																	[Engine.class("reply-form")],
 																	[
-																		Html.text_input(Engine.const("Reply"), "text", rs.val().map(|s| s.reply), [], rs.set_value(|s, reply| { ..s, reply })),
+																		Html.text_input(Engine.const("Reply"), "text", rs.signal().map(|s| s.reply), [], rs.set_value(|s, reply| { ..s, reply })),
 																		Html.button("Send", [], rs.update(Playground.sent)),
 																		Html.button("Cancel", [Engine.class("quiet")], rs.update(|s| { ..s, replying: "" })),
 																	],
@@ -1283,7 +1286,7 @@ Playground := [].{
 
 	generate : State(ctx, S) -> Elem(ctx)
 	generate = |st| {
-		v = st.val()
+		v = st.signal()
 		letter = v.map(|s| s.letter)
 		Engine.element(
 			"main",
@@ -1314,7 +1317,7 @@ Playground := [].{
 								Playground.letter_field(st, Bool.False, "A reviewer's comment on the subject", |l| l.note, |l, x| { ..l, note: x }),
 							],
 						),
-						Worker.derive(
+						Worker.resource(
 							Generate.letter,
 							letter,
 							|remote| {
@@ -1334,13 +1337,13 @@ Playground := [].{
 											[
 												Playground.download(r.map(|x| x.base64), "letter.docx", "Download letter.docx"),
 												Html.button("Explore this document", [Engine.class("quiet")], st.lift().update_by(r.map(|x| x.base64), |s, b| Playground.opened(s, "letter.docx", b))),
-												Html.span_v(remote.map(|x| if (x.request == Pending) "Building…" else ""), [Engine.class("muted")]),
+												Html.span_s(remote.map(|x| if (x.request == Pending) "Building…" else ""), [Engine.class("muted")]),
 											],
 										),
-										Html.p_v(remote.map(Playground.status), [Engine.class("status")]),
+										Html.p_s(remote.map(Playground.status), [Engine.class("status")]),
 										Engine.element("div", [Engine.class("page")], [Playground.structure(st.lift(), r.map(|x| x.model.blocks), Bool.False)]),
 										Engine.element("h3", [], [Engine.text("The Roc that builds it")]),
-										Engine.element("pre", [], [Engine.element("code", [], [Engine.text_v(st.lift().val().map(|s| Generate.source(s.letter)))])]),
+										Engine.element("pre", [], [Engine.element("code", [], [Engine.text_s(st.lift().signal().map(|s| Generate.source(s.letter)))])]),
 									],
 								)
 							},
@@ -1354,7 +1357,7 @@ Playground := [].{
 	## One labelled field of the letter's form.
 	letter_field : State(ctx, S), Bool, Str, (Generate.Letter -> Str), (Generate.Letter, Str -> Generate.Letter) -> Elem(ctx)
 	letter_field = |st, multiline, label, get, set| {
-		value = st.val().map(|s| get(s.letter))
+		value = st.signal().map(|s| get(s.letter))
 		changed = st.set_value(|s, text| { ..s, letter: set(s.letter, text) })
 		input = if (multiline) Html.textarea(Engine.const(label), value, [], changed) else Html.text_input(Engine.const(label), "text", value, [], changed)
 		Engine.element("label", [], [Engine.text(label), input])
@@ -1379,11 +1382,11 @@ Playground := [].{
 			],
 		)
 
-	cell : Val(ctx, Str), Str -> Elem(ctx)
-	cell = |text, class| Engine.element("td", [Engine.class(class)], [Engine.text_v(text)])
+	cell : Signal(ctx, Str), Str -> Elem(ctx)
+	cell = |text, class| Engine.element("td", [Engine.class(class)], [Engine.text_s(text)])
 
-	bytes : U64 -> Str
-	bytes = |n|
+	byte_size : U64 -> Str
+	byte_size = |n|
 		if n < 1024 {
 			"${n.to_str()} B"
 		} else if n < 1024 * 1024 {
@@ -1403,4 +1406,4 @@ expect {
 expect Playground.dropped(Playground.empty, "a.docx\nTWE=").file == Loaded({ name: "a.docx", doc: Wire.Bytes.from_list([77, 97]) })
 
 ## Sizes read as people write them.
-expect Playground.bytes(512) == "512 B" and Playground.bytes(1536) == "1.5 KB"
+expect Playground.byte_size(512) == "512 B" and Playground.byte_size(1536) == "1.5 KB"

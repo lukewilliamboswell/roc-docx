@@ -1,7 +1,7 @@
 #!/usr/bin/env roc-stable
 app [main!] {
-	cli: platform "https://github.com/roc-lang/basic-cli/releases/download/0.28.0/2yhxoR7cZPSYbyUzPWULFw8AA6QEcdsgFNRmzu7pZbst.tar.zst",
-	roc: "nightly-2026-11-07-ad3a5d2",
+	cli: platform "https://github.com/roc-lang/basic-cli/releases/download/0.28.1/7brgwR8YUqfeGrkdfF1V4GPPN7DnP7ftqub9KcrTEZtr.tar.zst",
+	roc: "nightly-2026-11-18-a520eed",
 }
 
 import cli.Cmd
@@ -79,7 +79,7 @@ main! = |_args| {
 run! : List(Str) => Try(Bool, _)
 run! = |argv| {
 	program = argv.first().map_err(|_| EmptyCommand)?
-	match Cmd.new(OsStr.from_str(program)).args(List.drop_first(argv, 1).map(OsStr.from_str)).call!() {
+	match Cmd.call!(OsStr.from_str(program), List.drop_first(argv, 1).map(OsStr.from_str)) {
 		Ok({}) => Ok(Bool.True)
 		Err(BadExitStatus(_)) => Ok(Bool.False)
 		Err(CmdErr(err)) => {

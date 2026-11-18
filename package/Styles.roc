@@ -249,6 +249,7 @@ Styles :: {
 		}
 		merged = merge_run(merge_run(merge_run(merge_run(styles.defaults.run, contributions.table_run), from_paragraph), from_character), run)
 		# Each level that turns a toggle on inverts it: on is an odd count.
+		toggled : (Document.RunProperties -> Document.OnOff) -> Document.OnOff
 		toggled = |field| {
 			on = |properties| field(properties) == On
 			state = on(styles.defaults.run) != (on(contributions.table_run) != (on(from_paragraph) != on(from_character)))

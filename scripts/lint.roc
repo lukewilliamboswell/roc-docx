@@ -1,9 +1,10 @@
 #!/usr/bin/env roc-stable
 app [main!] {
-	cli: platform "https://github.com/roc-lang/basic-cli/releases/download/0.28.0/2yhxoR7cZPSYbyUzPWULFw8AA6QEcdsgFNRmzu7pZbst.tar.zst",
-	roc: "nightly-2026-11-07-ad3a5d2",
+	cli: platform "https://github.com/roc-lang/basic-cli/releases/download/0.28.1/7brgwR8YUqfeGrkdfF1V4GPPN7DnP7ftqub9KcrTEZtr.tar.zst",
+	roc: "nightly-2026-11-18-a520eed",
 }
 
+import cli.OsStr
 import cli.Path
 import cli.Stderr
 import cli.Stdout
@@ -16,7 +17,7 @@ import src/Lint
 ## Reads every Roc and AsciiDoc source and every .docx under the checked
 ## directories, runs the rules in scripts/src/Lint.roc, and prints each
 ## violation as `path:line: message`. Any violation fails the run.
-main! : List([Utf8(Str), UnixBytes(List(U8)), WindowsU16s(List(U16))]) => Try({}, _)
+main! : List(OsStr) => Try({}, _)
 main! = |_args| {
 	stable_tag = Lint.stable_tag(Path.read_utf8!(Path.utf8("Blueprint.roc"))?) ? |_| BlueprintNamesNoStableCompiler
 	var $sources = List.with_capacity(64)

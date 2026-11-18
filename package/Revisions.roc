@@ -84,7 +84,7 @@ Revisions :: [].{
 	paragraph_text = |paragraph, view|
 		match view {
 			Current | Final => Document.paragraph_text(paragraph)
-			Original => Str.from_utf8(paragraph.content.fold(List.with_capacity(64), |text, inline| inline_bytes(text, inline, Original))) ?? ""
+			Original => Str.from_utf8(paragraph.content.fold(List.with_capacity(64), |bytes, inline| inline_bytes(bytes, inline, Original))) ?? ""
 		}
 
 	## The text of blocks in a view: every paragraph's text, as

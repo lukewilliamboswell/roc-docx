@@ -5,6 +5,10 @@ one of its four sample documents, or choose a `.docx` of your own. Your
 document stays on the page: reading, editing and writing run in Web Workers,
 using roc-docx compiled to WebAssembly.
 
+Worker failures are shown on the page, including payloads nested too deeply,
+invalid numeric keys and results containing too many files. A rejected
+payload does not become a partial document.
+
 == Explore a document
 
 Explore follows the same pipeline an application uses: the ZIP archive and

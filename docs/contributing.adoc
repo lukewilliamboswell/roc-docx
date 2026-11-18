@@ -16,6 +16,12 @@ pandoc and the shared release utility. LibreOffice is needed only for the
 LibreOffice lane and is found through `SOFFICE`, `PATH` or the macOS
 application bundle.
 
+When updating the tooling compiler, change its recipe in `Blueprint.roc`
+and the matching pins in `scripts/`, then run `blueprint update` to record
+the published digests for every supported system. Keep application entry
+points on the platform's `OsStr` argument type; convert an argument to a
+`Path` at the filesystem boundary. The package itself has no compiler pin.
+
 == Check a published release on the nightly
 
 The daily `Nightly compatibility` workflow calls roc-automation's shared
