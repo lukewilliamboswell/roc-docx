@@ -1,8 +1,9 @@
 app [main!] {
-	cli: platform "https://github.com/roc-lang/basic-cli/releases/download/0.28.0/2yhxoR7cZPSYbyUzPWULFw8AA6QEcdsgFNRmzu7pZbst.tar.zst",
+	cli: platform "https://github.com/roc-lang/basic-cli/releases/download/0.28.1/7brgwR8YUqfeGrkdfF1V4GPPN7DnP7ftqub9KcrTEZtr.tar.zst",
 	docx: "../package/main.roc",
 }
 
+import cli.OsStr
 import cli.Path
 import cli.Stderr
 import cli.Stdout
@@ -26,7 +27,7 @@ import docx.XmlTree
 ## the chapter includes by its tag, so what the manual shows is what this
 ## program compiles. Each function runs on a document of the repository and
 ## must succeed; the program prints every snippet with PASS or FAIL.
-main! : List([Utf8(Str), UnixBytes(List(U8)), WindowsU16s(List(U16))]) => Try({}, _)
+main! : List(OsStr) => Try({}, _)
 main! = |_args| {
 	contract = Path.read_bytes!(Path.utf8("examples/review_contract/contract.docx"))?
 	amendment = Path.read_bytes!(Path.utf8("examples/redline/amendment.docx"))?

@@ -1,6 +1,6 @@
 app [main] {
 	docx: "../package/main.roc",
-	pf: platform "https://github.com/lukewilliamboswell/roc-signals/releases/download/0.4.0/7vs4uMWvwXDKDpHQ9DjH4no5SMqhDyohbZ9tGKHfZocr.tar.zst",
+	pf: platform "https://github.com/lukewilliamboswell/roc-signals/releases/download/0.6.0/3kWiwEo2KWAQTrPidpkPTMNGCY6AX7qup9K6tJVYMhB9.tar.zst",
 }
 
 import pf.Engine

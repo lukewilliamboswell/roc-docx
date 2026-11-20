@@ -152,7 +152,7 @@ Build :: [].{
 			Unset => Document.no_run_properties.fonts
 			Named(name) => { ..Document.no_run_properties.fonts, ascii: Named(name), high_ansi: Named(name), east_asia: Named(name), complex: Named(name) }
 		}
-		properties = {
+		run_properties = {
 			..Document.no_run_properties,
 			style: options.style,
 			bold: options.bold,
@@ -164,7 +164,7 @@ Build :: [].{
 			color,
 			fonts,
 		}
-		Run({ properties, content: run_content(value) })
+		Run({ properties: run_properties, content: run_content(value) })
 	}
 
 	## An item of a list, a paragraph of `content` in the List Paragraph
@@ -244,9 +244,8 @@ Build :: [].{
 				$cells = List.append($cells, Cell({ properties: { ..one.properties, width: Twips(width.to_i64_wrap()) }, content: one.content }))
 				$column = $column + spans(one)
 			}
-			header = if ($index < options.header_rows) On else Unset
-			properties = { header, grid_before: Unset, grid_after: Unset, preserved: [], inserted: Unset, deleted: Unset, change: [] }
-			$content = List.append($content, Row({ properties, content: $cells }))
+			row_properties = { header: if ($index < options.header_rows) On else Unset, grid_before: Unset, grid_after: Unset, preserved: [], inserted: Unset, deleted: Unset, change: [] }
+			$content = List.append($content, Row({ properties: row_properties, content: $cells }))
 			$index = $index + 1
 		}
 		Table({ properties: { style: Style("TableGrid"), width: Auto, borders: [], shading: Unset, preserved: [], change: [] }, grid: widths.map(|width| Column(width)), content: $content })

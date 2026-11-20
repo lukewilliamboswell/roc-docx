@@ -101,12 +101,12 @@ Explore := [].{
 		pkg = Opc.open(bytes, {}) ? |e| Unreadable(Str.inspect(e))
 		parts = Opc.parts(pkg)
 		main = Opc.main_document(pkg) ? |e| Unreadable(Str.inspect(e))
-		blocks = Docx.body(document)
+		body_blocks = Docx.body(document)
 		styles = Docx.styles(document)
 		comments = Docx.comments(document)
 		numbering = Docx.numbering(document)
 		sources = Explore.body_children(pkg, main.name)
-		shown = Explore.blocks(blocks, styles.styles, sources)
+		shown = Explore.blocks(body_blocks, styles.styles, sources)
 		limits : Limits
 		limits = {}
 		total = parts.fold(0, |sum, p| sum + p.size)
@@ -249,8 +249,8 @@ Explore := [].{
 					Style(s) => s
 					Unset => ""
 				}
-				chain = Explore.chain(styles, style)
-				heading = Explore.heading_level(styles, chain)
+				style_chain = Explore.chain(styles, style)
+				heading = Explore.heading_level(styles, style_chain)
 				list_level = match (p.properties.numbering.instance, p.properties.numbering.level) {
 					(Instance(_), Level(l)) => l.to_u64() + 1
 					(Instance(_), Unset) => 1
@@ -262,7 +262,7 @@ Explore := [].{
 					kind,
 					level: if (heading > 0) heading else list_level,
 					style,
-					style_chain: chain,
+					style_chain,
 					segments: Explore.segments(p.content, "", List.with_capacity(4)),
 					comments: Explore.comment_ids(p.content, []),
 					stated: Explore.stated(p.properties),
@@ -333,13 +333,13 @@ Explore := [].{
 	}
 
 	segments : List(Document.Inline), Str, List(Segment) -> List(Segment)
-	segments = |inlines, marks, out|
+	segments = |inlines, outer_marks, out|
 		inlines.fold(
 			out,
 			|acc, inline|
 				match inline {
 					Run(r) => {
-						marked = Explore.marks(marks, r.properties)
+						marked = Explore.marks(outer_marks, r.properties)
 						r.content.fold(
 							acc,
 							|so_far, c|
@@ -351,8 +351,8 @@ Explore := [].{
 								},
 						)
 					}
-					Hyperlink({ content, .. }) => Explore.segments(content, Explore.join(marks, "link"), acc)
-					SimpleField({ content, .. }) => Explore.segments(content, Explore.join(marks, "field"), acc)
+					Hyperlink({ content, .. }) => Explore.segments(content, Explore.join(outer_marks, "link"), acc)
+					SimpleField({ content, .. }) => Explore.segments(content, Explore.join(outer_marks, "field"), acc)
 					Revision(rev) => {
 						kind = match rev.kind {
 							Insertion => "ins"
@@ -360,10 +360,10 @@ Explore := [].{
 							MoveSource => "move-from"
 							MoveDestination => "move-to"
 						}
-						Explore.segments(rev.content, Explore.join(marks, kind), acc)
+						Explore.segments(rev.content, Explore.join(outer_marks, kind), acc)
 					}
-					Container({ content, .. }) => Explore.segments(content, marks, acc)
-					Preserved(node) => List.append(acc, { text: "⟨${Explore.qname_of(node)}⟩", marks: Explore.join(marks, "preserved") })
+					Container({ content, .. }) => Explore.segments(content, outer_marks, acc)
+					Preserved(node) => List.append(acc, { text: "⟨${Explore.qname_of(node)}⟩", marks: Explore.join(outer_marks, "preserved") })
 					_ => acc
 				},
 		)

@@ -8,7 +8,7 @@
 # by a contributor's PATH; nothing here fetches it. `roc-stable` is a fixed
 # nightly for the repository's own scripts, and the oracle adapters run on the
 # host's python3 and xmllint with a fetched pandoc.
-app [config] { pf: platform "https://github.com/lukewilliamboswell/roc-blueprint/releases/download/0.8.0/FbJymjYdCxx9vqMcau7r4tQfeAbnVGqqJoYrLGqPCqKu.tar.zst" }
+app [config] { pf: platform "https://github.com/lukewilliamboswell/roc-blueprint/releases/download/0.13.0/DBtzmMfrSgt6nCGVAcZYCVPxWbhpqw3MXpm6sdQzMn4v.tar.zst" }
 
 import pf.Config
 import pf.Recipes
@@ -20,7 +20,7 @@ config = [
 	# The package, examples and fuzz targets: checked with the host's latest nightly.
 	Environment("package", [Expect(["roc"])]),
 	# Repository scripts run on a fixed compiler so they keep working while the package is broken.
-	Environment("tools", [Extend("package"), Programs([Fetch("roc-stable", Recipes.roc_nightly("nightly-2026-11-07-ad3a5d2"))]), RocPackages(["https://github.com/roc-lang/basic-cli/releases/download/0.28.0/2yhxoR7cZPSYbyUzPWULFw8AA6QEcdsgFNRmzu7pZbst.tar.zst"])]),
+	Environment("tools", [Extend("package"), Programs([Fetch("roc-stable", Recipes.roc_nightly("nightly-2026-11-18-a520eed"))]), RocPackages(["https://github.com/roc-lang/basic-cli/releases/download/0.28.1/7brgwR8YUqfeGrkdfF1V4GPPN7DnP7ftqub9KcrTEZtr.tar.zst"])]),
 	# Oracle adapters: pandoc is fetched; xmllint and python3 come from the host.
 	Environment("oracle", [Programs([Fetch("pandoc", pandoc)]), Expect(["python3", "xmllint"])]),
 	# The LibreOffice lane: LibreOffice is found through SOFFICE or PATH by the adapter that needs it.
@@ -29,7 +29,7 @@ config = [
 	# Everything the check driver runs: the scripts' compiler, the oracle programs and the release utility.
 	Environment("dev", [Extend("tools"), Programs([Fetch("pandoc", pandoc), Fetch("release-package", release_package)]), Expect(["python3", "xmllint"])]),
 	# The manual and its API reference, which `roc docs` generates with the host's latest nightly.
-	Environment("docs", [Extend("package"), Programs([Fetch("roc-docs", Recipes.file("https://github.com/lukewilliamboswell/roc-automation/releases/download/tools-0.10.0/roc-docs-{system}"))]), Expect(["realpath", "sh"])]),
+	Environment("docs", [Extend("package"), Programs([Fetch("roc-docs", Recipes.file("https://github.com/lukewilliamboswell/roc-automation/releases/download/tools-0.12.0/roc-docs-{system}"))]), Expect(["realpath", "sh"])]),
 	Environment("release", [Programs([Fetch("release-package", release_package)]), Expect(["roc", "git", "gh", "tar", "unzip", "zip", "chmod", "touch", "env"])]),
 	Environment("release-test", [Programs([Fetch("release-package", release_package)]), Expect(["roc"])]),
 	Shell("default", [Use("dev")]),
@@ -69,7 +69,7 @@ libreoffice_lane : Str
 libreoffice_lane = "roc tests/main.roc && python3 -I oracle/compare_snapshots.py --lane pandoc,libreoffice,package tests/fixtures && python3 -I oracle/compare_snapshots.py --written libreoffice tests/fixtures .roc-docx/passthrough && python3 -I oracle/compare_snapshots.py --lane libreoffice,package .roc-docx/generated && python3 -I oracle/compare_snapshots.py --lane libreoffice,package .roc-docx/review && python3 -I oracle/compare_snapshots.py --lane libreoffice,package .roc-docx/redline"
 
 release_package : System -> Config.Download
-release_package = Recipes.file("https://github.com/lukewilliamboswell/roc-automation/releases/download/tools-0.10.0/release-package-{system}")
+release_package = Recipes.file("https://github.com/lukewilliamboswell/roc-automation/releases/download/tools-0.12.0/release-package-{system}")
 
 # pandoc produces the regenerable fixtures and reads documents as a semantic oracle.
 pandoc : System -> Config.Download

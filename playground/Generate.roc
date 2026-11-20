@@ -32,8 +32,8 @@ Generate := [].{
 
 	generated : Letter -> Try(Review.Reviewed, Explore.Problem)
 	generated = |l| {
-		document = Generate.document(l) ? |e| Unreadable(Str.inspect(e))
-		bytes = Docx.to_bytes(document) ? |e| Unreadable("Writing failed: ${Str.inspect(e)}")
+		built = Generate.document(l) ? |e| Unreadable(Str.inspect(e))
+		bytes = Docx.to_bytes(built) ? |e| Unreadable("Writing failed: ${Str.inspect(e)}")
 		again = Docx.parse(bytes) ? |e| Unreadable("The written document does not read: ${Str.inspect(e)}")
 		model = Explore.of_document(bytes, again.document, again.diagnostics)?
 		Ok({ model, base64: Base64.encode(bytes), size: bytes.len() })
