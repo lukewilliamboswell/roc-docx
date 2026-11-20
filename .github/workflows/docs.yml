@@ -29,14 +29,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      - uses: lukewilliamboswell/roc-automation/actions/setup-blueprint@c55acc440d5aa7564ef01a7c320500307b4ee81a
+      - uses: lukewilliamboswell/roc-automation/actions/setup-blueprint@dd30a5dd576973b6e224db70d96e3e12c96bcc95
         with:
           cache: 'true'
           cache-workload: docs
       # `roc docs` generates the API reference beside the manual.
-      - uses: roc-lang/setup-roc@dd81390553b0a1236aedb61cdd4c0ed7cf7eaec4
-        with:
-          version: nightly
+      - uses: lukewilliamboswell/roc-automation/actions/setup-roc-nightly@dd30a5dd576973b6e224db70d96e3e12c96bcc95
       - run: blueprint run docs -- --docs-version "$LABEL" --site-url "${SITE}unreleased/"
         env:
           LABEL: ${{ github.event_name == 'pull_request' && format('unreleased (pull request {0})', github.event.number) || 'unreleased' }}
