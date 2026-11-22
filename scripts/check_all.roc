@@ -30,9 +30,9 @@ checks = [
 	{ name: "lint", argv: ["scripts/lint.roc"] },
 	{ name: "scripts-test", argv: ["roc-stable", "test", "scripts/src/Lint.roc"] },
 	{ name: "test", argv: ["roc", "test", "package/main.roc"] },
-	{ name: "playground-test", argv: ["roc", "test", "playground/main.roc"] },
-	{ name: "playground-specs", argv: ["sh", "-c", "cd playground && roc signals.roc test"] },
-	{ name: "playground-build", argv: ["sh", "-c", "cd playground && roc signals.roc build"] },
+	{ name: "playground-test", argv: ["scripts/playground.roc", "expects"] },
+	{ name: "playground-specs", argv: ["scripts/playground.roc", "test"] },
+	{ name: "playground-build", argv: ["scripts/playground.roc", "build"] },
 	# The data-driven cases under tests/: every fixture passes through as its expectation records.
 	{ name: "cases", argv: ["roc", "tests/main.roc"] },
 	# Every Roc snippet the manual includes compiles and runs.
