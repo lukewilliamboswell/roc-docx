@@ -1,8 +1,8 @@
 app [target] {
 	docx: "../../package/main.roc",
 	fuzz: platform "https://github.com/lukewilliamboswell/roc-fuzz/releases/download/0.7.0/HBigHQhVZWEF2EkLxpYK35u8P6UNsAmPYxpNFTxXK1Br.tar.zst",
-	parser: "https://github.com/lukewilliamboswell/roc-parser/releases/download/6.0.0-rc.3/FTL1xt1rA9nXzoYkhFAW9yF75Kn52bS3cpBr7wZNfPq2.tar.zst",
-	zip: "https://github.com/lukewilliamboswell/roc-zip/releases/download/0.3.0-rc2/8WMHQxwviErPSP8JSi99SMUehHKWZH2mpfFcP3s5sjAg.tar.zst",
+	parser: "https://github.com/lukewilliamboswell/roc-parser/releases/download/6.0.0-rc.3.1/BBUDV8ak5oBCYRjWbQ3zNDBjXFVZydTdMPswovVkMUsT.tar.zst",
+	zip: "https://github.com/lukewilliamboswell/roc-zip/releases/download/0.3.0-rc3/8Cpaf9qGq5aA38zeGsUG91Bmk8u5pbcV9jnYUZv7d4RD.tar.zst",
 }
 
 import fuzz.Fuzz

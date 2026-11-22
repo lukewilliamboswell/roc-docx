@@ -262,9 +262,14 @@ Build :: [].{
 		body_changed(
 			document,
 			|body| {
-				{ content, final } = split_final(body)
-				kept = if (!blocks.is_empty() and content.len() == 1 and content.first() == Ok(empty_paragraph)) [] else content
-				List.append(List.concat(kept, blocks), Section(final))
+				(final, final_count) = match body.last() {
+					Ok(Section(section)) => (section, 1)
+					_ => (no_section, 0)
+				}
+				if !blocks.is_empty() and body.len() == 1 + final_count and body.first() == Ok(empty_paragraph) {
+					return List.append(blocks, Section(final))
+				}
+				List.append(List.concat(body.drop_last(final_count), blocks), Section(final))
 			},
 		)
 
