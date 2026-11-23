@@ -28,6 +28,9 @@ jobs:
       version: ${{ inputs.version || '' }}
       nightly-tag: ${{ inputs.nightly-tag || '' }}
       check-task: check
+      # The specialized playground build on Roc's November 22 nightly took
+      # 24 minutes on the runner (roc-lang/roc#13372).
+      build-timeout-minutes: 50
       setup-command: '["sudo", "apt-get", "install", "-y", "--no-install-recommends", "libxml2-utils"]'
   # A release changes what the site leads with: once it is published, the
   # site is built by a read-only job and deployed by one holding only the
