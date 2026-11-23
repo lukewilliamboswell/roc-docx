@@ -491,7 +491,8 @@ blueprint run playground-test   # Roc expects
 ----
 
 The tasks use the published `signals.roc` entry point and apply any compiler
-workaround needed by the playground. All tests and the build run in `check`.
+workaround needed by the playground. The tests and a browser smoke build
+run in `check`. The `playground` task builds the deployment files.
 The Signals tool supplies the runtime and worker matching its release,
 rewrites page URLs to hashed assets, and manages the compiler's supported
 optimization level. Serve `playground/dist/` at `/playground/` beside the
