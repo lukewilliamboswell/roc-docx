@@ -34,3 +34,5 @@ no compiler pin. The browser playground uses Signals 0.6.0 and its matching
 runtime, with explicit reporting of worker payload failures.
 Its Blueprint tasks select specialization on the November 22 nightly to
 work around https://github.com/roc-lang/roc/issues/13372[Roc issue #13372].
+On that nightly the browser smoke build uses the dev Wasm backend.
+The site deploys the size-optimized module.
