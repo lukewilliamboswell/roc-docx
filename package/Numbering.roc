@@ -145,9 +145,9 @@ Numbering :: {
 							if $definitions.contains(id) {
 								$diagnostics = List.append($diagnostics, DuplicateDefinition(id))
 							} else {
-								read = definition_of(element)
-								$definitions = $definitions.insert(id, read)
-								match read.style {
+								parsed = definition_of(element)
+								$definitions = $definitions.insert(id, parsed)
+								match parsed.style {
 									Style(style) if !$style_links.contains(style) => {
 										$style_links = $style_links.insert(style, id)
 									}
@@ -185,11 +185,11 @@ Numbering :: {
 		missing = $order.keep_oks(
 			|id| {
 				found = $instances.get(id) ? |_| Present
-				Definition(definition) = found.definition
-				if $definitions.contains(definition) {
+				Definition(definition_id) = found.definition
+				if $definitions.contains(definition_id) {
 					Err(Present)
 				} else {
-					Ok(MissingDefinition({ instance: id, definition }))
+					Ok(MissingDefinition({ instance: id, definition: definition_id }))
 				}
 			},
 		)

@@ -1,5 +1,5 @@
 app [main!] {
-	cli: platform "https://github.com/roc-lang/basic-cli/releases/download/0.28.0/2yhxoR7cZPSYbyUzPWULFw8AA6QEcdsgFNRmzu7pZbst.tar.zst",
+	cli: platform "https://github.com/roc-lang/basic-cli/releases/download/0.28.1/7brgwR8YUqfeGrkdfF1V4GPPN7DnP7ftqub9KcrTEZtr.tar.zst",
 	docx: "../../package/main.roc",
 }
 
@@ -21,10 +21,10 @@ import docx.Document
 #
 #     cd examples/agreement && roc main.roc              # writes agreement.docx
 #     cd examples/agreement && roc main.roc out.docx
-main! : List([Utf8(Str), UnixBytes(List(U8)), WindowsU16s(List(U16))]) => Try({}, _)
+main! : List(OsStr) => Try({}, _)
 main! = |args| {
 	output = match args {
-		[to] => Path.from_os_str(OsStr.from_raw(to))
+		[to] => Path.from_os_str(to)
 		_ => Path.utf8("agreement.docx")
 	}
 	reviewed = review(draft()?)?

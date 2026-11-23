@@ -1,10 +1,11 @@
 app [main!] {
-	cli: platform "https://github.com/roc-lang/basic-cli/releases/download/0.28.0/2yhxoR7cZPSYbyUzPWULFw8AA6QEcdsgFNRmzu7pZbst.tar.zst",
+	cli: platform "https://github.com/roc-lang/basic-cli/releases/download/0.28.1/7brgwR8YUqfeGrkdfF1V4GPPN7DnP7ftqub9KcrTEZtr.tar.zst",
 	docx: "../package/main.roc",
 }
 
 import cli.Duration
 import cli.Monotonic
+import cli.OsStr
 import cli.Path
 import cli.Stderr
 import cli.Stdout
@@ -75,7 +76,7 @@ import docx.XmlTree
 ## with the same changes, tracking on. The written document and its
 ## snapshot, the expectation, are what the schema and LibreOffice oracles
 ## read.
-main! : List([Utf8(Str), UnixBytes(List(U8)), WindowsU16s(List(U16))]) => Try({}, _)
+main! : List(OsStr) => Try({}, _)
 main! = |args| {
 	update = args.any(|arg| is_update(arg))
 	fixtures = sorted(files_under!(Path.utf8("tests/fixtures"))?.map(Path.display).keep_if(|path| path.ends_with(".docx")))
@@ -876,13 +877,8 @@ hex = |value| {
 	Str.from_utf8($out) ?? ""
 }
 
-is_update : [Utf8(Str), UnixBytes(List(U8)), WindowsU16s(List(U16))] -> Bool
-is_update = |arg|
-	match arg {
-		Utf8(text) => text == "--update"
-		UnixBytes(bytes) => bytes == "--update".to_utf8()
-		WindowsU16s(units) => units == "--update".to_utf8().map(|byte| byte.to_u16())
-	}
+is_update : OsStr -> Bool
+is_update = |arg| arg == "--update"
 
 directory_of : Str -> Str
 directory_of = |path|

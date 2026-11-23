@@ -629,11 +629,17 @@ check_relationships = |source, relationships| {
 is_part_name : Str -> Bool
 is_part_name = |name| {
 	bytes = name.to_utf8()
-	segments = name.split_on("/").drop_first(1)
-	name.starts_with("/")
-		and bytes.len() <= 65_536
-		and bytes.all(|byte| byte >= 0x20 and byte != '\\')
-		and segments.all(|segment| !segment.is_empty() and !segment.ends_with("."))
+	if bytes.len() > 65_536 or bytes.first() != Ok('/') {
+		return Bool.False
+	}
+	var $previous = '/'
+	for byte in bytes.drop_first(1) {
+		if byte < 0x20 or byte == '\\' or (byte == '/' and ($previous == '/' or $previous == '.')) {
+			return Bool.False
+		}
+		$previous = byte
+	}
+	$previous != '/' and $previous != '.'
 }
 
 # XML 1.0 carries no control characters other than tab, line feed and
@@ -1386,8 +1392,9 @@ plain_part = |name| { name, content_type: "application/xml", relationships: [] }
 ## Part names must be absolute, with segments that are not empty and do not
 ## end in a dot.
 expect {
-	names = ["word/document.xml", "/", "/word//document.xml", "/word/./document.xml", "/word/document.", "/word\\document.xml"]
+	names = ["word/document.xml", "/", "/word/", "/word//document.xml", "/word/./document.xml", "/word./document.xml", "/word/document.", "/word\\document.xml", "/word/\tbad.xml"]
 	names.all(|name| write_one(plain_part(name)) == Err(InvalidPartName(name)))
+		and write_one(plain_part("/.hidden/書.xml")) == Ok({})
 }
 
 ## Relationship identifiers are XML names, unique within their source, and

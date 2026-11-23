@@ -1,5 +1,5 @@
 app [main!] {
-	cli: platform "https://github.com/roc-lang/basic-cli/releases/download/0.28.0/2yhxoR7cZPSYbyUzPWULFw8AA6QEcdsgFNRmzu7pZbst.tar.zst",
+	cli: platform "https://github.com/roc-lang/basic-cli/releases/download/0.28.1/7brgwR8YUqfeGrkdfF1V4GPPN7DnP7ftqub9KcrTEZtr.tar.zst",
 	docx: "../../package/main.roc",
 }
 
@@ -24,10 +24,10 @@ import docx.Opc
 #
 #     cd examples/repackage && roc main.roc                    # review.docx to repackaged.docx
 #     cd examples/repackage && roc main.roc in.docx out.docx
-main! : List([Utf8(Str), UnixBytes(List(U8)), WindowsU16s(List(U16))]) => Try({}, _)
+main! : List(OsStr) => Try({}, _)
 main! = |args| {
 	{ input, output } = match args {
-		[from, to] => { input: Path.from_os_str(OsStr.from_raw(from)), output: Path.from_os_str(OsStr.from_raw(to)) }
+		[from, to] => { input: Path.from_os_str(from), output: Path.from_os_str(to) }
 		_ => { input: Path.utf8("review.docx"), output: Path.utf8("repackaged.docx") }
 	}
 	pkg = Opc.open(Path.read_bytes!(input)?, {})?

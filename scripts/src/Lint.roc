@@ -16,12 +16,12 @@ Lint :: [].{
 
 	## Every violation across the repository.
 	check : { sources : List(Source), binaries : List(Binary), stable_tag : Str } -> List(Violation)
-	check = |{ sources, binaries, stable_tag }| {
+	check = |{ sources, binaries, stable_tag: tooling_tag }| {
 		per_source = sources.fold(
 			[],
 			|found, source|
 				[
-					Lint.roc_pin(source, stable_tag),
+					Lint.roc_pin(source, tooling_tag),
 					Lint.relative_package(source),
 					Lint.no_crash_in_package(source),
 					Lint.no_dbg(source),

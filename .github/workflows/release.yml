@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Version to publish, such as 0.1.0 or 0.1.0-rc1; empty runs the dry run
+        description: Version to publish, such as 0.2.0 or 0.2.0-rc1; empty runs the dry run
         type: string
         default: ''
       nightly-tag:
@@ -23,11 +23,14 @@ jobs:
       contents: write
       id-token: write
       attestations: write
-    uses: lukewilliamboswell/roc-automation/.github/workflows/release-package.yml@c55acc440d5aa7564ef01a7c320500307b4ee81a
+    uses: lukewilliamboswell/roc-automation/.github/workflows/release-package.yml@dd30a5dd576973b6e224db70d96e3e12c96bcc95
     with:
       version: ${{ inputs.version || '' }}
       nightly-tag: ${{ inputs.nightly-tag || '' }}
       check-task: check
+      # The specialized playground build on Roc's November 22 nightly took
+      # 24 minutes on the runner (roc-lang/roc#13372).
+      build-timeout-minutes: 50
       setup-command: '["sudo", "apt-get", "install", "-y", "--no-install-recommends", "libxml2-utils"]'
   # A release changes what the site leads with: once it is published, the
   # site is built by a read-only job and deployed by one holding only the
