@@ -1,23 +1,23 @@
 #!/usr/bin/env roc-stable
 app [main!] {
 	cli: platform "https://github.com/roc-lang/basic-cli/releases/download/0.28.1/7brgwR8YUqfeGrkdfF1V4GPPN7DnP7ftqub9KcrTEZtr.tar.zst",
-	roc: "nightly-2026-11-18-a520eed",
+	roc: "nightly-2026-11-23-b5c77fc",
 }
 
 import cli.Cmd
 import cli.OsStr
 
-## Run the playground against the host compiler. The November 22 nightly
-## needs specialization for nested record defaults in the Signals platform
+## Run the playground against the host compiler. The November 22 and 23
+## nightlies need specialization for nested record defaults in the Signals platform
 ## and its markup dependency (roc-lang/roc#13372). Use the dev Wasm backend
-## for the browser smoke build on this nightly so fuzz smoke can finish
+## for the browser smoke build on these nightlies so fuzz smoke can finish
 ## within the release job.
 main! = |args| Cmd.call!("sh", ["-c", launch, "playground"].map(OsStr.from_str).concat(args))
 
 launch =
 	\\set -eu
 	\\case "$(roc version)" in
-	\\    *nightly-2026-11-22-3350b1c*)
+	\\    *nightly-2026-11-22-3350b1c*|*nightly-2026-11-23-b5c77fc*)
 	\\        compiler=$(command -v roc)
 	\\        compiler=$(cd "$(dirname "$compiler")" && pwd)/$(basename "$compiler")
 	\\        export ROC_DOCX_PLAYGROUND_COMPILER="$compiler"
