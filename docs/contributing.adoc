@@ -241,11 +241,16 @@ position or produces a misleading diagnostic.
   that later actions and rules inspect. Include `Model.explain` in a failed
   expectation to see the counterexample and unmet goals. Check live states
   during the search. When serialization is a separate obligation, save
-  and reopen a witness that exercises it.
+  and reopen a witness that exercises it. Compare a retry with a clean
+  replay to isolate the effect of the failed step, and check the output
+  against the format or API contract.
 * Use `Solve` for fixed-width integer laws. State where the caller's bounds
   come from and prove both arithmetic safety and the result where applicable.
   Treat `GaveUp` as a failed proof. Take a boundary case or solver witness
   through the real caller so the proof also has evidence for its premises.
+* Use a focused expectation when a rule depends on a single input and
+  its surrounding context. Check the result and the diagnostics at the
+  positions the rule distinguishes.
 * Use the fuzz campaign for larger generated inputs and longer histories.
   Include declared examples for meaningful campaign goals and keep
   allocation measurements around the operation under test. When a model
