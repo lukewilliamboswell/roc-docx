@@ -24,6 +24,9 @@ Each entry is a `Comments.Anchored` record with three fields:
 * `id`, the comment's place among the comments of the comments part, which
   is how the body names it.
 
+A range boundary or reference resolves by the integer value of its
+identifier. For example, `+01` can refer to a comment written with `1`.
+
 Comments come in the order their anchors begin in the body, as a reader
 meets them; comments that start at the same place, such as a comment and its
 replies, keep the order the document gives them. Comments the body does not
@@ -154,7 +157,9 @@ replies as replies and resolved comments as resolved.
   attributes it kept, and its content is written as the body's blocks are,
   in the same canonical form.
 * Comments take new identifiers, as <<write-a-document>> says, and every
-  range and reference to a comment takes its comment's.
+  range and reference to a comment takes its comment's. An identifier
+  held by a preserved reference is reserved by its integer value, so
+  writing cannot make a previously unresolved reference name a comment.
 * The last paragraph of each comment's content is given a paragraph
   identifier, `w14:paraId`, the lowest from `00000001` up that no other
   part and no paragraph kept in a comment uses. The other parts name the
