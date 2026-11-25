@@ -1887,7 +1887,7 @@ grid = |children, diagnostics| {
 	var $diagnostics = diagnostics
 	for child in kept(children) {
 		read = match child {
-			Element(element) if is_w(element.name, "gridCol") and holds(element, ["w"]) => unsigned(element, "w")
+			Element(element) if is_w(element.name, "gridCol") and holds(element, ["w"]) => unsigned_measure(element, "w")
 			_ => Err(CannotHold)
 		}
 		match read {
@@ -2235,16 +2235,16 @@ width = |element| {
 		Ok("pct") => {
 			text = value_of(element, "w") ? |_| CannotHold
 			if text.ends_with("%") {
-				read = Lenient.decimal(Str.drop_suffix(text, "%"), 50) ? |_| CannotHold
+				read = Lenient.measure(Str.drop_suffix(text, "%"), 50) ? |_| CannotHold
 				Ok({ value: Fiftieths(read.value), noticed: if (read.exact) [] else [rounded(element, "w", text)] })
 			} else {
-				read = whole(element, "w")?
+				read = signed_measure(element, "w")?
 				Ok({ value: Fiftieths(read.value), noticed: read.noticed })
 			}
 		}
 
 		Ok("dxa") | Err(NotFound) => {
-			read = whole(element, "w")?
+			read = signed_measure(element, "w")?
 			Ok({ value: Twips(read.value), noticed: read.noticed })
 		}
 
@@ -2418,6 +2418,20 @@ whole = |element, local| {
 	text = value_of(element, local) ? |_| CannotHold
 	read = Lenient.decimal(text, 1) ? |_| CannotHold
 	Ok({ value: read.value, noticed: if (text.contains(".")) [rounded(element, local, text)] else [] })
+}
+
+signed_measure : Element, Str -> Try(Read(I64), [CannotHold])
+signed_measure = |element, local| {
+	text = value_of(element, local) ? |_| CannotHold
+	read = Lenient.measure(text, 1) ? |_| CannotHold
+	Ok({ value: read.value, noticed: if (text.contains(".")) [rounded(element, local, text)] else [] })
+}
+
+unsigned_measure : Element, Str -> Try(Read(U64), [CannotHold])
+unsigned_measure = |element, local| {
+	text = value_of(element, local) ? |_| CannotHold
+	read = Lenient.unsigned_measure(text) ? |_| CannotHold
+	Ok({ value: read, noticed: if (text.contains(".")) [rounded(element, local, text)] else [] })
 }
 
 unsigned : Element, Str -> Try(Read(U64), [CannotHold])
