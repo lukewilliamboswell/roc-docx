@@ -130,10 +130,11 @@ include::../tests/manual.roc[tag=set-properties,indent=0]
 The properties are the `title`, `subject`, `creator` (the author),
 `keywords`, `description`, who it was `last_modified_by`, its `revision`
 number, and when it was `created` and `modified`. The core properties part
-is written from them, keeping every other property it holds, and a document
-without the part is given one. A date is refused with `NotADate` and the
-date as given unless it reads back as written, in the W3C date and time
-format, such as `2026-11-10T09:00:00Z`. The package never reads the clock,
+is written from them at its existing relationship target, keeping every
+other property it holds. A document without the part gets one at a free
+name, usually `/docProps/core.xml`. A date is refused with `NotADate` and
+the date as given unless it reads back as written, in the W3C date and
+time format, such as `2026-11-10T09:00:00Z`. The package never reads the clock,
 so a document says when it was modified only when the caller gives the
 date. `Build.properties` is the same edit, for a document being generated.
 
