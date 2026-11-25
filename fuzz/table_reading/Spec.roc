@@ -6,6 +6,8 @@ import docx.Opc
 import docx.WmlRead
 import docx.XmlTree
 
+Spec := [].{}
+
 ## A carry produced by scaling a fractional digit cannot overflow, and taking
 ## its tens leaves a carry of at most 999 for the next digit. The factor and
 ## incoming carry are bounded independently by their largest values.

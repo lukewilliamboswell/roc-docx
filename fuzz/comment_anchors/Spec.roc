@@ -4,6 +4,8 @@ import docx.Document
 import docx.Opc
 import fuzz.Model
 
+Spec := [].{}
+
 # A single body paragraph, two adjacent multibyte spans, and at most three
 # successful additions (including replies). This admits siblings, a grandchild,
 # and reusing a removed place. The reference stores stable serials in ancestry

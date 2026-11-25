@@ -1,8 +1,3 @@
-app [target] {
-	docx: "../../package/main.roc",
-	fuzz: platform "https://github.com/lukewilliamboswell/roc-fuzz/releases/download/0.8.0/BUNcJDHxCd7xLVSe3WBioyXqR6tm1MqXwzwGgtnmqK43.tar.zst",
-}
-
 import fuzz.Fuzz
 import docx.Comments
 import docx.Docx
@@ -734,16 +729,18 @@ comment = |variant, place, parent| {
 	}
 }
 
-target = Fuzz.target_with!({
-	name: "comment-anchors",
-	examples: [
-		Fuzz.example({ name: "small-threads", revision: "1", make: || small_program }),
-		Fuzz.example({ name: "large-threads", revision: "1", make: || large_program }),
-		Fuzz.example({ name: "few-comments", revision: "1", make: || few_comments }),
-		Fuzz.example({ name: "many-comments", revision: "1", make: || many_comments }),
-		Fuzz.example({ name: "stories", revision: "1", make: || stories_program }),
-	],
-	generator,
-	test!,
-	show: |program| Str.inspect(program),
-})
+Property := [].{
+	target = Fuzz.target_with!({
+		name: "comment-anchors",
+		examples: [
+			Fuzz.example({ name: "small-threads", revision: "1", make: || small_program }),
+			Fuzz.example({ name: "large-threads", revision: "1", make: || large_program }),
+			Fuzz.example({ name: "few-comments", revision: "1", make: || few_comments }),
+			Fuzz.example({ name: "many-comments", revision: "1", make: || many_comments }),
+			Fuzz.example({ name: "stories", revision: "1", make: || stories_program }),
+		],
+		generator,
+		test!,
+		show: |program| Str.inspect(program),
+	})
+}

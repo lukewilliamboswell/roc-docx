@@ -3,6 +3,8 @@ import docx.Docx
 import docx.Document
 import fuzz.Model
 
+Spec := [].{}
+
 Page : [Default, Even, First]
 
 Region : [Header, Footer]

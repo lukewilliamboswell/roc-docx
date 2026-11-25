@@ -4,6 +4,8 @@ import docx.Numbering
 import docx.Opc
 import docx.Snapshot
 
+Spec := [].{}
+
 w : Str
 w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 

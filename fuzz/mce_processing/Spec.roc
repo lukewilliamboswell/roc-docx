@@ -1,6 +1,8 @@
 import docx.Mce
 import docx.XmlTree
 
+Spec := [].{}
+
 wordprocessingml : Str
 wordprocessingml = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 

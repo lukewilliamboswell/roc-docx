@@ -2,6 +2,8 @@ import docx.Docx
 import docx.Opc
 import zip.Zip
 
+Spec := [].{}
+
 main_part = "/manuscript/body.xml"
 
 main_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"

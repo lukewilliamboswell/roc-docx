@@ -2,6 +2,8 @@ import docx.Docx
 import docx.Opc
 import fuzz.Solve
 
+Spec := [].{}
+
 ## Transitional CT_PageSz and the unsigned CT_PageMar attributes use
 ## ST_TwipsMeasure, whose decimal arm is unsignedLong. Both signed margins
 ## use ST_SignedTwipsMeasure, whose integer arm is unbounded. Exercise the

@@ -2,6 +2,8 @@ import docx.Opc
 import fuzz.Model
 import zip.Zip
 
+Spec := [].{}
+
 Content : [Generated, Copied]
 
 Action : [Generate, Copy, CopyMissing, FinishEarly, AddExtra, Finish]

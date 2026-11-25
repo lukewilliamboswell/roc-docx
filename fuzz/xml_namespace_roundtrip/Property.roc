@@ -1,9 +1,3 @@
-app [target] {
-	docx: "../../package/main.roc",
-	fuzz: platform "https://github.com/lukewilliamboswell/roc-fuzz/releases/download/0.8.0/BUNcJDHxCd7xLVSe3WBioyXqR6tm1MqXwzwGgtnmqK43.tar.zst",
-	zip: "https://github.com/lukewilliamboswell/roc-zip/releases/download/0.3.0-rc3/8Cpaf9qGq5aA38zeGsUG91Bmk8u5pbcV9jnYUZv7d4RD.tar.zst",
-}
-
 import fuzz.Fuzz
 import docx.Limits
 import docx.XmlTree
@@ -316,13 +310,15 @@ strip = |node|
 unprefixed : XmlTree.Name -> XmlTree.Name
 unprefixed = |name| { namespace: name.namespace, local: name.local, prefix: Unprefixed }
 
-target = Fuzz.target_with!({
-	name: "xml-namespace-roundtrip",
-	examples: [
-		Fuzz.example({ name: "small-tree", revision: "1", make: || Generated(small_program) }),
-		Fuzz.example({ name: "large-tree", revision: "1", make: || Generated(large_program) }),
-	].concat(fixtures.map_with_index(|fixture, index| Fuzz.example({ name: fixture.name, revision: "1", make: || Fixture(index) }))),
-	generator,
-	test!,
-	show: |input| Str.inspect(input),
-})
+Property := [].{
+	target = Fuzz.target_with!({
+		name: "xml-namespace-roundtrip",
+		examples: [
+			Fuzz.example({ name: "small-tree", revision: "1", make: || Generated(small_program) }),
+			Fuzz.example({ name: "large-tree", revision: "1", make: || Generated(large_program) }),
+		].concat(fixtures.map_with_index(|fixture, index| Fuzz.example({ name: fixture.name, revision: "1", make: || Fixture(index) }))),
+		generator,
+		test!,
+		show: |input| Str.inspect(input),
+	})
+}

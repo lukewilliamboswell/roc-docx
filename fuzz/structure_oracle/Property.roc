@@ -1,10 +1,3 @@
-app [target] {
-	docx: "../../package/main.roc",
-	fuzz: platform "https://github.com/lukewilliamboswell/roc-fuzz/releases/download/0.8.0/BUNcJDHxCd7xLVSe3WBioyXqR6tm1MqXwzwGgtnmqK43.tar.zst",
-	parser: "https://github.com/lukewilliamboswell/roc-parser/releases/download/6.0.0-rc.3.1/BBUDV8ak5oBCYRjWbQ3zNDBjXFVZydTdMPswovVkMUsT.tar.zst",
-	zip: "https://github.com/lukewilliamboswell/roc-zip/releases/download/0.3.0-rc3/8Cpaf9qGq5aA38zeGsUG91Bmk8u5pbcV9jnYUZv7d4RD.tar.zst",
-}
-
 import fuzz.Fuzz
 import docx.Build
 import docx.Docx
@@ -686,16 +679,18 @@ generated_types = {
 	"<Types xmlns='${content_types_namespace}'><Default Extension='rels' ContentType='application/vnd.openxmlformats-package.relationships+xml'/><Default Extension='png' ContentType='image/png'/>${override("document.xml", "document.main")}${override("footnotes.xml", "footnotes")}${override("header1.xml", "header")}${override("comments.xml", "comments")}</Types>"
 }
 
-target = Fuzz.target_with!({
-	name: "structure-oracle",
-	examples: [
-		Fuzz.example({ name: "small-document", revision: "1", make: || Generated(small_program) }),
-		Fuzz.example({ name: "large-document", revision: "1", make: || Generated(large_program) }),
-		Fuzz.example({ name: "new-document", revision: "1", make: || New }),
-		Fuzz.example({ name: "built-document", revision: "1", make: || Built }),
-		Fuzz.example({ name: "paged-document", revision: "1", make: || Paged }),
-	].concat(fixtures.map_with_index(|fixture, index| Fuzz.example({ name: fixture.name, revision: "1", make: || Fixture(index) }))),
-	generator,
-	test!,
-	show: |input| Str.inspect(input),
-})
+Property := [].{
+	target = Fuzz.target_with!({
+		name: "structure-oracle",
+		examples: [
+			Fuzz.example({ name: "small-document", revision: "1", make: || Generated(small_program) }),
+			Fuzz.example({ name: "large-document", revision: "1", make: || Generated(large_program) }),
+			Fuzz.example({ name: "new-document", revision: "1", make: || New }),
+			Fuzz.example({ name: "built-document", revision: "1", make: || Built }),
+			Fuzz.example({ name: "paged-document", revision: "1", make: || Paged }),
+		].concat(fixtures.map_with_index(|fixture, index| Fuzz.example({ name: fixture.name, revision: "1", make: || Fixture(index) }))),
+		generator,
+		test!,
+		show: |input| Str.inspect(input),
+	})
+}

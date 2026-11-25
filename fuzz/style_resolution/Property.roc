@@ -1,9 +1,3 @@
-app [target] {
-	docx: "../../package/main.roc",
-	fuzz: platform "https://github.com/lukewilliamboswell/roc-fuzz/releases/download/0.8.0/BUNcJDHxCd7xLVSe3WBioyXqR6tm1MqXwzwGgtnmqK43.tar.zst",
-	zip: "https://github.com/lukewilliamboswell/roc-zip/releases/download/0.3.0-rc3/8Cpaf9qGq5aA38zeGsUG91Bmk8u5pbcV9jnYUZv7d4RD.tar.zst",
-}
-
 import fuzz.Fuzz
 import docx.Build
 import docx.Docx
@@ -664,15 +658,17 @@ word_styles = ["Normal", "Heading1", "Heading2", "ListParagraph", "Hyperlink", "
 w : Str
 w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 
-target = Fuzz.target_with!({
-	name: "style-resolution",
-	examples: [
-		Fuzz.example({ name: "short-chain", revision: "1", make: || Chain(16) }),
-		Fuzz.example({ name: "long-chain", revision: "1", make: || Chain(256) }),
-		Fuzz.example({ name: "short-body", revision: "1", make: || Body(16) }),
-		Fuzz.example({ name: "long-body", revision: "1", make: || Body(256) }),
-	].concat(fixtures.map_with_index(|fixture, index| Fuzz.example({ name: fixture.name, revision: "1", make: || Fixture(index) }))),
-	generator,
-	test!,
-	show: |input| Str.inspect(input),
-})
+Property := [].{
+	target = Fuzz.target_with!({
+		name: "style-resolution",
+		examples: [
+			Fuzz.example({ name: "short-chain", revision: "1", make: || Chain(16) }),
+			Fuzz.example({ name: "long-chain", revision: "1", make: || Chain(256) }),
+			Fuzz.example({ name: "short-body", revision: "1", make: || Body(16) }),
+			Fuzz.example({ name: "long-body", revision: "1", make: || Body(256) }),
+		].concat(fixtures.map_with_index(|fixture, index| Fuzz.example({ name: fixture.name, revision: "1", make: || Fixture(index) }))),
+		generator,
+		test!,
+		show: |input| Str.inspect(input),
+	})
+}

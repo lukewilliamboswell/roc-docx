@@ -1,9 +1,3 @@
-app [target] {
-	docx: "../../package/main.roc",
-	fuzz: platform "https://github.com/lukewilliamboswell/roc-fuzz/releases/download/0.8.0/BUNcJDHxCd7xLVSe3WBioyXqR6tm1MqXwzwGgtnmqK43.tar.zst",
-	zip: "https://github.com/lukewilliamboswell/roc-zip/releases/download/0.3.0-rc3/8Cpaf9qGq5aA38zeGsUG91Bmk8u5pbcV9jnYUZv7d4RD.tar.zst",
-}
-
 import fuzz.Fuzz
 import docx.Docx
 import docx.Document
@@ -371,18 +365,20 @@ package_rels = "<Relationships xmlns='http://schemas.openxmlformats.org/package/
 document_rels : Str
 document_rels = "<Relationships xmlns='http://schemas.openxmlformats.org/package/2006/relationships'><Relationship Id='rId1' Type='http://schemas.openxmlformats.org/officeDocument/2006/relationships/image' Target='media/picture.png'/></Relationships>"
 
-target = Fuzz.target_with!({
-	name: "parse-never-crashes",
-	examples: [
-		Fuzz.example({ name: "empty", revision: "1", make: || Bytes([]) }),
-		Fuzz.example({ name: "zip-signature-only", revision: "1", make: || Bytes([0x50, 0x4B, 0x03, 0x04]) }),
-		Fuzz.example({ name: "one-paragraph", revision: "1", make: || Generated(one_paragraph_program) }),
-		Fuzz.example({ name: "small-document", revision: "1", make: || Generated(small_program) }),
-		Fuzz.example({ name: "large-document", revision: "1", make: || Generated(large_program) }),
-		Fuzz.example({ name: "undeclared-extension", revision: "1", make: || Generated(undeclared_program) }),
-		Fuzz.example({ name: "repaired-measures", revision: "1", make: || Generated(repaired_program) }),
-	].concat(fixtures.map_with_index(|fixture, index| Fuzz.example({ name: fixture.name, revision: "1", make: || Fixture(index) }))),
-	generator,
-	test!,
-	show: |input| Str.inspect(input),
-})
+Property := [].{
+	target = Fuzz.target_with!({
+		name: "parse-never-crashes",
+		examples: [
+			Fuzz.example({ name: "empty", revision: "1", make: || Bytes([]) }),
+			Fuzz.example({ name: "zip-signature-only", revision: "1", make: || Bytes([0x50, 0x4B, 0x03, 0x04]) }),
+			Fuzz.example({ name: "one-paragraph", revision: "1", make: || Generated(one_paragraph_program) }),
+			Fuzz.example({ name: "small-document", revision: "1", make: || Generated(small_program) }),
+			Fuzz.example({ name: "large-document", revision: "1", make: || Generated(large_program) }),
+			Fuzz.example({ name: "undeclared-extension", revision: "1", make: || Generated(undeclared_program) }),
+			Fuzz.example({ name: "repaired-measures", revision: "1", make: || Generated(repaired_program) }),
+		].concat(fixtures.map_with_index(|fixture, index| Fuzz.example({ name: fixture.name, revision: "1", make: || Fixture(index) }))),
+		generator,
+		test!,
+		show: |input| Str.inspect(input),
+	})
+}

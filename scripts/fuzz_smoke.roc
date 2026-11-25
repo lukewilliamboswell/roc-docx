@@ -12,28 +12,20 @@ import cli.Path
 import cli.Stderr
 import cli.Stdout
 
-## The smoke run of every fuzz target: build it with the host `roc`, run its
-## Spec.roc expects if present and its declared examples with their allocation
-## ceilings, then explore for at most one second and 64 inputs. This is the
-## only fuzzing pull-request CI does.
+## Build every fuzz suite, run its deterministic specifications, then check
+## every member's examples and allocation ceilings and explore for at most
+## one second and 64 inputs per member.
 ##
 ##     blueprint run fuzz-smoke
 ##
-## A target is `fuzz/<name>/main.roc`. Executables, corpora and reports go
-## under `.roc-docx/fuzz/`. A build failure, failed example, exceeded ceiling,
-## finding or inconclusive exploration fails the run. Targets keep no baseline
-## files; roc-fuzz reports them as unbaselined, which is expected.
-##
-## A build is single-threaded code generation and dominates the run, so up to
-## `concurrent_builds` builds run at once with their output captured. Targets
-## are still reported in order: a target's build output is printed when its
-## build ends, then its examples and exploration run.
+## Suite apps are named fuzz/*_suite.roc. The executable lists its members.
+## Each member has its own corpus and reports under .roc-docx/fuzz/.
 main! = |_args| {
-	names = target_names!()?
+	names = suite_names!()?
 	if names.is_empty() {
-		return fail!("no fuzz targets under fuzz/")
+		return fail!("no fuzz suites under fuzz/")
 	}
-	Stdout.line!("Running ${names.len().to_str()} fuzz targets, building up to ${concurrent_builds.to_str()} at once")?
+	Stdout.line!("Running ${names.len().to_str()} fuzz suites, building up to ${concurrent_builds.to_str()} at once")?
 	Path.create_all!(Path.utf8(".roc-docx/fuzz/reports"))?
 	var $builds = List.with_capacity(names.len())
 	for name in names.take_first(concurrent_builds) {
@@ -54,36 +46,14 @@ main! = |_args| {
 			Err(_) => {}
 		}
 		$position = $position + 1
-		executable = ".roc-docx/fuzz/${name}"
-		corpus = ".roc-docx/fuzz/corpus/${name}"
-		report = ".roc-docx/fuzz/reports/${name}"
-		check_report = ".roc-docx/fuzz/reports/${name}-check"
-		spec = "fuzz/${name}/Spec.roc"
-		spec_ok = if Path.is_file!(Path.utf8(spec))? {
-			step!(["roc", "test", spec, "--main=fuzz/${name}/main.roc", "--no-cache"])?
+		spec_ok = step!(["roc", "test", "fuzz/${name}_suite.roc", "--no-cache"])?
+		ok = if built {
+			run_suite!(name)?
 		} else {
-			Bool.True
-		}
-		# Every run explores from an empty corpus, as CI does, so inputs kept
-		# by an earlier run cannot outgrow the time budget.
-		for stale in [corpus, report, check_report] {
-			match Path.delete_all!(Path.utf8(stale)) {
-				_ => {}
-			}
-		}
-		Path.create_all!(Path.utf8(corpus))?
-		steps = [
-			[executable, "check", "--report-dir=${check_report}"],
-			[executable, "run", corpus, "--time=1", "--runs=64", "--max-input-size=4096", "--timeout=10", "--report-dir=${report}"],
-		]
-		var $ok = built
-		for argv in steps {
-			if $ok {
-				$ok = step!(argv)?
-			}
+			Bool.False
 		}
 		elapsed = Duration.to_millis(Monotonic.elapsed!(started))
-		passed = $ok and spec_ok
+		passed = ok and spec_ok
 		Stdout.line!(" [${$position.to_str()}/${names.len().to_str()}] ${name} ${if (passed) "PASS" else "FAIL"} ${elapsed.to_str()}ms")?
 		if !passed {
 			$failed = $failed + 1
@@ -97,14 +67,14 @@ main! = |_args| {
 	}
 }
 
-# Large targets have each used over 2 GiB of compiler memory. Four
-# concurrent builds leave room for specification tests and the runner.
+# Suites compile several properties at once. Limit concurrent LLVM
+# builds to leave memory for the tests and the runner.
 concurrent_builds : U64
-concurrent_builds = 4
+concurrent_builds = 2
 
-# The build command of a target, without the program name.
+# The build command of a suite, without the program name.
 build_args : Str -> List(Str)
-build_args = |name| ["build", "--fuzz", "fuzz/${name}/main.roc", "--output=.roc-docx/fuzz/${name}"]
+build_args = |name| ["build", "--fuzz", "fuzz/${name}_suite.roc", "--output=.roc-docx/fuzz/${name}"]
 
 # Start building a target with both output streams captured together.
 start_build! = |name|
@@ -140,19 +110,60 @@ finish_build! = |name, build| {
 	}
 }
 
-# Every directory under fuzz/ that holds a main.roc, by name, in order.
-target_names! : () => Try(List(Str), _)
-target_names! = || {
-	var $names = List.with_capacity(8)
+# Every suite app under fuzz/, by file name.
+suite_names! : () => Try(List(Str), _)
+suite_names! = || {
+	var $names = List.with_capacity(4)
 	for entry in Path.list!(Path.utf8("fuzz"))? {
-		if Path.is_file!(Path.join(entry, "main.roc"))? {
-			$names = match Path.display(entry).split_on("/").last() {
-				Ok(name) => List.append($names, name)
-				Err(_) => $names
-			}
+		name = Path.display(entry).split_on("/").last() ?? ""
+		if name.ends_with("_suite.roc") {
+			$names = List.append($names, name.drop_suffix("_suite.roc"))
 		}
 	}
 	Ok($names)
+}
+
+run_suite! : Str => Try(Bool, _)
+run_suite! = |suite| {
+	executable = ".roc-docx/fuzz/${suite}"
+	Stdout.line!("+ ${executable} --list-targets")?
+	child = Cmd.new(OsStr.from_str(executable)).args([OsStr.from_str("--list-targets")]).stdout(Capture).spawn!()?
+	output = child.wait!()?
+	if output.status != Exited(0) {
+		Stderr.line!("error: listing ${suite} members ended with ${Str.inspect(output.status)}")?
+		return Ok(Bool.False)
+	}
+	inventory = Str.from_utf8(output.stdout_bytes)?
+	members = inventory.split_on("\n").drop_if(Str.is_empty)
+	if members.is_empty() {
+		Stderr.line!("error: no targets in suite ${suite}")?
+		return Ok(Bool.False)
+	}
+	var $passed = Bool.True
+	for member in members {
+		ok = run_member!(suite, executable, member)?
+		$passed = $passed and ok
+	}
+	Ok($passed)
+}
+
+run_member! : Str, Str, Str => Try(Bool, _)
+run_member! = |suite, executable, member| {
+	selected = "--target=${member}"
+	corpus = ".roc-docx/fuzz/corpus/${suite}/${member}"
+	report = ".roc-docx/fuzz/reports/${suite}/${member}"
+	check_report = "${report}-check"
+	# Each bounded exploration starts from an empty corpus.
+	for stale in [corpus, report, check_report] {
+		match Path.delete_all!(Path.utf8(stale)) {
+			_ => {}
+		}
+	}
+	Path.create_all!(Path.utf8(corpus))?
+	if !(step!([executable, selected, "check", "--report-dir=${check_report}"])?) {
+		return Ok(Bool.False)
+	}
+	step!([executable, selected, "run", corpus, "--time=1", "--runs=64", "--max-input-size=4096", "--timeout=10", "--report-dir=${report}"])
 }
 
 # Print a command, run it with inherited output, and report whether it succeeded.

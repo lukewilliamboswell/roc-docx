@@ -85,7 +85,7 @@ blueprint tasks          # each check on its own, and the fixture and release ta
 | Every example prints what `tests/spec.json` records
 
 | fuzz-smoke
-| Every fuzz target builds, its bounded specifications and declared examples pass, its allocation ceilings hold, and a one-second exploration finds nothing
+| Every fuzz suite builds and its bounded specifications pass. Each member runs its declared examples, checks allocation ceilings, and explores for up to one second
 
 | fixtures-check
 | Committed pandoc fixtures match regeneration and every fixture has provenance
@@ -261,9 +261,14 @@ position or produces a misleading diagnostic.
   difference, then discard the mutation. Keep a minimized regression for
   a real bug the specification exposes.
 
-Put deterministic checks in `Spec.roc` beside the applicable fuzz target.
-`blueprint run fuzz-smoke` runs each such file with its target as the app.
-For one target, run `roc test fuzz/<target>/Spec.roc --main=fuzz/<target>/main.roc --no-cache`.
+Keep each property in `fuzz/<property>/Property.roc` and register its
+target in the applicable `Fuzz.suite`. The `container`, `reading`,
+`writing`, and `review` suites compile their members together. A member
+keeps its own generator, declared examples, corpus, and allocation ceilings.
+Put deterministic checks in `Spec.roc` beside the property and import that
+module from the same suite. Run the suite's expectations with
+`roc test fuzz/<name>_suite.roc --no-cache`.
+
 Report the domain explored and the behaviours covered by existing tests
 or independent oracles. Stop adding model states when they exercise the
 same decisions and existing evidence covers the remaining contract.
@@ -304,8 +309,9 @@ from the parameter as it is. To set or revise a ceiling:
 
 [source,sh]
 ----
-roc build --fuzz fuzz/opc_open/main.roc --output=.roc-docx/fuzz/opc_open
-.roc-docx/fuzz/opc_open check --report-dir=.roc-docx/fuzz/reports/measure
+roc build --fuzz fuzz/container_suite.roc --output=.roc-docx/fuzz/container
+.roc-docx/fuzz/container --list-targets
+.roc-docx/fuzz/container --target=opc-open-never-crashes check --report-dir=.roc-docx/fuzz/reports/measure
 ----
 
 Read `report.json` in the report directory: each example lists its regions

@@ -9,6 +9,8 @@ import fuzz.Model
 import fuzz.Solve
 import BlockHistory
 
+Spec := [].{}
+
 # A character is part of the original, or needs its insertion to stand.
 # Independently, a pending deletion hides the character until rejected.
 # This lets the reference account for a deletion inside an insertion

@@ -1,8 +1,3 @@
-app [target] {
-	docx: "../../package/main.roc",
-	fuzz: platform "https://github.com/lukewilliamboswell/roc-fuzz/releases/download/0.8.0/BUNcJDHxCd7xLVSe3WBioyXqR6tm1MqXwzwGgtnmqK43.tar.zst",
-}
-
 import fuzz.Fuzz
 import docx.Document
 import docx.WmlRead
@@ -239,13 +234,15 @@ row_xml = |row, cells| {
 paragraph : Str -> Str
 paragraph = |text| "<w:p><w:r><w:t>${text}</w:t></w:r></w:p>"
 
-target = Fuzz.target_with!({
-	name: "table-reading",
-	examples: [
-		Fuzz.example({ name: "small-table", revision: "1", make: || small_program }),
-		Fuzz.example({ name: "large-table", revision: "1", make: || large_program }),
-	],
-	generator,
-	test!,
-	show: |program| Str.inspect(program),
-})
+Property := [].{
+	target = Fuzz.target_with!({
+		name: "table-reading",
+		examples: [
+			Fuzz.example({ name: "small-table", revision: "1", make: || small_program }),
+			Fuzz.example({ name: "large-table", revision: "1", make: || large_program }),
+		],
+		generator,
+		test!,
+		show: |program| Str.inspect(program),
+	})
+}
