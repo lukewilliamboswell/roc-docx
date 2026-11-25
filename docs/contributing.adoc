@@ -317,7 +317,11 @@ ceiling, record the cause in the pull request beside the new value.
 When a refactor changes the work done per input, compare CPU time as well
 as allocation reports. Use the same compiler and optimization mode for
 both builds, interleave repeated measurements, and include ordinary inputs
-and the longest relevant boundary case.
+and the longest relevant boundary case. Check that both builds produce the
+expected result for each measured input. If timing varies enough to obscure
+a small difference, interleave runs of the same executable to estimate
+measurement noise. Retired instruction counts can also show whether a
+change adds work on the same input.
 
 == Fixtures and oracles
 
