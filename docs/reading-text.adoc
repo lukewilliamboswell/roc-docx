@@ -399,11 +399,12 @@ states nothing:
 
 * `start`, where the section begins: `NextPage`, `Continuous` on the same
   page, `EvenPage`, `OddPage` or `NextColumn`;
-* `page_size`, its `width` and `height` in twips (1,440 to the inch) and its
-  `orientation`, `Portrait` or `Landscape`;
-* `margins`, in twips: `top`, `right`, `bottom` and `left` from the page's
-  edges to the body, `header` and `footer` from the top and bottom edges to
-  the header and footer, and the `gutter` kept for binding;
+* `page_size`, its `width` and `height` as `U64` twips (1,440 to the inch)
+  and its `orientation`, `Portrait` or `Landscape`;
+* `margins`, in twips. The `top` and `bottom` distances from the page edges
+  to the body are `I64`. The `left` and `right` distances to the body, the
+  `header` and `footer` distances to those regions, and the binding
+  `gutter` are `U64`;
 * `columns`, `Equal({ count, space, separator })` for columns of one width
   with `space` twips between them, or `Unequal({ widths, separator })` with
   each column's `width` and the `space` after it; `separator` is `Line` when
