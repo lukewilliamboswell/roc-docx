@@ -118,7 +118,13 @@ finish_build! = |name, build| {
 			match child.wait!() {
 				Ok(output) => {
 					Stdout.write_bytes!(output.stdout_bytes)?
-					Ok(output.status == Exited(0))
+					match output.status {
+						Exited(0) => Ok(Bool.True)
+						status => {
+							Stderr.line!("error: roc build for ${name} ended with ${Str.inspect(status)}")?
+							Ok(Bool.False)
+						}
+					}
 				}
 				Err(Interrupted) => Err(Interrupted)
 				Err(err) => {
