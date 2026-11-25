@@ -2414,6 +2414,39 @@ expect {
 		and (paragraph(3)?.alignment, paragraph(3)?.keep_next, run(3, 0)?.italic, run(3, 0)?.caps) == (Unset, On, Off, On)
 }
 
+## A nested table replaces the enclosing table's style. A nested table
+## without a style uses the default table style, and reading resumes in
+## the enclosing style when the nested table ends.
+expect {
+	paragraph = |name| "<w:p><w:r><w:t>${name}</w:t></w:r></w:p>"
+	table = |style, content| "<w:tbl><w:tblPr>${style}</w:tblPr><w:tblGrid><w:gridCol w:w='4800'/></w:tblGrid><w:tr><w:tc>${content}</w:tc></w:tr></w:tbl>"
+	grid = "<w:tblStyle w:val='Grid'/>"
+	inner = table(grid, paragraph("inner"))
+	middle = table("", "${paragraph("middle before")}${inner}${paragraph("middle after")}")
+	outer = table(grid, "${paragraph("outer before")}${middle}${paragraph("outer after")}")
+	body = "${paragraph("body before")}${outer}${paragraph("body after")}"
+	parsed = Docx.parse(styled_package_of(body)?)?
+	reopened = Docx.parse(Docx.to_bytes(parsed.document)?)?
+	effective = |document| Docx.paragraphs(document).map(
+		|one| (
+			Document.paragraph_text(one.paragraph),
+			one.properties.alignment,
+			one.properties.keep_next,
+			one.runs.map(|run| (run.properties.italic, run.properties.caps)),
+		),
+	)
+	expected = [
+		("body before", Unset, Unset, [(Off, Off)]),
+		("outer before", Aligned(Center), Unset, [(On, Off)]),
+		("middle before", Unset, On, [(Off, On)]),
+		("inner", Aligned(Center), Unset, [(On, Off)]),
+		("middle after", Unset, On, [(Off, On)]),
+		("outer after", Aligned(Center), Unset, [(On, Off)]),
+		("body after", Unset, Unset, [(Off, Off)]),
+	]
+	effective(parsed.document) == expected and effective(reopened.document) == expected
+}
+
 ## The paragraphs of notes, headers and footers follow the body's, each
 ## named by where it is: a footnote by its place among the footnotes, a
 ## header by its part. A comment's reference is a run without text.
