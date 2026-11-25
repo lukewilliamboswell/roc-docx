@@ -1,8 +1,11 @@
 import docx.Build
+import docx.Comments
 import docx.Docx
 import docx.Document
 import docx.Revisions
+import docx.WmlRead
 import fuzz.Model
+import fuzz.Solve
 
 # A character is part of the original, or needs its insertion to stand.
 # Independently, a pending deletion hides the character until rejected.
@@ -195,4 +198,70 @@ expect {
 		crash "${Model.explain(report)} Verdict: ${Str.inspect(report.verdict)}"
 	}
 	report.depth == 6 and report.states == 713
+}
+
+## XML Schema 1.0 §3.2.7.3 allows two-digit timezone minutes only up to
+## 59, and permits hour 14 only with zero minutes. On the full two-digit
+## input domain, the parser's total-minute cap implements that rule.
+expect Solve.prove_within(
+	{ hours: Solve.u16_in(0, 99), minutes: Solve.u16_in(0, 99) }.Solve,
+	|zone| {
+		parser = zone.minutes.lt(60).both((zone.hours * 60 + zone.minutes).lte(840))
+		schema = zone.hours.lt(14).both(zone.minutes.lt(60)).either(zone.hours.eq(14).both(zone.minutes.eq(0)))
+		parser.iff(schema)
+	},
+	25_000,
+) == Ok(Proved)
+
+two_digits : U64 -> Str
+two_digits = |n| if (n < 10) "0${n.to_str()}" else n.to_str()
+
+## Drive every signed offset with two decimal digits per field through
+## the timestamp parser, checking its accepted instants against the epoch.
+expect {
+	for sign in ["+", "-"] {
+		for hours in (0.U64).until(100) {
+			for minutes in (0.U64).until(100) {
+				written = "1970-01-01T00:00:00${sign}${two_digits(hours)}:${two_digits(minutes)}"
+				seconds = (hours * 3600 + minutes * 60).to_i64_wrap()
+				expected = if (hours < 14 and minutes < 60) or (hours == 14 and minutes == 0) {
+					Ok({ written, utc_seconds: if (sign == "+") -seconds else seconds })
+				} else {
+					Err(NotDate)
+				}
+				if WmlRead.date_time(written) != expected {
+					crash "incorrect dateTime zone in ${written}"
+				}
+			}
+		}
+	}
+	Bool.True
+}
+
+## XML Schema 1.0 §3.2.7.1 starts the supported unsigned four-digit years
+## at 0001. The first year still maps to its proleptic Gregorian instant.
+expect {
+	first = "0001-01-01T12:00:00Z"
+	WmlRead.date_time(first) == Ok({ written: first, utc_seconds: -62_135_553_600 })
+		and WmlRead.date_time("0000-01-01T12:00:00Z") == Err(NotDate)
+}
+
+## Comment authoring refuses invalid dates. The two legal timezone endpoints
+## cross a day in opposite directions and retain their original spelling
+## through writing and reopening the document.
+expect {
+	document = Build.append(Docx.new_document({})?, [Build.paragraph({}, [Build.text("ab", {})])])
+	span = { start: 0, end: 1 }
+	new = |written| Comments.New.{ author: "Ada", content: Text("Review"), date: Date(written) }
+	positive = "1970-01-01T00:30:00+14:00"
+	negative = "1970-01-01T23:30:00-14:00"
+	added = Docx.add_comment(document, span, new(positive))?
+	replied = Docx.reply(added.document, added.id, new(negative))?
+	reopened = Docx.parse(Docx.to_bytes(replied.document)?)?
+	dates = Docx.comments(reopened.document).comments.map(|entry| entry.comment.date)
+	dates == [Date({ written: positive, utc_seconds: -48_600 }), Date({ written: negative, utc_seconds: 135_000 })]
+		and ["1970-01-01T00:00:00+02:60", "1970-01-01T00:00:00-14:01", "0000-01-01T12:00:00Z"].all(
+			|written| Docx.add_comment(document, span, new(written)).map_ok(|_| {}) == Err(NotADate(written))
+				and Docx.reply(added.document, added.id, new(written)).map_ok(|_| {}) == Err(NotADate(written)),
+		)
 }

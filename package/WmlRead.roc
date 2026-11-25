@@ -605,13 +605,22 @@ timestamp = |written| {
 	rest = bytes.len() - $zone
 	offset = if rest == 0 or (rest == 1 and at($zone, 'Z')) {
 		0
-	} else if rest == 6 and (at($zone, '+') or at($zone, '-')) and at($zone + 3, ':') {
-		minutes = number($zone + 1, 2)? * 60 + number($zone + 4, 2)?
-		if (at($zone, '-')) 0 - minutes else minutes
+	} else if rest == 6 and at($zone + 3, ':') {
+		sign = bytes.get($zone) ? |_| NotDate
+		if sign != '+' and sign != '-' {
+			return Err(NotDate)
+		}
+		zone_hour = number($zone + 1, 2)?
+		zone_minute = number($zone + 4, 2)?
+		minutes = zone_hour * 60 + zone_minute
+		if zone_minute >= 60 or minutes > 14 * 60 {
+			return Err(NotDate)
+		}
+		if (sign == '-') 0 - minutes else minutes
 	} else {
 		return Err(NotDate)
 	}
-	if month < 1 or month > 12 or day < 1 or day > days_in_month(year, month) or hour > 23 or minute > 59 or second > 59 {
+	if year == 0 or month < 1 or month > 12 or day < 1 or day > days_in_month(year, month) or hour > 23 or minute > 59 or second > 59 {
 		return Err(NotDate)
 	}
 	Ok({ written, utc_seconds: days_from_civil(year, month, day) * 86400 + hour * 3600 + minute * 60 + second - offset * 60 })
@@ -627,12 +636,12 @@ days_in_month = |year, month|
 		31
 	}
 
-# The days from 1970-01-01 to a day of the proleptic Gregorian calendar,
+# The days from 1970-01-01 to a day in a positive Gregorian year,
 # counting each year from March so that a leap day ends it.
 days_from_civil : I64, I64, I64 -> I64
 days_from_civil = |year, month, day| {
 	shifted = if (month <= 2) year - 1 else year
-	era = (if (shifted >= 0) shifted else shifted - 399) // 400
+	era = shifted // 400
 	of_era = shifted - era * 400
 	of_year = (153 * (if (month > 2) month - 3 else month + 9) + 2) // 5 + day - 1
 	era * 146097 + of_era * 365 + of_era // 4 - of_era // 100 + of_year - 719468
