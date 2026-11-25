@@ -747,11 +747,12 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 	## as its result, and each complex field, with the code between its
 	## beginning and its separator and the text between its separator and its
 	## end, where a paragraph's end is a line feed. A field nested in
-	## another's result is part of that result too, and a complex field that
+	## another's result is part of that result too. Result text stops at an
+	## enclosing field whose instruction is still open. A complex field that
 	## never ends ends with the blocks.
 	fields : List(Block) -> List(Field)
 	fields = |blocks| {
-		var $state = { open: List.with_capacity(4), done: List.with_capacity(8), begun: 0.U64 }
+		var $state = { open: List.with_capacity(4), done: List.with_capacity(8), begun: 0.U64, result_start: 0.U64 }
 		for block in blocks {
 			$state = block_fields($state, block)
 		}
@@ -1415,10 +1416,11 @@ is_hyperlink : Str -> Bool
 is_hyperlink = |word| word.to_utf8().map(|byte| if (byte >= 'a' and byte <= 'z') byte - 32 else byte) == "HYPERLINK".to_utf8()
 
 # The fields begun so far, as [Document.fields] gathers them: those still
-# open, innermost last, those ended, and how many have begun.
-FieldState : { open : List(OpenField), done : List(OpenField), begun : U64 }
+# open, innermost last, those ended, and how many have begun. Results are
+# visible only to fields that began after the innermost open instruction.
+FieldState : { open : List(OpenField), done : List(OpenField), begun : U64, result_start : U64 }
 
-OpenField : { order : U64, code : List(U8), result : List(U8), in_result : Bool }
+OpenField : { order : U64, code : List(U8), result : List(U8), enclosing_result_start : U64 }
 
 block_fields : FieldState, Document.Block -> FieldState
 block_fields = |state, block|
@@ -1438,9 +1440,9 @@ inline_fields = |state, inline|
 		Run(run) => run.content.fold(state, run_content_fields)
 		Hyperlink({ target: _, preserved: _, content }) => content.fold(state, inline_fields)
 		SimpleField({ code, preserved: _, content }) => {
-			inner = content.fold({ open: state.open, done: state.done, begun: state.begun + 1 }, inline_fields)
-			field = { order: state.begun, code: code.to_utf8(), result: inline_text_bytes([], inline), in_result: Bool.True }
-			{ open: inner.open, done: List.append(inner.done, field), begun: inner.begun }
+			inner = content.fold({ ..state, begun: state.begun + 1 }, inline_fields)
+			field = { order: state.begun, code: code.to_utf8(), result: inline_text_bytes([], inline), enclosing_result_start: 0 }
+			{ ..inner, done: List.append(inner.done, field) }
 		}
 
 		Container({ element: _, content }) => content.fold(state, inline_fields)
@@ -1458,40 +1460,42 @@ run_content_fields : FieldState, Document.RunContent -> FieldState
 run_content_fields = |state, content|
 	match content {
 		FieldMark({ kind: Begin, element: _ }) => {
-			field = { order: state.begun, code: [], result: [], in_result: Bool.False }
-			{ open: List.append(state.open, field), done: state.done, begun: state.begun + 1 }
+			field = { order: state.begun, code: [], result: [], enclosing_result_start: state.result_start }
+			{ ..state, open: state.open.append(field), begun: state.begun + 1, result_start: state.begun + 1 }
 		}
 
 		FieldMark({ kind: Separate, element: _ }) =>
 			match state.open.last() {
-				Ok(field) => { open: List.append(List.drop_last(state.open, 1), { order: field.order, code: field.code, result: field.result, in_result: Bool.True }), done: state.done, begun: state.begun }
+				Ok(field) => { ..state, result_start: field.enclosing_result_start }
 				Err(_) => state
 			}
 
 		FieldMark({ kind: End, element: _ }) =>
 			match state.open.last() {
-				Ok(field) => { open: List.drop_last(state.open, 1), done: List.append(state.done, field), begun: state.begun }
+				Ok(field) => { ..state, open: state.open.drop_last(1), done: state.done.append(field), result_start: field.enclosing_result_start }
 				Err(_) => state
 			}
 
 		FieldCode(code) =>
 			match state.open.last() {
-				Ok(field) => { open: List.append(List.drop_last(state.open, 1), { order: field.order, code: List.concat(field.code, code.to_utf8()), result: field.result, in_result: field.in_result }), done: state.done, begun: state.begun }
+				Ok(field) => { ..state, open: state.open.drop_last(1).append({ ..field, code: field.code.concat(code.to_utf8()) }) }
 				Err(_) => state
 			}
 
-		_ => to_results(state, run_content_text([], content))
+		_ => if (state.open.is_empty()) state else to_results(state, run_content_text([], content))
 	}
 
-# Text added to the result of every open field that has reached its result.
+# Text contributes to the results of open fields until it reaches an
+# enclosing field whose instruction is still open.
 to_results : FieldState, List(U8) -> FieldState
-to_results = |state, text|
+to_results = |state, text| {
+	first = state.result_start
 	if text.is_empty() or state.open.is_empty() {
-		state
-	} else {
-		open = state.open.map(|field| if (field.in_result) { order: field.order, code: field.code, result: List.concat(field.result, text), in_result: Bool.True } else field)
-		{ open, done: state.done, begun: state.begun }
+		return state
 	}
+	open = state.open.map(|field| if (field.order < first) field else { ..field, result: List.concat(field.result, text) })
+	{ ..state, open }
+}
 
 # Run content's text appended as UTF-8. Text is appended byte by byte: a
 # short string is held inline, so its bytes as a list would be allocated.

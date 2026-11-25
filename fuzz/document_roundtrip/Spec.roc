@@ -2,6 +2,7 @@ import docx.Docx
 import docx.Opc
 import fuzz.Solve
 import Streaming
+import FieldHistories
 
 Spec := [].{}
 
