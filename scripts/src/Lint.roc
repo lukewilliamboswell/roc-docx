@@ -35,6 +35,7 @@ Lint :: [].{
 			Lint.consistent_urls(sources),
 			Lint.chapters_included(sources),
 			Lint.fuzz_inventory(sources),
+			Lint.fuzz_spec_apps(sources),
 			Lint.manual_snippets(sources),
 			Lint.owned_loop_state(sources),
 			Lint.docx_identity(binaries),
@@ -225,6 +226,23 @@ Lint :: [].{
 		missing = found_targets.drop_if(|name| rows.contains(name)).map(|name| { path: "fuzz/${name}/main.roc", line: 1, message: "${architecture}'s fuzz inventory names every fuzz target" })
 		stale = rows.drop_if(|name| found_targets.contains(name)).map(|name| { path: architecture, line: 1, message: "the fuzz inventory names `${name}`, which is not a target under fuzz/" })
 		List.concat(missing, stale)
+	}
+
+	## A fuzz specification must have an app the smoke gate can discover.
+	fuzz_spec_apps : List(Source) -> List(Violation)
+	fuzz_spec_apps = |sources| {
+		paths = sources.map(|source| source.path)
+		paths.keep_oks(
+			|path| {
+				if !path.starts_with("fuzz/") or !path.ends_with("/Spec.roc") {
+					return Err(NotASpec)
+				}
+				match path.split_on("/") {
+					[_, name, _] if paths.contains("fuzz/${name}/main.roc") => Err(Runnable)
+					_ => Ok({ path, line: 1, message: "put Spec.roc beside the main.roc of a fuzz target so fuzz-smoke runs it" })
+				}
+			},
+		)
 	}
 
 	## Every Roc listing in a manual chapter is included from a program that
@@ -601,6 +619,12 @@ expect {
 		"fuzz/unlisted/main.roc: docs/architecture.adoc's fuzz inventory names every fuzz target",
 		"docs/architecture.adoc: the fuzz inventory names `gone`, which is not a target under fuzz/",
 	]
+}
+
+## Only specifications beside discoverable fuzz target apps run in fuzz-smoke.
+expect {
+	sources = ["fuzz/valid/main.roc", "fuzz/valid/Spec.roc", "fuzz/orphan/Spec.roc", "fuzz/valid/nested/Spec.roc", "tests/Spec.roc"].map(|path| { path, text: "" })
+	Lint.fuzz_spec_apps(sources).map(|violation| violation.path) == ["fuzz/orphan/Spec.roc", "fuzz/valid/nested/Spec.roc"]
 }
 
 ## Roc listings in chapters include a region of the snippet program or an example; release notes may write theirs out.
