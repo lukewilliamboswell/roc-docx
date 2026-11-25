@@ -270,6 +270,96 @@ expect {
 		)
 }
 
+## The March-based month offset agrees with summing the lengths of
+## preceding months for every month. February comes last, so its leap
+## day never alters a month start in this ordering.
+expect Solve.prove_within(
+	Solve.u16_in(0, 11),
+	|month| {
+		lengths = [31, 30, 31, 30, 31, 31, 30, 31, 30, 31, 31]
+		elapsed = lengths.fold_with_index(Solve.num(0), |days, length, index| days + Solve.if_else(month.gt(Solve.num(index)), Solve.num(length), Solve.num(0)))
+		((month * 153 + 2) // 5).eq(elapsed)
+	},
+	2_000,
+) == Ok(Proved)
+
+## XML Schema 1.0 §3.2.7 uses the proleptic Gregorian calendar. In a
+## complete 400-year cycle the completed leap-day count increases in
+## precisely the years whose February the parser accepts with 29 days.
+expect Solve.prove_within(
+	Solve.u16_in(1, 400),
+	|year| {
+		leaps_through = |y| y // 4 - y // 100 + y // 400
+		leap = (year % 4).eq(0).both((year % 100).neq(0)).either((year % 400).eq(0))
+		(leaps_through(year) - leaps_through(year - 1)).eq(Solve.if_else(leap, Solve.num(1), Solve.num(0)))
+	},
+	2_000,
+) == Ok(Proved)
+
+## Drive both sides of the March-based year shift through the parser
+## for every four-digit year. Count completed January-based years from
+## 0001-01-01 and move March forward by January and February's lengths.
+expect {
+	leaps_through = |year| year // 4 - year // 100 + year // 400
+	epoch_day = 1969 * 365 + leaps_through(1969)
+	for year in (1.U64).until(10_000) {
+		digits = year.to_str()
+		written_year = "${Str.repeat("0", 4 - digits.count_utf8_bytes())}${digits}"
+		previous = year.to_i64_wrap() - 1
+		january_leaps = leaps_through(previous)
+		january = previous * 365 + january_leaps - epoch_day
+		march = january + 31 + 28 + leaps_through(previous + 1) - january_leaps
+		for (month, elapsed) in [("01", january), ("03", march)] {
+			written = "${written_year}-${month}-01T00:00:00Z"
+			if WmlRead.date_time(written) != Ok({ written, utc_seconds: elapsed * 86_400 }) {
+				crash "incorrect Gregorian month start in ${written}"
+			}
+		}
+	}
+	Bool.True
+}
+
+## Century years omit February 29 unless divisible by 400. Dates in the
+## centuries before the Gregorian reform and at the four-digit upper end
+## are still proleptic Gregorian. Compare UTC seconds to calendar anchors.
+expect {
+	cases = [
+		("0400-02-29T00:00:00Z", -49_539_340_800),
+		("1582-10-10T00:00:00Z", -12_219_724_800),
+		("1900-02-28T00:00:00Z", -2_203_977_600),
+		("1969-12-31T23:59:59Z", -1),
+		("2000-02-29T00:00:00Z", 951_782_400),
+		("9999-12-31T23:59:59Z", 253_402_300_799),
+	]
+	cases.all(|(written, utc_seconds)| WmlRead.date_time(written) == Ok({ written, utc_seconds }))
+		and ["1900-02-29T00:00:00Z", "2100-02-29T00:00:00Z", "2000-04-31T00:00:00Z"].all(|written| WmlRead.date_time(written) == Err(NotDate))
+}
+
+## A review window spanning the leap day includes its midnight and
+## excludes the following midnight after saving and reopening the package.
+expect {
+	main = "/word/document.xml"
+	insert = |id, date, value| "<w:ins w:id='${id}' w:date='${date}' w:author='Ada'><w:r><w:t>${value}</w:t></w:r></w:ins>"
+	from = "2000-02-29T00:00:00Z"
+	until = "2000-03-01T00:00:00Z"
+	before = insert("1", "2000-02-28T23:59:59Z", "Before")
+	leap = insert("2", from, "Leap")
+	after = insert("3", until, "After")
+	bytes = Opc.to_bytes(
+		{
+			relationships: [{ id: "rId1", kind: Opc.officedocument_relationship, target: main, mode: Internal }],
+			parts: [{ name: main, content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml", relationships: [] }],
+		},
+		|_| Bytes("<w:document xmlns:w='http://schemas.openxmlformats.org/wordprocessingml/2006/main'><w:body><w:p>${before}${leap}${after}</w:p></w:body></w:document>".to_utf8()),
+	)?
+	parsed = Docx.parse(bytes)?
+	reopened = Docx.parse(Docx.to_bytes(parsed.document)?)?
+	rejected = Docx.reject(reopened.document, Between({ from, until }))?
+	Docx.text(reopened.document) == "BeforeLeapAfter\n"
+		and Docx.text(rejected) == "BeforeAfter\n"
+		and Docx.revisions(rejected).map(|change| change.text) == ["Before", "After"]
+}
+
 ## Structural edits distinguish a table from the paragraphs in its cells.
 ## Exhaust short histories of tracked insertions, deletions, resolutions,
 ## and failed attempts at byte and cell boundaries.
