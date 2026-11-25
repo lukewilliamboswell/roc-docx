@@ -138,8 +138,10 @@ include::../tests/manual.roc[tag=notes,indent=0]
 ----
 
 Inside a note, the mark that numbers it is `NoteMark(kind)`. Neither the
-reference nor the mark contributes text. A reference whose mark is the text
-written after it, rather than a number, is kept as `Preserved`.
+reference nor the mark contributes text. A reference resolves by the
+integer value of its identifier in its own note part, so spellings such as
+`1` and `+001` identify the same note. A reference whose mark is the text
+written after it is kept as `Preserved`.
 
 == Fields
 

@@ -47,10 +47,11 @@ A tree whose root is not a WordprocessingML document is not a main document
 part, and comes back as it is. `WmlWrite.notes` writes a footnotes or
 endnotes part from its tree as read and a list of notes, and
 `WmlWrite.header_footer` a header or footer part from its tree and its
-blocks, in the same way; `WmlWrite.note_ids` gives the identifiers the
-notes take, a note beyond the part's own taking the lowest number no note
-before it takes. A note reference names its note by its place
-among the document's footnotes or endnotes, and a comment's range or
+blocks, in the same way. `WmlWrite.note_ids` gives the identifiers the
+notes take. A note beyond the part's own takes the lowest nonnegative
+integer unused in that part. Existing identifiers are compared by numeric
+value and keep their original spelling. A note reference names its note
+by its place among the document's footnotes or endnotes, and a comment's range or
 reference its comment by its place among the comments; one whose place the
 context does not have cannot be written, and fails with
 `MissingNote({ kind, note })` or `MissingComment(id)`. Each writer gives
@@ -82,9 +83,10 @@ include::../tests/manual.roc[tag=write-options,indent=0]
   dates of comments, and `People`, the identities of their authors. All
   four are listed by default, and each is written where the document has it
   or its comments need it, as <<read-a-documents-comments>> describes. A
-  part left out of the list is left out of the package with its
-  relationship, for a consumer that does not want it; what it held, such as
-  which comment replies to which, is then not in the written document.
+  part left out of the list is omitted with every internal relationship
+  that targets it, including targets spelled with different ASCII case.
+  The omitted part's information, such as which comment replies to which,
+  is absent from the written document.
 
 The same document and options always give the same bytes.
 
