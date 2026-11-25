@@ -378,9 +378,9 @@ Docx :: [].{
 	}
 
 	## The current text of a document's body, its tracked changes as they
-	## stand: every paragraph's text, as [Document.paragraph_text] gives it,
-	## followed by a line feed, in reading order, including the paragraphs in
-	## tables and content controls. A paragraph whose mark is deleted or moved
+	## stand. Paragraphs contribute their text and a line feed in reading
+	## order, including paragraphs in tables and content controls. Field
+	## boundaries carry through the story. A paragraph whose mark is deleted or moved
 	## away, as [Document.joins_next] says, runs on into the next paragraph
 	## without a line feed, unless a table, row or cell begins or ends between
 	## them. A deleted row or cell is still there, without the text deleted

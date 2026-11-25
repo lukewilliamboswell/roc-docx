@@ -12,6 +12,8 @@
 ## its empty value.
 import Docx
 import Document
+import FieldPhase
+import FieldText
 import Numbering
 import Opc
 import Revisions
@@ -29,8 +31,8 @@ Snapshot :: [].{
 	## and the paragraph anchors no note, comment or revision, and each table
 	## as a block of its own with no text. A paragraph anchors something when
 	## it holds a revision, a comment range boundary or reference, a footnote
-	## or endnote reference, or a revision of its paragraph mark. The text is
-	## the current text of [Document.paragraph_text], and a paragraph whose
+	## or endnote reference, or a revision of its paragraph mark. The current
+	## text uses the field phase from preceding blocks. A paragraph whose
 	## mark is deleted or moved away is one block with the paragraph after
 	## it, unless a table comes between them. A paragraph's runs split its text where a hyperlink begins or ends, each
 	## with the hyperlink's target: its address, its address and `#` and the
@@ -423,7 +425,7 @@ Joined : { text : Str, anchored : Bool, runs : List(SnapshotRun), properties : D
 OpenField : { code : Str, in_result : Bool }
 
 # Runs so far, and the complex fields open where they end.
-Runs : { runs : List(SnapshotRun), fields : List(OpenField) }
+Runs : { runs : List(SnapshotRun), fields : List(OpenField), simple_floor : U64, literal_code : Bool }
 
 # The snapshot blocks of blocks.
 snapshot_of_blocks : List(Document.Block), Tables -> List(SnapshotBlock)
@@ -435,8 +437,14 @@ snapshot_blocks = |state, block, tables|
 	match block {
 		Paragraph(paragraph) => {
 			before = state.joined ?? { text: "", anchored: Bool.False, runs: [], properties: paragraph.properties }
-			read = paragraph.content.fold({ runs: before.runs, fields: state.fields }, |runs, inline| snapshot_runs(runs, inline, ""))
-			joined = { text: Str.concat(before.text, Document.paragraph_text(paragraph)), anchored: before.anchored or anchors(paragraph), runs: read.runs, properties: paragraph.properties }
+			read = paragraph_runs(paragraph, before.runs, state.fields)
+			text = if read.literal_code {
+				Str.join_with(read.runs.map(|run| run.text), "")
+			} else {
+				bytes = paragraph.content.fold(List.with_capacity(64), Document.append_inline_text)
+				Str.concat(before.text, Str.from_utf8(bytes) ?? "")
+			}
+			joined = { text, anchored: before.anchored or anchors(paragraph), runs: read.runs, properties: paragraph.properties }
 			if Document.joins_next(paragraph) {
 				{ blocks: state.blocks, joined: Ok(joined), fields: read.fields }
 			} else {
@@ -446,7 +454,8 @@ snapshot_blocks = |state, block, tables|
 
 		Table(table) => {
 			flushed = flush(state, tables)
-			{ blocks: List.append(flushed.blocks, { kind: "table", level: 0, list: "", text: "", runs: [], rows: rows(table) }), joined: Err(NoParagraph), fields: flushed.fields }
+			read = rows(table, flushed.fields)
+			{ blocks: List.append(flushed.blocks, { kind: "table", level: 0, list: "", text: "", runs: [], rows: read.rows }), joined: Err(NoParagraph), fields: read.fields }
 		}
 
 		Container({ element: _, content }) => content.fold(state, |inner_state, inner| snapshot_blocks(inner_state, inner, tables))
@@ -474,18 +483,23 @@ flush = |state, tables|
 # for every grid column it skips after its last. A cell that continues a
 # vertical merge is empty, whatever it holds, as the cell that starts the
 # merge covers it.
-rows : Document.Table -> List(List(Str))
-rows = |table|
-	Document.table_rows(table).map(
-		|row| {
-			var $cells = List.repeat("", columns(row.properties.grid_before, 0))
-			for cell in Document.row_cells(row) {
-				text = if (cell.properties.merge == Continue) "" else cell_text(cell.content)
-				$cells = List.concat(List.append($cells, text), List.repeat("", columns(cell.properties.span, 1) - 1))
-			}
-			List.concat($cells, List.repeat("", columns(row.properties.grid_after, 0)))
-		},
-	)
+rows : Document.Table, List(OpenField) -> { rows : List(List(Str)), fields : List(OpenField) }
+rows = |table, fields| {
+	listed = Document.table_rows(table)
+	var $rows = List.with_capacity(listed.len())
+	var $fields = fields
+	for row in listed {
+		var $cells = List.repeat("", columns(row.properties.grid_before, 0))
+		for cell in Document.row_cells(row) {
+			read = cell.content.fold({ texts: List.with_capacity(cell.content.len()), fields: $fields }, block_texts)
+			$fields = read.fields
+			text = if (cell.properties.merge == Continue) "" else Str.join_with(read.texts, "\n")
+			$cells = List.concat(List.append($cells, text), List.repeat("", columns(cell.properties.span, 1) - 1))
+		}
+		$rows = $rows.append($cells.concat(List.repeat("", columns(row.properties.grid_after, 0))))
+	}
+	{ rows: $rows, fields: $fields }
+}
 
 # A count of grid columns, or the default when none is given.
 columns : [Unset, Columns(U64)], U64 -> U64
@@ -495,30 +509,47 @@ columns = |count, default|
 		Unset => default
 	}
 
-# A cell's text: the text of each of its blocks the snapshot has, joined by
-# line feeds; a table in the cell is a block without text.
-cell_text : List(Document.Block) -> Str
-cell_text = |content| Str.join_with(content.fold(List.with_capacity(content.len()), block_texts), "\n")
+# A cell's paragraphs and the field context where its last block ends. A
+# nested table contributes an empty line and advances the same context.
+CellText : { texts : List(Str), fields : List(OpenField) }
 
-block_texts : List(Str), Document.Block -> List(Str)
+block_texts : CellText, Document.Block -> CellText
 block_texts = |out, block|
 	match block {
 		Paragraph(paragraph) => {
-			text = Document.paragraph_text(paragraph)
+			{ text, fields } = cell_paragraph(paragraph, out.fields)
 			if text != "" or anchors(paragraph) {
-				List.append(out, text)
+				{ texts: List.append(out.texts, text), fields }
 			} else {
-				out
+				{ ..out, fields }
 			}
 		}
 
-		Table(_) => List.append(out, "")
+		Table(table) => { texts: List.append(out.texts, ""), fields: rows(table, out.fields).fields }
 		Container({ element: _, content }) => content.fold(out, block_texts)
 		Section(_) => out
 		CommentStart(_) => out
 		CommentEnd(_) => out
 		Preserved(_) => out
 	}
+
+# A field that remains open needs its actual code as well as its phase so
+# a body paragraph after the table can still identify a hyperlink result.
+cell_paragraph : Document.Paragraph, List(OpenField) -> { text : Str, fields : List(OpenField) }
+cell_paragraph = |paragraph, fields| {
+	if fields.is_empty() {
+		read = FieldText.paragraph(paragraph, FieldPhase.empty)
+		if !FieldPhase.is_open(read.phase) {
+			return { text: read.text, fields }
+		}
+	}
+	read = paragraph_runs(paragraph, [], fields)
+	{ text: Str.join_with(read.runs.map(|run| run.text), ""), fields: read.fields }
+}
+
+paragraph_runs : Document.Paragraph, List(SnapshotRun), List(OpenField) -> Runs
+paragraph_runs = |paragraph, runs, fields|
+	paragraph.content.fold({ runs, fields, simple_floor: 0, literal_code: Bool.False }, |state, inline| snapshot_runs(state, inline, ""))
 
 # Append an inline's runs, under the target of the hyperlink element it is
 # in, or "" when it is in none.
@@ -531,7 +562,9 @@ snapshot_runs = |state, inline, link|
 				Ok(target) => address(target)
 				Err(NotAHyperlink) => link
 			}
-			content.fold(state, |out, inner| snapshot_runs(out, inner, field_link))
+			floor = state.fields.len()
+			read = content.fold({ ..state, simple_floor: floor }, |out, inner| snapshot_runs(out, inner, field_link))
+			{ ..read, fields: read.fields.take_first(floor), simple_floor: state.simple_floor }
 		}
 
 		Container({ element: _, content }) => content.fold(state, |out, inner| snapshot_runs(out, inner, link))
@@ -550,10 +583,18 @@ snapshot_runs = |state, inline, link|
 content_runs : Runs, Document.Run, Document.RunContent, Str -> Runs
 content_runs = |state, run, content, link|
 	match content {
-		FieldMark({ kind: Begin, element: _ }) => { runs: state.runs, fields: List.append(state.fields, { code: "", in_result: Bool.False }) }
+		FieldMark({ kind: Begin, element: _ }) => { ..state, fields: List.append(state.fields, { code: "", in_result: Bool.False }) }
 		FieldMark({ kind: Separate, element: _ }) => with_open_instruction(state, |field| { code: field.code, in_result: Bool.True })
-		FieldMark({ kind: End, element: _ }) => { runs: state.runs, fields: List.drop_last(state.fields, 1) }
-		FieldCode(code) => with_open_instruction(state, |field| { code: Str.concat(field.code, code), in_result: field.in_result })
+		FieldMark({ kind: End, element: _ }) => if (state.fields.len() > state.simple_floor) { ..state, fields: List.drop_last(state.fields, 1) } else state
+		FieldCode(code) => {
+			if state.fields.len() > state.simple_floor {
+				match state.fields.last() {
+					Ok(field) if !field.in_result => return with_open_instruction(state, |open| { ..open, code: Str.concat(open.code, code) })
+					_ => {}
+				}
+			}
+			with_text({ ..state, literal_code: Bool.True }, { text: code, formatting: formatting(run.properties), link: if (link == "") field_link(state.fields) else link })
+		}
 		_ => {
 			text = Document.inline_text(Run({ properties: run.properties, content: [content] }))
 			with_text(state, { text, formatting: formatting(run.properties), link: if (link == "") field_link(state.fields) else link })
@@ -584,19 +625,23 @@ field_link = |fields| {
 }
 
 with_open_instruction : Runs, (OpenField -> OpenField) -> Runs
-with_open_instruction = |state, change|
+with_open_instruction = |state, change| {
+	if state.fields.len() <= state.simple_floor {
+		return state
+	}
 	match state.fields.last() {
-		Ok(field) if !field.in_result => { runs: state.runs, fields: List.append(List.drop_last(state.fields, 1), change(field)) }
+		Ok(field) if !field.in_result => { ..state, fields: List.append(List.drop_last(state.fields, 1), change(field)) }
 		_ => state
 	}
+}
 
 # Text joins the run before when their formatting and links are the same.
 with_text : Runs, SnapshotRun -> Runs
 with_text = |state, run|
 	match state.runs.last() {
 		_ if run.text == "" => state
-		Ok(previous) if previous.link == run.link and previous.formatting == run.formatting => { runs: List.append(List.drop_last(state.runs, 1), { ..run, text: Str.concat(previous.text, run.text) }), fields: state.fields }
-		_ => { runs: List.append(state.runs, run), fields: state.fields }
+		Ok(previous) if previous.link == run.link and previous.formatting == run.formatting => { ..state, runs: List.append(List.drop_last(state.runs, 1), { ..run, text: Str.concat(previous.text, run.text) }) }
+		_ => { ..state, runs: List.append(state.runs, run) }
 	}
 
 # A hyperlink's target as the snapshot gives it: its address, its address and
@@ -907,13 +952,28 @@ expect {
 	snapshot_of("<w:p>${link}${text(" p")}${page}${text(" ")}${simple}</w:p>", no_notes).map_ok(|json| json.contains(block_line("paragraph", "Scope 2 p5 site", Str.join_with(runs, ", ")))) == Ok(Bool.True)
 }
 
-## A result chunk written as instrText cannot change a HYPERLINK field's
-## bookmark target.
+## A result chunk written as instrText is displayed under the HYPERLINK
+## field's original bookmark target.
 expect {
 	link = "<w:r><w:fldChar w:fldCharType='begin'/></w:r><w:r><w:instrText>HYPERLINK \\l Scope</w:instrText></w:r><w:r><w:fldChar w:fldCharType='separate'/></w:r>"
 	late = "<w:r><w:instrText>suffix</w:instrText></w:r><w:r><w:t>Reference</w:t></w:r><w:r><w:fldChar w:fldCharType='end'/></w:r>"
 	result = snapshot_of("<w:p>${link}${late}</w:p>", no_notes)?
-	result.contains("\"link\": \"#Scope\"")
+	result.contains(block_line("paragraph", "suffixReference", run_line("suffixReference", "#Scope")))
+}
+
+## Field phase crosses a table's cells and the following body paragraph.
+## The snapshot includes cached field text and carries the link target out
+## of the table where the field began.
+expect {
+	mark = |kind| "<w:r><w:fldChar w:fldCharType='${kind}'/></w:r>"
+	code = |text| "<w:r><w:instrText>${text}</w:instrText></w:r>"
+	first = "<w:tc><w:p>${mark("begin")}${code("HYPERLINK \\l Scope")}</w:p></w:tc>"
+	second = "<w:tc><w:p>${mark("separate")}${code("cell")}</w:p></w:tc>"
+	after = "<w:p>${code("outside")}${mark("end")}<w:r><w:t>after</w:t></w:r></w:p>"
+	body = "<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w='4800'/><w:gridCol w:w='4800'/></w:tblGrid><w:tr>${first}${second}</w:tr></w:tbl>${after}"
+	json = snapshot_of(body, no_notes)?
+	runs = Str.join_with([run_line("outside", "#Scope"), run_line("after", "")], ", ")
+	json.contains("\"rows\": [[\"\", \"cell\"]]") and json.contains(block_line("paragraph", "outsideafter", runs))
 }
 
 ## Notes are listed in the order of their references, each with its kind and

@@ -157,7 +157,19 @@ result, and `FieldMark({ kind: End, element })`. Each mark keeps its
 element, with what the model does not hold, such as a lock or form field
 data.
 
-`Docx.fields` gathers the body's fields, in the order they begin, as
+The model keeps `w:instrText` as `FieldCode(text)` so it can write the
+element and its text back. In a text view, a chunk outside the nearest complex
+field's instruction is ordinary text. The field phase carries across
+blocks in the same story. A tracked separator can make the same chunk
+visible in the final text and part of the instruction in the original
+text. Current-text edit and comment offsets count a visible chunk in UTF-8
+bytes, just as they count text stored in `w:t`.
+
+`Document.paragraph_text` starts outside a field when it is given one
+paragraph on its own. `Docx.text` carries the phase from earlier paragraphs
+when a field spans them.
+
+`Docx.fields` gathers the body's current fields, in the order they begin, as
 `{ code, result }` with the result as text; `Document.fields` does the same
 for any list of blocks, such as a note's content:
 
