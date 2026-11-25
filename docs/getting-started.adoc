@@ -12,14 +12,16 @@ A `.docx` is a ZIP archive of XML parts: the body in one part, styles,
 numbering, comments, footnotes, headers and footers in others, with images as
 binary parts. `[Content_Types].xml` labels every part, and relationship parts
 link a source part to its targets, so the body is found by following the
-package's `officeDocument` relationship rather than by its file name.
+package's first internal `officeDocument` relationship.
 
 `Opc.open` reads the archive within resource limits and labels every part
 with its content type and size. It keeps the archive as it is and inflates a
 part only when you ask for it with `Opc.part_bytes`, so opening a document
 costs memory in proportion to its archive rather than to its content.
-`Opc.main_document` follows the relationship to the body, and
-`Opc.relationships` lists what a part links to. Part names compare without
+`Opc.main_document` follows that relationship to the body and returns
+`NoMainDocument` when the package has no internal `officeDocument`
+relationship. `Opc.relationships` lists the part's internal and external
+links. Part names compare without
 regard to ASCII case, as the conventions require, so `/word/document.xml`
 and `/Word/Document.xml` name the same part.
 
