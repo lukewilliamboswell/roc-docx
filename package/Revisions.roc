@@ -389,7 +389,7 @@ structural = |walk, changes, covered|
 		changes.fold(
 			{ ..walk, previous: Err(NoChange) },
 			|out, change| {
-				text = if (change.of == Paragraph) shown_text(covered, out.phase) else ""
+				text = if (change.of == Paragraph) shown_text(covered, out.phase, 64) else ""
 				listed = { id: out.listed.len(), kind: change.kind, of: change.of, author: change.author, date: change.date, content: if (change.of == Paragraph) covered else [], move: Unpaired, text, follows: Bool.False }
 				{ ..out, listed: List.append(out.listed, listed) }
 			},
@@ -421,7 +421,7 @@ list_content = |walk, content| {
 					date: revision.date,
 					content: revision.content,
 					move,
-					text: shown_text(revision.content, $walk.phase),
+					text: shown_text(revision.content, $walk.phase, 16),
 					follows: $previous == Ok(id),
 				}
 				$walk = list_content({ ..$walk, listed: List.append($walk.listed, listed), previous: Err(NoChange) }, revision.content)
@@ -439,6 +439,7 @@ list_content = |walk, content| {
 				match run.properties.change.first() {
 					Ok(changed) => {
 						id = $walk.listed.len()
+						read = FieldText.inline({ bytes: List.with_capacity(16), phase: $walk.phase }, inline, Shown)
 						listed = {
 							id,
 							kind: Formatting,
@@ -447,7 +448,7 @@ list_content = |walk, content| {
 							date: changed.date,
 							content: [inline],
 							move: Unpaired,
-							text: shown_text([inline], $walk.phase),
+							text: Str.from_utf8(read.bytes) ?? "",
 							follows: $previous == Ok(id),
 						}
 						$walk = { ..$walk, listed: List.append($walk.listed, listed) }
@@ -598,9 +599,9 @@ content_kind = |kind|
 
 # An excerpt for the revision inventory. All of its nested tracked
 # alternatives are shown and marks are followed in that same order.
-shown_text : List(Document.Inline), FieldPhase -> Str
-shown_text = |content, phase| {
-	read = content.fold({ bytes: List.with_capacity(16), phase }, |state, item| FieldText.inline(state, item, Shown))
+shown_text : List(Document.Inline), FieldPhase, U64 -> Str
+shown_text = |content, phase, capacity| {
+	read = content.fold({ bytes: List.with_capacity(capacity), phase }, |state, item| FieldText.inline(state, item, Shown))
 	Str.from_utf8(read.bytes) ?? ""
 }
 
