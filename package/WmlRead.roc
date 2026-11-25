@@ -400,9 +400,9 @@ reading_with = |context, names| {
 	{
 		relationships: $relationships,
 		bookmarks: names.bookmarks,
-		footnotes: places(context.footnotes, Lenient.integer_key),
-		endnotes: places(context.endnotes, Lenient.integer_key),
-		comments: places(context.comments, |id| id),
+		footnotes: places(context.footnotes),
+		endnotes: places(context.endnotes),
+		comments: places(context.comments),
 		move_sources: names.move_sources,
 		move_destinations: names.move_destinations,
 		deleted: Bool.False,
@@ -446,12 +446,12 @@ names_step = |state, event|
 
 # Literal matches take precedence when a nonconforming input has more
 # than one spelling of the same ID. Also register its canonical alias.
-places : List(Str), (Str -> Str) -> Dict(Str, U64)
-places = |ids, key| {
+places : List(Str) -> Dict(Str, U64)
+places = |ids| {
 	var $places = Dict.with_capacity(ids.len())
 	var $index = 0.U64
 	for id in ids {
-		canonical = key(id)
+		canonical = Lenient.integer_key(id)
 		if canonical != id and !$places.contains(canonical) {
 			$places = $places.insert(canonical, $index)
 		}
@@ -2667,7 +2667,7 @@ comment_place : Element, Reading -> Try(U64, [Unknown])
 comment_place = |element, within|
 	if only(element, ["id"]) {
 		id = value_of(element, "id") ? |_| Unknown
-		Ok(within.comments.get(id) ? |_| Unknown)
+		Ok(within.comments.get(id) ?? (within.comments.get(Lenient.integer_key(id)) ? |_| Unknown))
 	} else {
 		Err(Unknown)
 	}

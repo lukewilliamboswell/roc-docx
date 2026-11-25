@@ -101,11 +101,6 @@ Lenient :: [].{
 		if text.count_utf8_bytes() <= 1 {
 			return text
 		}
-		trimmed = text.trim()
-		if trimmed == text and !text.starts_with("+") and !text.starts_with("0") and !text.starts_with("-0") {
-			return text
-		}
-
 		var $at = 0.U64
 		var $start = 0.U64
 		var $end = 0.U64
@@ -137,7 +132,7 @@ Lenient :: [].{
 			}
 			$at = $at + 1
 		}
-		if $end == 0 {
+		if $end == 0 or ($end == $at and $leading == 0 and ($start == 0 or ($negative and $start == 1))) {
 			return text
 		}
 		first = $start + $leading

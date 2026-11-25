@@ -284,16 +284,26 @@ WmlWrite :: [].{
 	## The identifier each comment takes, in the order of the comments, from
 	## the space bookmarks share: the lowest number from 0 up that is not
 	## `kept`, the identifiers [WmlWrite.kept_ids] gives for every part of the
-	## document and every comment, and that no earlier comment takes. Parts
-	## written by [WmlWrite.document], [WmlWrite.notes] and
-	## [WmlWrite.header_footer] with these identifiers as their
-	## [WmlWrite.Context]'s comments give their bookmarks other numbers.
+	## document and every comment, comparing integer spellings by value, and
+	## that no earlier comment takes. Parts written by [WmlWrite.document],
+	## [WmlWrite.notes] and [WmlWrite.header_footer] use these identifiers as
+	## [WmlWrite.Context]'s comments and give their bookmarks other numbers.
 	comment_ids : Set(Str), List(Document.Comment) -> List(Str)
 	comment_ids = |kept, listed| {
+		if listed.is_empty() {
+			return []
+		}
+		reserved = kept.fold(
+			kept,
+			|keys, spelling| {
+				key = Lenient.integer_key(spelling)
+				if (spelling == key) keys else keys.insert(key)
+			},
+		)
 		var $ids = List.with_capacity(listed.len())
 		var $next = 0.U64
 		for _ in listed {
-			id = free_id(kept, $next)
+			id = free_id(reserved, $next)
 			$ids = List.append($ids, id.to_str())
 			$next = id + 1
 		}
