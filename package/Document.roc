@@ -774,10 +774,8 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 	## character, a soft hyphen U+00AD and a non-breaking hyphen U+2011. Field
 	## phase begins empty when this paragraph is read by itself.
 	paragraph_text : Paragraph -> Str
-	paragraph_text = |paragraph| {
-		read = paragraph.content.fold({ text: List.with_capacity(64), phase: FieldPhase.empty }, paragraph_inline)
-		Str.from_utf8(read.text) ?? ""
-	}
+	paragraph_text = |paragraph|
+		paragraph_inlines({ text: "", phase: FieldPhase.empty }, paragraph.content).text
 
 	## A table's rows in order, through the content controls and custom XML
 	## that hold them.
@@ -1339,26 +1337,48 @@ inline_text_bytes = |text, inline|
 
 # Current text of one isolated paragraph. A simple wrapper's interior
 # has its own phase, and deletion and move-source marks have no effect.
-ParagraphText : { text : List(U8), phase : FieldPhase }
+ParagraphText : { text : Str, phase : FieldPhase }
 
-paragraph_inline : ParagraphText, Document.Inline -> ParagraphText
-paragraph_inline = |state, inline| match inline {
-	Run(run) => run.content.fold(state, paragraph_run)
-	Container({ content, .. }) | Hyperlink({ content, .. }) => content.fold(state, paragraph_inline)
-	SimpleField({ content, .. }) => {
-		read = content.fold({ ..state, phase: FieldPhase.empty }, paragraph_inline)
-		{ ..read, phase: state.phase }
+paragraph_inlines : ParagraphText, List(Document.Inline) -> ParagraphText
+paragraph_inlines = |state, inlines| {
+	var $state = { text: state.text, phase: state.phase }
+	for inline in inlines {
+		$state = match inline {
+			Run(run) => match run.content {
+				[item] => paragraph_run($state, item)
+				_ => run.content.fold($state, paragraph_run)
+			}
+			Container({ content, .. }) | Hyperlink({ content, .. }) => paragraph_inlines($state, content)
+			SimpleField({ content, .. }) => {
+				phase = $state.phase
+				read = paragraph_inlines({ text: $state.text, phase: FieldPhase.empty }, content)
+				{ text: read.text, phase }
+			}
+			Revision({ kind: Deletion, .. }) | Revision({ kind: MoveSource, .. }) => $state
+			Revision({ content, .. }) => paragraph_inlines($state, content)
+			_ => $state
+		}
 	}
-	Revision({ kind: Deletion, .. }) | Revision({ kind: MoveSource, .. }) => state
-	Revision({ content, .. }) => content.fold(state, paragraph_inline)
-	_ => state
+	$state
 }
 
 paragraph_run : ParagraphText, Document.RunContent -> ParagraphText
 paragraph_run = |state, item| match item {
 	FieldMark({ kind, .. }) => { ..state, phase: FieldPhase.step(state.phase, kind) }
-	FieldCode(value) if !FieldPhase.is_instruction(state.phase) => { ..state, text: run_content_text(state.text, Text(value)) }
-	_ => { ..state, text: run_content_text(state.text, item) }
+	FieldCode(value) => {
+		if FieldPhase.is_instruction(state.phase) {
+			state
+		} else {
+			{ ..state, text: state.text.concat(value) }
+		}
+	}
+	Text(value) => { ..state, text: state.text.concat(value) }
+	Tab => { ..state, text: state.text.concat("\t") }
+	Break(_) => { ..state, text: state.text.concat("\n") }
+	SoftHyphen => { ..state, text: state.text.concat("\u(AD)") }
+	NonBreakingHyphen => { ..state, text: state.text.concat("\u(2011)") }
+	Symbol({ code, .. }) => { ..state, text: state.text.concat(Str.from_utf8(utf8(code)) ?? "") }
+	_ => state
 }
 
 sections_of : List(Document.Section), Document.Block -> List(Document.Section)
@@ -1451,7 +1471,7 @@ empty_field = { code: "", result: "" }
 store_field : List(Document.Field), OpenField -> List(Document.Field)
 store_field = |fields, field| {
 	value = { code: field_text(field.code), result: Str.from_utf8(field.result) ?? "" }
-	fields.set(field.order, value) ?? crash "field began without an output slot"
+	fields.set(field.order, value) ?? []
 }
 
 field_text : [Simple(Str), Complex(List(U8))] -> Str
@@ -1546,7 +1566,7 @@ has_mark = |item| match item {
 # supply their collected text and cannot affect the fields after the wrapper.
 close_simple : FieldState, U64 -> FieldState
 close_simple = |state, order| {
-	var $state = state
+	var $state = { open: state.open, fields: state.fields, result_start: state.result_start }
 	while !$state.open.is_empty() {
 		field = $state.open.last() ?? break
 		if field.order < order {
