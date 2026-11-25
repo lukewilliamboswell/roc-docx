@@ -1416,16 +1416,16 @@ margins = |element| {
 
 signed_measure_or_zero : Element, Str -> Try(Read(I64), [CannotHold])
 signed_measure_or_zero = |element, local|
-	match value_of(element, local) {
-		Ok(text) => signed_measure_value(element, local, text)
-		Err(NotFound) => Ok({ value: 0, noticed: [Defaulted({ element: element.name.local, attribute: local })] })
-	}
+	measure_or_zero(element, local, 0.I64, |text| Lenient.measure(text, 1).map_ok(|read| read.value))
 
 unsigned_measure_or_zero : Element, Str -> Try(Read(U64), [CannotHold])
-unsigned_measure_or_zero = |element, local|
+unsigned_measure_or_zero = |element, local| measure_or_zero(element, local, 0.U64, Lenient.unsigned_measure)
+
+measure_or_zero : Element, Str, a, (Str -> Try(a, [NotNumber])) -> Try(Read(a), [CannotHold])
+measure_or_zero = |element, local, zero, read|
 	match value_of(element, local) {
-		Ok(text) => unsigned_measure_value(element, local, text)
-		Err(NotFound) => Ok({ value: 0, noticed: [Defaulted({ element: element.name.local, attribute: local })] })
+		Ok(text) => Ok({ value: read(text) ? |_| CannotHold, noticed: if (text.contains(".")) [rounded(element, local, text)] else [] })
+		Err(NotFound) => Ok({ value: zero, noticed: [Defaulted({ element: element.name.local, attribute: local })] })
 	}
 
 SectionColumns : [Unset, Equal({ count : U64, space : U64, separator : [NoLine, Line] }), Unequal({ widths : List({ width : U64, space : U64 }), separator : [NoLine, Line] })]
@@ -2421,19 +2421,15 @@ whole = |element, local| {
 }
 
 signed_measure : Element, Str -> Try(Read(I64), [CannotHold])
-signed_measure = |element, local| signed_measure_value(element, local, value_of(element, local) ? |_| CannotHold)
-
-signed_measure_value : Element, Str, Str -> Try(Read(I64), [CannotHold])
-signed_measure_value = |element, local, text| {
+signed_measure = |element, local| {
+	text = value_of(element, local) ? |_| CannotHold
 	read = Lenient.measure(text, 1) ? |_| CannotHold
 	Ok({ value: read.value, noticed: if (text.contains(".")) [rounded(element, local, text)] else [] })
 }
 
 unsigned_measure : Element, Str -> Try(Read(U64), [CannotHold])
-unsigned_measure = |element, local| unsigned_measure_value(element, local, value_of(element, local) ? |_| CannotHold)
-
-unsigned_measure_value : Element, Str, Str -> Try(Read(U64), [CannotHold])
-unsigned_measure_value = |element, local, text| {
+unsigned_measure = |element, local| {
+	text = value_of(element, local) ? |_| CannotHold
 	read = Lenient.unsigned_measure(text) ? |_| CannotHold
 	Ok({ value: read, noticed: if (text.contains(".")) [rounded(element, local, text)] else [] })
 }
