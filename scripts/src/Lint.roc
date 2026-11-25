@@ -149,7 +149,8 @@ Lint :: [].{
 				[],
 				|found, line, index| {
 					previous = if (index == 0) "" else (lines.get(index - 1) ?? "")
-					if line.starts_with("expect") and !previous.starts_with("##") {
+					is_expect = line == "expect" or line.starts_with("expect ") or line.starts_with("expect\t")
+					if is_expect and !previous.starts_with("##") {
 						List.append(found, { path: source.path, line: index + 1, message: "a top-level expect has a ## doc comment that names it" })
 					} else {
 						found
@@ -590,8 +591,8 @@ expect {
 
 ## A package or fuzz expect needs a doc comment on the preceding line.
 expect {
-	text = "## Named.\nexpect 1 == 1\n\nexpect 2 == 2\n"
-	["package/A.roc", "fuzz/t/Spec.roc"].all(|path| Lint.expect_doc({ path, text }).map(|violation| violation.line) == [4])
+	text = "## Named.\nexpect 1 == 1\n\nexpect 2 == 2\nexpected = 1\nexpected_main : U64\nexpect\n\t3 == 3\n"
+	["package/A.roc", "fuzz/t/Spec.roc"].all(|path| Lint.expect_doc({ path, text }).map(|violation| violation.line) == [4, 7])
 }
 
 ## Chapters open with a title and are included by the index; release notes by the releases chapter.
