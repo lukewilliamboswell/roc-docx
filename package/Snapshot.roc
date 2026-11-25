@@ -551,9 +551,9 @@ content_runs : Runs, Document.Run, Document.RunContent, Str -> Runs
 content_runs = |state, run, content, link|
 	match content {
 		FieldMark({ kind: Begin, element: _ }) => { runs: state.runs, fields: List.append(state.fields, { code: "", in_result: Bool.False }) }
-		FieldMark({ kind: Separate, element: _ }) => with_innermost(state, |field| { code: field.code, in_result: Bool.True })
+		FieldMark({ kind: Separate, element: _ }) => with_open_instruction(state, |field| { code: field.code, in_result: Bool.True })
 		FieldMark({ kind: End, element: _ }) => { runs: state.runs, fields: List.drop_last(state.fields, 1) }
-		FieldCode(code) => with_innermost(state, |field| { code: Str.concat(field.code, code), in_result: field.in_result })
+		FieldCode(code) => with_open_instruction(state, |field| { code: Str.concat(field.code, code), in_result: field.in_result })
 		_ => {
 			text = Document.inline_text(Run({ properties: run.properties, content: [content] }))
 			with_text(state, { text, formatting: formatting(run.properties), link: if (link == "") field_link(state.fields) else link })
@@ -583,11 +583,11 @@ field_link = |fields| {
 	""
 }
 
-with_innermost : Runs, (OpenField -> OpenField) -> Runs
-with_innermost = |state, change|
+with_open_instruction : Runs, (OpenField -> OpenField) -> Runs
+with_open_instruction = |state, change|
 	match state.fields.last() {
-		Ok(field) => { runs: state.runs, fields: List.append(List.drop_last(state.fields, 1), change(field)) }
-		Err(_) => state
+		Ok(field) if !field.in_result => { runs: state.runs, fields: List.append(List.drop_last(state.fields, 1), change(field)) }
+		_ => state
 	}
 
 # Text joins the run before when their formatting and links are the same.
@@ -905,6 +905,15 @@ expect {
 	simple = "<w:fldSimple w:instr='HYPERLINK \"https://example.org/\"'>${text("site")}</w:fldSimple>"
 	runs = [run_line("Scope 2", "#_Toc1"), run_line(" p5 ", ""), run_line("site", "https://example.org/")]
 	snapshot_of("<w:p>${link}${text(" p")}${page}${text(" ")}${simple}</w:p>", no_notes).map_ok(|json| json.contains(block_line("paragraph", "Scope 2 p5 site", Str.join_with(runs, ", ")))) == Ok(Bool.True)
+}
+
+## A result chunk written as instrText cannot change a HYPERLINK field's
+## bookmark target.
+expect {
+	link = "<w:r><w:fldChar w:fldCharType='begin'/></w:r><w:r><w:instrText>HYPERLINK \\l Scope</w:instrText></w:r><w:r><w:fldChar w:fldCharType='separate'/></w:r>"
+	late = "<w:r><w:instrText>suffix</w:instrText></w:r><w:r><w:t>Reference</w:t></w:r><w:r><w:fldChar w:fldCharType='end'/></w:r>"
+	result = snapshot_of("<w:p>${link}${late}</w:p>", no_notes)?
+	result.contains("\"link\": \"#Scope\"")
 }
 
 ## Notes are listed in the order of their references, each with its kind and

@@ -1478,8 +1478,8 @@ run_content_fields = |state, content|
 
 		FieldCode(code) =>
 			match state.open.last() {
-				Ok(field) => { ..state, open: state.open.drop_last(1).append({ ..field, code: field.code.concat(code.to_utf8()) }) }
-				Err(_) => state
+				Ok(field) if field.order < state.result_start => { ..state, open: state.open.drop_last(1).append({ ..field, code: field.code.concat(code.to_utf8()) }) }
+				_ => state
 			}
 
 		_ => if (state.open.is_empty()) state else to_results(state, run_content_text([], content))

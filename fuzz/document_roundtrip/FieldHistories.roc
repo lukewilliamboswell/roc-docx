@@ -41,12 +41,12 @@ code = |xml| "<w:r><w:instrText xml:space='preserve'>${xml}</w:instrText></w:r>"
 text : Str -> Str
 text = |xml| "<w:r><w:t>${xml}</w:t></w:r>"
 
-document_with : Placement, Layout -> Document
-document_with = |placement, layout| {
+document_with : Placement, Layout, Str -> Document
+document_with = |placement, layout, after_separator| {
 	begin = mark("begin")
 	separator = mark("separate")
 	end = mark("end")
-	date = "${begin}${code(" DATE ")}${separator}${text("01-04")}${end}"
+	date = "${begin}${code(" DATE ")}${separator}${after_separator}${text("01-04")}${end}"
 	condition = code(" IF ")
 	comparison = code(" &lt;&gt; &quot;1-1&quot; &quot;yes&quot; &quot;no&quot; ")
 	page = "<w:fldSimple w:instr=' PAGE '>${text("7")}</w:fldSimple>"
@@ -76,7 +76,7 @@ document_with = |placement, layout| {
 step : State, Action -> State
 step = |state, action| match (state, action) {
 	(ChoosePlacement, Place(placement)) => ChooseLayout(placement)
-	(ChooseLayout(placement), LayOut(layout)) => Read({ placement, layout, document: document_with(placement, layout) })
+	(ChooseLayout(placement), LayOut(layout)) => Read({ placement, layout, document: document_with(placement, layout, "") })
 	(Read(held), Reopen) => {
 		bytes = Docx.to_bytes(held.document) ?? crash "could not save field history"
 		parsed = Docx.parse(bytes) ?? crash "could not reopen field history"
@@ -143,4 +143,19 @@ expect {
 		Holds(Exhausted) => Model.witness(report, goal) == Ok([Place(Instruction), LayOut(ContentControl), Reopen])
 		_ => crash "${Model.explain(report)} ${Str.inspect(report.verdict)}"
 	}
+}
+
+## ECMA-376 Part 1 §17.16.23. An instruction-shaped result chunk cannot
+## extend the code of either the nested field or the enclosing field.
+## Saving retains the source element.
+expect {
+	document = document_with(Instruction, ContentControl, code("Outside instruction"))
+	written = Docx.to_bytes(document)?
+	main = Str.from_utf8(Opc.part_bytes(Opc.open(written, {})?, part)?)?
+	reopened = Docx.parse(written)?
+	codes = |doc| Docx.fields(doc).map(|field| field.code)
+	expected = expected_fields(Instruction, ContentControl).map(|field| field.code)
+	codes(document) == expected
+		and codes(reopened.document) == expected
+		and main.contains(">Outside instruction</w:instrText>")
 }
