@@ -279,9 +279,10 @@ WmlRead :: [].{
 	## property with a name and one value, text (`vt:lpwstr`, `vt:lpstr`,
 	## `vt:bstr`), a whole number (`vt:i1` to `vt:i8`, `vt:int`, `vt:ui1` to
 	## `vt:ui8`, `vt:uint`), a truth value (`vt:bool`) or a date (`vt:filetime`,
-	## `vt:date`), is read; any other is kept as it was read. The property's
-	## format and identifier attributes are how the part numbers it, not part
-	## of the property. A tree whose root is not custom properties has none.
+	## `vt:date`), is read. An integer must fit its declared type and I64.
+	## Other values retain their XML. The format and identifier attributes
+	## number properties within their part. A custom properties root supplies
+	## the list, and other roots yield an empty list.
 	custom_properties : XmlTree.Node -> List(Document.CustomProperty)
 	custom_properties = |tree|
 		property_elements(tree, custom_namespace, "Properties").map(
@@ -1616,22 +1617,68 @@ custom_property = |node| {
 	text = plain_text(held)?
 	value = match held.name.local {
 		"lpwstr" | "lpstr" | "bstr" => Text(text)
-		"i1" | "i2" | "i4" | "i8" | "int" | "ui1" | "ui2" | "ui4" | "ui8" | "uint" => Integer(integer(text)?)
 		"bool" => Boolean(toggle(text)? == On)
 		"filetime" | "date" => if (is_w3c_date(text)) Date(text) else return Err(CannotHold)
-		_ => return Err(CannotHold)
+		kind => Integer(custom_integer(kind, text)?)
 	}
 	Ok(Property({ name, value }))
 }
 
-# A whole number, an optional sign and decimal digits, as [decimal] reads it.
-integer : Str -> Try(I64, [CannotHold])
-integer = |text|
-	if text.contains(".") {
-		Err(CannotHold)
-	} else {
-		Ok((Lenient.decimal(text, 1) ? |_| CannotHold).value)
+# Decimal XML Schema integers, in the intersection of the variant's
+# declared carrier and the I64 property model.
+custom_integer : Str, Str -> Try(I64, [CannotHold])
+custom_integer = |kind, text| {
+	limits : { negative : U64, positive : U64 }
+	limits = match kind {
+		"i1" => { negative: 128, positive: 127 }
+		"i2" => { negative: 32_768, positive: 32_767 }
+		"i4" | "int" => { negative: 2_147_483_648, positive: 2_147_483_647 }
+		"i8" => { negative: 9_223_372_036_854_775_808, positive: 9_223_372_036_854_775_807 }
+		"ui1" => { negative: 0, positive: 255 }
+		"ui2" => { negative: 0, positive: 65_535 }
+		"ui4" | "uint" => { negative: 0, positive: 4_294_967_295 }
+		"ui8" => { negative: 0, positive: 9_223_372_036_854_775_807 }
+		_ => return Err(CannotHold)
 	}
+	bytes = text.to_utf8()
+	var $start = 0.U64
+	while $start < bytes.len() and is_space(bytes.get($start) ?? 0) {
+		$start = $start + 1
+	}
+	var $end = bytes.len()
+	while $end > $start and is_space(bytes.get($end - 1) ?? 0) {
+		$end = $end - 1
+	}
+	first = bytes.get($start) ?? 0
+	negative = first == '-'
+	if negative or first == '+' {
+		$start = $start + 1
+	}
+	if $start == $end {
+		return Err(CannotHold)
+	}
+
+	limit = if (negative) limits.negative else limits.positive
+	prefix_limit = limit // 10
+	digit_limit = limit % 10
+	var $magnitude = 0.U64
+	var $index = $start
+	while $index < $end {
+		byte = bytes.get($index) ?? 0
+		if byte < '0' or byte > '9' {
+			return Err(CannotHold)
+		}
+		digit = (byte - '0').to_u64()
+		if $magnitude > prefix_limit or ($magnitude == prefix_limit and digit > digit_limit) {
+			return Err(CannotHold)
+		}
+		$magnitude = $magnitude * 10 + digit
+		$index = $index + 1
+	}
+	# Apply the sign in U64 so the magnitude of I64.lowest fits.
+	bits = if (negative) (0.U64).minus_wrap($magnitude) else $magnitude
+	Ok(bits.to_i64_wrap())
+}
 
 # The text of an element without attributes that holds only text.
 plain_text : Element -> Try(Str, [CannotHold])
