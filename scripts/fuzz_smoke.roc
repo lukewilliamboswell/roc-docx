@@ -13,9 +13,9 @@ import cli.Stderr
 import cli.Stdout
 
 ## The smoke run of every fuzz target: build it with the host `roc`, run its
-## declared examples with their allocation ceilings, then explore for at most
-## one second and 64 inputs so the target keeps building and exercising its
-## property. This is the only fuzzing pull-request CI does.
+## Spec.roc expects if present and its declared examples with their allocation
+## ceilings, then explore for at most one second and 64 inputs. This is the
+## only fuzzing pull-request CI does.
 ##
 ##     blueprint run fuzz-smoke
 ##
@@ -58,6 +58,12 @@ main! = |_args| {
 		corpus = ".roc-docx/fuzz/corpus/${name}"
 		report = ".roc-docx/fuzz/reports/${name}"
 		check_report = ".roc-docx/fuzz/reports/${name}-check"
+		spec = "fuzz/${name}/Spec.roc"
+		spec_ok = if Path.is_file!(Path.utf8(spec))? {
+			step!(["roc", "test", spec, "--main=fuzz/${name}/main.roc", "--no-cache"])?
+		} else {
+			Bool.True
+		}
 		# Every run explores from an empty corpus, as CI does, so inputs kept
 		# by an earlier run cannot outgrow the time budget.
 		for stale in [corpus, report, check_report] {
@@ -77,8 +83,9 @@ main! = |_args| {
 			}
 		}
 		elapsed = Duration.to_millis(Monotonic.elapsed!(started))
-		Stdout.line!(" [${$position.to_str()}/${names.len().to_str()}] ${name} ${if ($ok) "PASS" else "FAIL"} ${elapsed.to_str()}ms")?
-		if !$ok {
+		passed = $ok and spec_ok
+		Stdout.line!(" [${$position.to_str()}/${names.len().to_str()}] ${name} ${if (passed) "PASS" else "FAIL"} ${elapsed.to_str()}ms")?
+		if !passed {
 			$failed = $failed + 1
 		}
 	}

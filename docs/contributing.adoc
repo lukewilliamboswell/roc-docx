@@ -85,7 +85,7 @@ blueprint tasks          # each check on its own, and the fixture and release ta
 | Every example prints what `tests/spec.json` records
 
 | fuzz-smoke
-| Every fuzz target builds, its declared examples and ceilings pass, and a one-second exploration finds nothing; targets build concurrently and report in order
+| Every fuzz target builds, its bounded specifications and declared examples pass, its allocation ceilings hold, and a one-second exploration finds nothing
 
 | fixtures-check
 | Committed pandoc fixtures match regeneration and every fixture has provenance
@@ -220,6 +220,42 @@ tracking on. Each expectation under `tests/redline/` is the edited
 document's snapshot; the documents and snapshots go to `.roc-docx/redline/`,
 which `oracle-schema-written` and the LibreOffice lane read as they read the
 review cases'.
+
+== Design specifications for fuzz targets
+
+Start with the contract of the stage under test. For file-format behaviour,
+name the clause, table or schema type in the xref:architecture.adoc#standards-basis[pinned standards corpus].
+State which parts follow from the standard and which follow from roc-docx's
+public API. Use the facade when the contract depends on lowering or on
+information passed between stages.
+
+Derive the expected result independently. Keep list order, identifier
+identity, coordinates and diagnostics in the observation when callers rely
+on them. A projection can agree even when an edit changes the wrong
+position or produces a misleading diagnostic.
+
+* Use `Model` for sequences of actions. Bound the action alphabet and the
+  state or history size. Require an exhausted search and check that it
+  reaches interactions where the rules can fail. A key used to merge
+  histories must preserve every fact that later actions and rules inspect.
+* Use `Solve` for fixed-width integer laws. State where the caller's bounds
+  come from and prove both arithmetic safety and the result where applicable.
+  Treat `GaveUp` as a failed proof. Take a boundary case or solver witness
+  through the real caller so the proof also has evidence for its premises.
+* Use the fuzz campaign for larger generated inputs and longer histories.
+  Include declared examples for meaningful goals and keep allocation
+  measurements around the operation under test.
+* In a scratch checkout, change a plausible production decision and run
+  the new and existing checks against it. Record which check catches the
+  difference, then discard the mutation. Keep a minimized regression for
+  a real bug the specification exposes.
+
+Put deterministic checks in `Spec.roc` beside the applicable fuzz target.
+`blueprint run fuzz-smoke` runs each such file with its target as the app.
+For one target, run `roc test fuzz/<target>/Spec.roc --main=fuzz/<target>/main.roc --no-cache`.
+Report the domain explored and the behaviours covered by existing tests
+or independent oracles. Stop adding model states when they exercise the
+same decisions and existing evidence covers the remaining contract.
 
 == Performance ratchets
 

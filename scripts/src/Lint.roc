@@ -139,10 +139,10 @@ Lint :: [].{
 			[]
 		}
 
-	## Every top-level expect in the package has a doc comment naming it.
+	## Every top-level package or fuzz expect has a doc comment naming it.
 	expect_doc : Source -> List(Violation)
 	expect_doc = |source|
-		if source.path.starts_with("package/") and source.path.ends_with(".roc") {
+		if (source.path.starts_with("package/") or source.path.starts_with("fuzz/")) and source.path.ends_with(".roc") {
 			lines = source.text.split_on("\n")
 			lines.fold_with_index(
 				[],
@@ -570,10 +570,10 @@ expect {
 	Lint.fuzz_target_shape(bare).len() == 2 and Lint.fuzz_target_shape(measured) == []
 }
 
-## A top-level expect in the package needs a doc comment; one with it passes.
+## A package or fuzz expect needs a doc comment on the preceding line.
 expect {
-	source = { path: "package/A.roc", text: "## Named.\nexpect 1 == 1\n\nexpect 2 == 2\n" }
-	Lint.expect_doc(source).map(|violation| violation.line) == [4]
+	text = "## Named.\nexpect 1 == 1\n\nexpect 2 == 2\n"
+	["package/A.roc", "fuzz/t/Spec.roc"].all(|path| Lint.expect_doc({ path, text }).map(|violation| violation.line) == [4])
 }
 
 ## Chapters open with a title and are included by the index; release notes by the releases chapter.
