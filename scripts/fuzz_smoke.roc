@@ -97,11 +97,10 @@ main! = |_args| {
 	}
 }
 
-# The run takes as long as its slowest builds, so the bound admits every
-# current target at once; it caps memory as targets are added (eleven builds
-# peaked at about 4.6 GB together).
+# Large targets have each used over 2 GiB of compiler memory. Four
+# concurrent builds leave room for specification tests and the runner.
 concurrent_builds : U64
-concurrent_builds = 12
+concurrent_builds = 4
 
 # The build command of a target, without the program name.
 build_args : Str -> List(Str)
