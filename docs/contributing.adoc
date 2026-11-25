@@ -239,7 +239,9 @@ position or produces a misleading diagnostic.
   reaches interactions where the rules can fail. For a small search, keep
   the full action trace as the key. To merge histories, keep every fact
   that later actions and rules inspect. Include `Model.explain` in a failed
-  expectation to see the counterexample and unmet goals.
+  expectation to see the counterexample and unmet goals. Check live states
+  during the search. When serialization is a separate obligation, save
+  and reopen a witness that exercises it.
 * Use `Solve` for fixed-width integer laws. State where the caller's bounds
   come from and prove both arithmetic safety and the result where applicable.
   Treat `GaveUp` as a failed proof. Take a boundary case or solver witness
@@ -306,6 +308,11 @@ with `allocs`, `reallocs`, `requested_bytes` and `peak_live_bytes`. Set an
 exact ceiling to the measured `allocs + reallocs`. A ceiling only moves down:
 lower it when a change allocates less, and when a change needs a higher
 ceiling, record the cause in the pull request beside the new value.
+
+When a refactor changes the work done per input, compare CPU time as well
+as allocation reports. Use the same compiler and optimization mode for
+both builds, interleave repeated measurements, and include ordinary inputs
+and the longest relevant boundary case.
 
 == Fixtures and oracles
 
