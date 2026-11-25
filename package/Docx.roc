@@ -723,17 +723,20 @@ formatted_block = |found, block, formatting|
 		Preserved(_) => found
 	}
 
-# A paragraph with its effective properties, resolved once to find its
-# numbering reference and again with its list level's properties, and the
-# runs of its current text with theirs.
+# A paragraph with its effective properties and the runs of its current
+# text with theirs.
 formatted_paragraph : Document.Paragraph, Formatting -> Docx.FormattedParagraph
 formatted_paragraph = |paragraph, formatting| {
 	direct = paragraph.properties
-	stated = Styles.effective_paragraph(formatting.styles, direct, { table_paragraph: formatting.table.paragraph, table_run: formatting.table.run, numbering: Document.no_paragraph_properties })
-	properties = match Numbering.level(formatting.numbering, formatting.styles, stated.numbering) {
-		Ok(level) => Styles.effective_paragraph(formatting.styles, direct, { table_paragraph: formatting.table.paragraph, table_run: formatting.table.run, numbering: level.paragraph })
-		Err(_) => stated
-	}
+	resolved = Styles.resolve_numbered_paragraph(
+		formatting.styles,
+		direct,
+		formatting.table.paragraph,
+		Numbering.has_instances(formatting.numbering),
+		{},
+		|request| Numbering.paragraph_level(formatting.numbering, formatting.styles, request).map_ok(|level| { paragraph: level.paragraph, index: level.level, item: {} }),
+	)
+	properties = resolved.properties
 	runs = paragraph.content.fold(List.with_capacity(paragraph.content.len()), |found, inline| formatted_runs(found, inline, direct, formatting))
 	{ location: formatting.location, paragraph, properties, runs }
 }

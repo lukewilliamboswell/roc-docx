@@ -397,15 +397,17 @@ Tables : { styles : Styles, numbering : Numbering }
 # the list level's paragraph properties.
 paragraph_shape : Tables, Document.ParagraphProperties -> { kind : Str, level : U64, list : Str }
 paragraph_shape = |tables, properties| {
-	stated = Styles.effective_paragraph(tables.styles, properties, {})
-	listed = Numbering.level(tables.numbering, tables.styles, stated.numbering)
-	effective = match listed {
-		Ok(level) => Styles.effective_paragraph(tables.styles, properties, { numbering: level.paragraph })
-		Err(_) => stated
-	}
-	match (effective.outline_level, listed) {
+	resolved = Styles.resolve_numbered_paragraph(
+		tables.styles,
+		properties,
+		Document.no_paragraph_properties,
+		Numbering.has_instances(tables.numbering),
+		Unlisted,
+		|request| Numbering.paragraph_level(tables.numbering, tables.styles, request).map_ok(|level| { paragraph: level.paragraph, index: level.level, item: Listed({ index: level.level, format: level.format }) }),
+	)
+	match (resolved.properties.outline_level, resolved.item) {
 		(Level(level), _) if level < 9 => { kind: "heading", level: level.to_u64() + 1, list: "" }
-		(_, Ok(level)) => { kind: "list_item", level: level.level.to_u64() + 1, list: if (level.format == Bullet) "bullet" else "number" }
+		(_, Listed(level)) => { kind: "list_item", level: level.index.to_u64() + 1, list: if (level.format == Bullet) "bullet" else "number" }
 		_ => { kind: "paragraph", level: 0, list: "" }
 	}
 }
