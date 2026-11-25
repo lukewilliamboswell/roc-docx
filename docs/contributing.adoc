@@ -234,6 +234,10 @@ identity, coordinates and diagnostics in the observation when callers rely
 on them. A projection can agree even when an edit changes the wrong
 position or produces a misleading diagnostic.
 
+When meaning depends on context, keep the construct fixed and vary its
+surroundings. For a nested field, put the same cached value inside the
+enclosing field's instruction and inside its result.
+
 When checking a writer, inspect the serialized facts that the contract
 names. A round trip or byte agreement between two writer entry points can
 miss a defect in code they share. For example, check that a removed part
