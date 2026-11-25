@@ -3,6 +3,7 @@ import docx.Opc
 import fuzz.Solve
 import Streaming
 import FieldHistories
+import CorePropertyHistory
 
 Spec := [].{}
 

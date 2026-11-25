@@ -858,6 +858,33 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 	has_part : Document, Str -> Bool
 	has_part = |document, name| document.graph.parts.any(|part| Str.caseless_ascii_equals(part.name, name))
 
+	## An unused XML part name, preferring the absolute `.xml` name given.
+	## On collision choose the first free numbered suffix from 2, with
+	## names compared as OPC compares them, ignoring ASCII case.
+	free_xml_part_name : Document, Str -> Str
+	free_xml_part_name = |document, preferred| {
+		if !Document.has_part(document, preferred) {
+			return preferred
+		}
+		stem = preferred.drop_suffix(".xml")
+		var $suffixes = Set.with_capacity(4)
+		for part in document.graph.parts {
+			match part.name.drop_prefix_caseless_ascii(stem) {
+				Ok(suffix) => {
+					$suffixes = $suffixes.insert(suffix.with_ascii_lowercased())
+				}
+				Err(_) => {}
+			}
+		}
+		var $number = 2.U64
+		var $suffix = "2.xml"
+		while $suffixes.contains($suffix) {
+			$number = $number + 1
+			$suffix = "${$number.to_str()}.xml"
+		}
+		"${stem}${$suffix}"
+	}
+
 	## The document with a new XML part: `name`, of `content_type`, holding
 	## `tree`, and a relationship of type `kind` to it from the part named
 	## `source`, or from the package itself when `source` is `/`, whose

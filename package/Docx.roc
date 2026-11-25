@@ -690,7 +690,10 @@ Docx :: [].{
 		dated(merged.modified, read.modified)?
 		match Document.related(document, "/", core_properties_relationship) {
 			Ok(part) => Ok(Document.with_part(document, part.name, tree, part.relationships))
-			Err(NotFound) => Ok(Document.with_new_part(document, { source: "/", kind: core_properties_relationship, name: "/docProps/core.xml", content_type: "application/vnd.openxmlformats-package.core-properties+xml" }, tree))
+			Err(NotFound) => {
+				name = Document.free_xml_part_name(document, "/docProps/core.xml")
+				Ok(Document.with_new_part(document, { source: "/", kind: core_properties_relationship, name, content_type: "application/vnd.openxmlformats-package.core-properties+xml" }, tree))
+			}
 		}
 	}
 }
