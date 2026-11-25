@@ -163,7 +163,10 @@ holds, and therefore what it writes, is valid, and says so with a
   row's height.
 * Only a plain decimal number is rounded. A percentage, such as `50%`, or a
   measure with a unit, such as `1.5in`, which the standard also allows
-  there, is kept as written.
+  there, is kept as written during the whole-number repair. When the body
+  reader interprets a table or cell width written as a percentage, it
+  converts the full decimal to fiftieths of a per cent. Halfway values
+  round away from zero, and an inexact conversion reports `Rounded`.
 * A page's margins without a gutter are given a gutter of zero, as Word and
   LibreOffice assume.
 
