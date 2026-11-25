@@ -108,6 +108,12 @@ while its chunk is made, and the chunks concatenated are exactly the bytes
 `Docx.to_bytes_with` gives. The price of failing early is that each XML
 part is rendered twice, once to check it and once to emit it.
 
+When writing a part graph directly, `Opc.pending` gives the remaining parts
+in write order. `Opc.add` takes the content of the first pending part and
+returns the next writer and chunk. If an add fails, retry with the writer
+passed to that call. An early `Opc.finish` gives `NotWritten` with the first
+pending name. Once every part is supplied, `Opc.finish` gives the final chunk.
+
 == Set what a document says about itself
 
 `Docx.set_properties` gives a document the core properties
