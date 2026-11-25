@@ -46,7 +46,7 @@ main! = |_args| {
 			Err(_) => {}
 		}
 		$position = $position + 1
-		spec_ok = step!(["roc", "test", "fuzz/${name}_suite.roc", "--no-cache"])?
+		spec_ok = step!(["roc", "test", "fuzz/${name}_suite.roc"])?
 		ok = if built {
 			run_suite!(name)?
 		} else {
