@@ -19,6 +19,7 @@
 ## same way once a footnote is added, so a body or notes built a piece at a
 ## time are changed in place; every other part's model is a reading of its
 ## tree.
+import FieldPhase
 import Lenient
 import Limits
 import Mce
@@ -732,7 +733,8 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 		}
 	}
 
-	## An inline's text, as [Document.paragraph_text] counts it.
+	## The text stored in one inline, without an incoming field phase.
+	## Field marks and code tokens contribute no text.
 	inline_text : Inline -> Str
 	inline_text = |inline| Str.from_utf8(inline_text_bytes(List.with_capacity(16), inline)) ?? ""
 
@@ -742,7 +744,7 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 	append_inline_text : List(U8), Inline -> List(U8)
 	append_inline_text = |text, inline| inline_text_bytes(text, inline)
 
-	## The fields of blocks in the order they begin, through containers,
+	## The current fields of blocks in the order they begin, through containers,
 	## hyperlinks and other fields: each simple field, with its content's text
 	## as its result, and each complex field, with the code between its
 	## beginning and its separator and the text between its separator and its
@@ -752,13 +754,12 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 	## never ends ends with the blocks.
 	fields : List(Block) -> List(Field)
 	fields = |blocks| {
-		var $state = { open: List.with_capacity(4), done: List.with_capacity(8), begun: 0.U64, result_start: 0.U64 }
-		for block in blocks {
+		first = blocks.find_first_index(may_begin_fields) ?? return []
+		var $state = { open: List.with_capacity(4), fields: List.with_capacity(8), result_start: 0.U64 }
+		for block in blocks.drop_first(first) {
 			$state = block_fields($state, block)
 		}
-		List.concat($state.done, $state.open)
-			.sort_with(|a, b| if (a.order < b.order) Before else if (a.order > b.order) After else Same)
-			.map(|field| { code: Str.from_utf8(field.code) ?? "", result: Str.from_utf8(field.result) ?? "" })
+		$state.open.fold($state.fields, store_field)
 	}
 
 	## The sections that end in blocks, in order, through containers.
@@ -770,14 +771,12 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 	## text not, and nothing from the content the model keeps without
 	## reading, so field instructions and note references contribute none. A
 	## tab is a tab character, a break of any kind a line feed, a symbol its
-	## character, a soft hyphen U+00AD and a non-breaking hyphen U+2011.
+	## character, a soft hyphen U+00AD and a non-breaking hyphen U+2011. Field
+	## phase begins empty when this paragraph is read by itself.
 	paragraph_text : Paragraph -> Str
 	paragraph_text = |paragraph| {
-		var $text = List.with_capacity(64)
-		for inline in paragraph.content {
-			$text = inline_text_bytes($text, inline)
-		}
-		Str.from_utf8($text) ?? ""
+		read = paragraph.content.fold({ text: List.with_capacity(64), phase: FieldPhase.empty }, paragraph_inline)
+		Str.from_utf8(read.text) ?? ""
 	}
 
 	## A table's rows in order, through the content controls and custom XML
@@ -1338,6 +1337,30 @@ inline_text_bytes = |text, inline|
 		Preserved(_) => text
 	}
 
+# Current text of one isolated paragraph. A simple wrapper's interior
+# has its own phase, and deletion and move-source marks have no effect.
+ParagraphText : { text : List(U8), phase : FieldPhase }
+
+paragraph_inline : ParagraphText, Document.Inline -> ParagraphText
+paragraph_inline = |state, inline| match inline {
+	Run(run) => run.content.fold(state, paragraph_run)
+	Container({ content, .. }) | Hyperlink({ content, .. }) => content.fold(state, paragraph_inline)
+	SimpleField({ content, .. }) => {
+		read = content.fold({ ..state, phase: FieldPhase.empty }, paragraph_inline)
+		{ ..read, phase: state.phase }
+	}
+	Revision({ kind: Deletion, .. }) | Revision({ kind: MoveSource, .. }) => state
+	Revision({ content, .. }) => content.fold(state, paragraph_inline)
+	_ => state
+}
+
+paragraph_run : ParagraphText, Document.RunContent -> ParagraphText
+paragraph_run = |state, item| match item {
+	FieldMark({ kind, .. }) => { ..state, phase: FieldPhase.step(state.phase, kind) }
+	FieldCode(value) if !FieldPhase.is_instruction(state.phase) => { ..state, text: run_content_text(state.text, Text(value)) }
+	_ => { ..state, text: run_content_text(state.text, item) }
+}
+
 sections_of : List(Document.Section), Document.Block -> List(Document.Section)
 sections_of = |sections, block|
 	match block {
@@ -1418,14 +1441,32 @@ is_hyperlink = |word| word.to_utf8().map(|byte| if (byte >= 'a' and byte <= 'z')
 # The fields begun so far, as [Document.fields] gathers them: those still
 # open, innermost last, those ended, and how many have begun. Results are
 # visible only to fields that began after the innermost open instruction.
-FieldState : { open : List(OpenField), done : List(OpenField), begun : U64, result_start : U64 }
+FieldState : { open : List(OpenField), fields : List(Document.Field), result_start : U64 }
 
-OpenField : { order : U64, code : List(U8), result : List(U8), enclosing_result_start : U64 }
+OpenField : { order : U64, code : [Simple(Str), Complex(List(U8))], result : List(U8), enclosing_result_start : U64 }
+
+empty_field : Document.Field
+empty_field = { code: "", result: "" }
+
+store_field : List(Document.Field), OpenField -> List(Document.Field)
+store_field = |fields, field| {
+	value = { code: field_text(field.code), result: Str.from_utf8(field.result) ?? "" }
+	fields.set(field.order, value) ?? crash "field began without an output slot"
+}
+
+field_text : [Simple(Str), Complex(List(U8))] -> Str
+field_text = |code| match code {
+	Simple(text) => text
+	Complex(bytes) => Str.from_utf8(bytes) ?? ""
+}
 
 block_fields : FieldState, Document.Block -> FieldState
 block_fields = |state, block|
 	match block {
-		Paragraph(paragraph) => to_results(paragraph.content.fold(state, inline_fields), [10])
+		Paragraph(paragraph) => {
+			inner = paragraph.content.fold(state, inline_fields)
+			if (inner.open.is_empty()) inner else to_results(inner, [10])
+		}
 		Table(table) => Document.table_rows(table).fold(state, |by_row, row| Document.row_cells(row).fold(by_row, |by_cell, cell| cell.content.fold(by_cell, block_fields)))
 		Container({ element: _, content }) => content.fold(state, block_fields)
 		Section(_) => state
@@ -1437,16 +1478,36 @@ block_fields = |state, block|
 inline_fields : FieldState, Document.Inline -> FieldState
 inline_fields = |state, inline|
 	match inline {
-		Run(run) => run.content.fold(state, run_content_fields)
+		Run(run) => match run.content {
+			[item] => run_content_fields(state, item)
+			_ if state.open.is_empty() and !run.content.any(begins_field) => state
+			_ => run.content.fold(state, run_content_fields)
+		}
 		Hyperlink({ target: _, preserved: _, content }) => content.fold(state, inline_fields)
-		SimpleField({ code, preserved: _, content }) => {
-			inner = content.fold({ ..state, begun: state.begun + 1 }, inline_fields)
-			field = { order: state.begun, code: code.to_utf8(), result: inline_text_bytes([], inline), enclosing_result_start: 0 }
-			{ ..inner, done: List.append(inner.done, field) }
+		SimpleField({ code, content, .. }) => {
+			order = state.fields.len()
+			match content {
+				[Run(run)] if !run.content.any(has_mark) => {
+					result = run.content.fold(
+						[],
+						|bytes, item| match item {
+							FieldCode(raw) => run_content_text(bytes, Text(raw))
+							_ => run_content_text(bytes, item)
+						},
+					)
+					outer = to_results(state, result)
+					return { ..outer, fields: outer.fields.append({ code, result: Str.from_utf8(result) ?? "" }) }
+				}
+				_ => {}
+			}
+			field = { order, code: Simple(code), result: [], enclosing_result_start: state.result_start }
+			inner = content.fold({ ..state, open: state.open.append(field), fields: state.fields.append(empty_field) }, inline_fields)
+			close_simple(inner, order)
 		}
 
 		Container({ element: _, content }) => content.fold(state, inline_fields)
-		Revision({ kind: _, author: _, date: _, content, preserved: _ }) => content.fold(state, inline_fields)
+		Revision({ kind: Deletion, .. }) | Revision({ kind: MoveSource, .. }) => state
+		Revision({ content, .. }) => content.fold(state, inline_fields)
 		BookmarkStart(_) => state
 		BookmarkEnd(_) => state
 		CommentStart(_) => state
@@ -1456,34 +1517,95 @@ inline_fields = |state, inline|
 		Preserved(_) => state
 	}
 
+# A prefix of plain paragraphs cannot start a field. Begin the full walk
+# at the first paragraph or other block that might contain one.
+may_begin_fields : Document.Block -> Bool
+may_begin_fields = |block| match block {
+	Paragraph(paragraph) => paragraph.content.any(
+		|inline| match inline {
+			Run(run) => run.content.any(begins_field)
+			_ => Bool.True
+		},
+	)
+	_ => Bool.True
+}
+
+begins_field : Document.RunContent -> Bool
+begins_field = |item| match item {
+	FieldMark({ kind: Begin, .. }) => Bool.True
+	_ => Bool.False
+}
+
+has_mark : Document.RunContent -> Bool
+has_mark = |item| match item {
+	FieldMark(_) => Bool.True
+	_ => Bool.False
+}
+
+# A simple field closes at its wrapper. Any incomplete complex children
+# supply their collected text and cannot affect the fields after the wrapper.
+close_simple : FieldState, U64 -> FieldState
+close_simple = |state, order| {
+	var $state = state
+	while !$state.open.is_empty() {
+		field = $state.open.last() ?? break
+		if field.order < order {
+			break
+		}
+		$state = close_field($state, field)
+		if field.order == order {
+			break
+		}
+	}
+	$state
+}
+
+close_field : FieldState, OpenField -> FieldState
+close_field = |state, field|
+	{ ..state, open: state.open.drop_last(1), fields: store_field(state.fields, field), result_start: field.enclosing_result_start }
+
 run_content_fields : FieldState, Document.RunContent -> FieldState
 run_content_fields = |state, content|
 	match content {
 		FieldMark({ kind: Begin, element: _ }) => {
-			field = { order: state.begun, code: [], result: [], enclosing_result_start: state.result_start }
-			{ ..state, open: state.open.append(field), begun: state.begun + 1, result_start: state.begun + 1 }
+			order = state.fields.len()
+			field = { order, code: Complex([]), result: [], enclosing_result_start: state.result_start }
+			{ ..state, open: state.open.append(field), fields: state.fields.append(empty_field), result_start: order + 1 }
 		}
 
 		FieldMark({ kind: Separate, element: _ }) =>
 			match state.open.last() {
-				Ok(field) => { ..state, result_start: field.enclosing_result_start }
-				Err(_) => state
+				Ok({ code: Complex(_), enclosing_result_start, .. }) => { ..state, result_start: enclosing_result_start }
+				_ => state
 			}
 
 		FieldMark({ kind: End, element: _ }) =>
 			match state.open.last() {
-				Ok(field) => { ..state, open: state.open.drop_last(1), done: state.done.append(field), result_start: field.enclosing_result_start }
+				Ok(field) => match field.code {
+					Complex(_) => close_field(state, field)
+					Simple(_) => state
+				}
 				Err(_) => state
 			}
 
 		FieldCode(code) =>
 			match state.open.last() {
-				Ok(field) if field.order < state.result_start => { ..state, open: state.open.drop_last(1).append({ ..field, code: field.code.concat(code.to_utf8()) }) }
-				_ => state
+				Ok({ code: Complex(bytes), .. } as field) if field.order < state.result_start =>
+					{ ..state, open: state.open.drop_last(1).append({ ..field, code: Complex(bytes.concat(code.to_utf8())) }) }
+				Ok(_) => run_results(state, Text(code))
+				Err(_) => state
 			}
 
-		_ => if (state.open.is_empty()) state else to_results(state, run_content_text([], content))
+		_ => if (state.open.is_empty()) state else run_results(state, content)
 	}
+
+run_results : FieldState, Document.RunContent -> FieldState
+run_results = |state, item| match state.open {
+	[] => state
+	[{ code: Simple(_), .. } as field] =>
+		{ ..state, open: state.open.set(0, { ..field, result: run_content_text(field.result, item) }) ?? [] }
+	_ => to_results(state, run_content_text([], item))
+}
 
 # Text contributes to the results of open fields until it reaches an
 # enclosing field whose instruction is still open.

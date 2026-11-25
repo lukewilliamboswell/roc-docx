@@ -8,7 +8,7 @@ FieldHistories := [].{}
 
 Placement : [Instruction, Result]
 
-Layout : [Together, Paragraphs, ContentControl]
+Layout : [Together, Paragraphs, ContentControl, Simple, SimpleWithRevisions]
 
 Action : [Place(Placement), LayOut(Layout), Reopen]
 
@@ -22,7 +22,7 @@ State : [
 actions : State -> List(Action)
 actions = |state| match state {
 	ChoosePlacement => [Place(Instruction), Place(Result)]
-	ChooseLayout(_) => [LayOut(Together), LayOut(Paragraphs), LayOut(ContentControl)]
+	ChooseLayout(_) => [LayOut(Together), LayOut(Paragraphs), LayOut(ContentControl), LayOut(Simple), LayOut(SimpleWithRevisions)]
 	Read(_) => [Reopen]
 	Reopened(_) => []
 }
@@ -47,10 +47,13 @@ document_with = |placement, layout, after_separator| {
 	begin = mark("begin")
 	separator = mark("separate")
 	end = mark("end")
-	date = "${begin}${code(" DATE ")}${separator}${after_separator}${text("01-04")}${end}"
+	simple_layout = layout == Simple or layout == SimpleWithRevisions
+	date_text = if (simple_layout) code("01-04") else text("01-04")
+	date = "${begin}${code(" DATE ")}${separator}${after_separator}${date_text}${end}"
 	condition = code(" IF ")
 	comparison = code(" &lt;&gt; &quot;1-1&quot; &quot;yes&quot; &quot;no&quot; ")
-	page = "<w:fldSimple w:instr=' PAGE '>${text("7")}</w:fldSimple>"
+	page_text = if (simple_layout) code("7") else text("7")
+	page = "<w:fldSimple w:instr=' PAGE '>${page_text}</w:fldSimple>"
 	conditional = match placement {
 		Instruction => "${begin}${condition}${date}${comparison}${separator}${text("yes")}${end}"
 		Result => "${begin}${condition}${code("1")}${comparison}${separator}${text("yes")}${date}${end}"
@@ -58,10 +61,15 @@ document_with = |placement, layout, after_separator| {
 	first = "${begin}${code(" TOC ")}${separator}${text("α")}"
 	middle = "${conditional}${page}"
 	last = "${text("✓")}${end}${text("after")}"
+	simple = |runs| paragraph("<w:fldSimple w:instr=' TOC '>${text("α")}${runs}${text("✓")}</w:fldSimple>${text("after")}")
+	deleted = "<w:del w:id='1' w:author='Ada'>${begin}<w:r><w:delInstrText>NUMPAGES</w:delInstrText></w:r>${separator}<w:r><w:delText>gone</w:delText></w:r>${end}</w:del>"
+	inserted = "<w:ins w:id='2' w:author='Ada'>${text("+")}</w:ins>"
 	body = match layout {
 		Together => paragraph("${first}${middle}${last}")
 		Paragraphs => "${paragraph(first)}${paragraph(middle)}${paragraph(last)}"
 		ContentControl => "${paragraph(first)}<w:sdt><w:sdtContent>${paragraph(middle)}</w:sdtContent></w:sdt>${paragraph(last)}"
+		Simple => simple(middle)
+		SimpleWithRevisions => simple("${deleted}${inserted}<w:sdt><w:sdtContent>${middle}</w:sdtContent></w:sdt>")
 	}
 	packed = body_bytes(body) ?? crash "could not package field history"
 	parsed = Docx.parse(packed) ?? crash "could not parse field history"
@@ -95,9 +103,10 @@ expected_fields : Placement, Layout -> List(Document.Field)
 expected_fields = |placement, layout| {
 	embedded = if (placement == Result) "01-04" else ""
 	literal = if (placement == Result) "1" else ""
-	line = if (layout == Together) "" else "\n"
+	line = if (layout == Paragraphs or layout == ContentControl) "\n" else ""
+	addition = if (layout == SimpleWithRevisions) "+" else ""
 	[
-		{ code: " TOC ", result: "α${line}yes${embedded}7${line}✓" },
+		{ code: " TOC ", result: "α${line}${addition}yes${embedded}7${line}✓" },
 		{ code: " IF ${literal} <> \"1-1\" \"yes\" \"no\" ", result: "yes${embedded}" },
 		{ code: " DATE ", result: "01-04" },
 		{ code: " PAGE ", result: "7" },
@@ -107,8 +116,11 @@ expected_fields = |placement, layout| {
 ## A nested expression's cached value is its own result. It contributes to
 ## an enclosing field only when placed in its result. Exhaust both placements
 ## across paragraphs and a content control before and after reopening.
+## A simple enclosing field has its own cache, with nested ordinary
+## instrText read as text and deleted fields omitted from the current view.
 expect {
-	goal = "reopen a nested instruction across a block content control"
+	block_goal = "reopen a nested instruction across a block content control"
+	simple_goal = "reopen a simple result with nested instructions and revisions"
 	report = Model.explore(
 		{
 			init: ChoosePlacement,
@@ -124,9 +136,16 @@ expect {
 					},
 				),
 				Model.sometimes(
-					goal,
+					block_goal,
 					|state| match state {
 						Reopened({ placement: Instruction, layout: ContentControl, .. }) => Bool.True
+						_ => Bool.False
+					},
+				),
+				Model.sometimes(
+					simple_goal,
+					|state| match state {
+						Reopened({ placement: Instruction, layout: SimpleWithRevisions, .. }) => Bool.True
 						_ => Bool.False
 					},
 				),
@@ -144,8 +163,20 @@ expect {
 		},
 	)
 	match report.verdict {
-		Holds(Exhausted) => Model.witness(report, goal) == Ok([Place(Instruction), LayOut(ContentControl), Reopen])
+		Holds(Exhausted) =>
+			Model.witness(report, block_goal) == Ok([Place(Instruction), LayOut(ContentControl), Reopen])
+				and Model.witness(report, simple_goal) == Ok([Place(Instruction), LayOut(SimpleWithRevisions), Reopen])
 		_ => crash "${Model.explain(report)} ${Str.inspect(report.verdict)}"
+	}
+}
+
+## An isolated paragraph starts in the ordinary phase. Its simple field's
+## literal result tokens also contribute to current text.
+expect {
+	document = document_with(Result, SimpleWithRevisions, "")
+	match Docx.body(document).first() {
+		Ok(Paragraph(held)) => Document.paragraph_text(held) == "α+yes01-047✓after"
+		_ => Bool.False
 	}
 }
 
