@@ -93,6 +93,65 @@ Lenient :: [].{
 			_ => []
 		}
 
+	## The equality key of an XML Schema integer lexical form. Preserve malformed
+	## text verbatim. Keys disregard the optional plus sign, redundant zeroes
+	## and surrounding XML whitespace without limiting the integer's magnitude.
+	integer_key : Str -> Str
+	integer_key = |text| {
+		if text.count_utf8_bytes() <= 1 {
+			return text
+		}
+		trimmed = text.trim()
+		if trimmed == text and !text.starts_with("+") and !text.starts_with("0") and !text.starts_with("-0") {
+			return text
+		}
+
+		var $at = 0.U64
+		var $start = 0.U64
+		var $end = 0.U64
+		var $leading = 0.U64
+		var $sign = Bool.False
+		var $negative = Bool.False
+		for byte in text.iter_utf8() {
+			if byte >= '0' and byte <= '9' {
+				if $end != 0 and $end != $at {
+					return text
+				}
+				$end = $at + 1
+				if byte == '0' and $at == $start + $leading {
+					$leading = $leading + 1
+				}
+			} else if byte == ' ' or byte == '\t' or byte == '\r' or byte == '\n' {
+				if $end == 0 {
+					if $sign {
+						return text
+					}
+					$start = $at + 1
+				}
+			} else if (byte == '+' or byte == '-') and $end == 0 and !$sign {
+				$sign = Bool.True
+				$negative = byte == '-'
+				$start = $at + 1
+			} else {
+				return text
+			}
+			$at = $at + 1
+		}
+		if $end == 0 {
+			return text
+		}
+		first = $start + $leading
+		if first == $end {
+			return "0"
+		}
+		cropped = text.drop_last_bytes($at - $end) ?? return text
+		if $negative and $leading == 0 {
+			return cropped.drop_first_bytes($start - 1) ?? text
+		}
+		magnitude = cropped.drop_first_bytes(first) ?? return text
+		if ($negative) "-".concat(magnitude) else magnitude
+	}
+
 	## A decimal number, an optional sign, digits and an optional fraction,
 	## multiplied by `factor` and rounded to the nearest whole number, halves
 	## away from zero. The `exact` flag says the scaled value was already whole.
@@ -323,4 +382,20 @@ expect {
 		and Lenient.repair(w("tcW"), foreign) == { attributes: foreign, repairs: [] }
 		and Lenient.repair(w("jc"), [{ name: w("val"), value: "1.5" }]).repairs == []
 		and Lenient.repair({ namespace: Uri("urn:example:x"), local: "pgMar", prefix: Prefix("x") }, []).repairs == []
+}
+
+## XSD integer spellings use only XML whitespace. Invalid spellings keep
+## their literal identity, and even adjacent values wider than a machine
+## integer receive distinct keys.
+expect {
+	wide = "10000000000000000000000000000000000000000"
+	Lenient.integer_key("\t-000\r\n") == "0"
+		and Lenient.integer_key("-00${wide} ") == "-${wide}"
+		and Lenient.integer_key(" +00${wide}") == wide
+		and Lenient.integer_key("+0${wide}1") == "${wide}1"
+		and Lenient.integer_key(" ${wide} ") == wide
+		and Lenient.integer_key("+ 12") == "+ 12"
+		and Lenient.integer_key("01 2") == "01 2"
+		and Lenient.integer_key("+01a") == "+01a"
+		and Lenient.integer_key("\u(A0)12") == "\u(A0)12"
 }

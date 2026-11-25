@@ -17,6 +17,7 @@
 ## relationship that leads to its target, found among the part's
 ## relationships or added to them.
 import Document
+import Lenient
 import Numbering
 import Opc
 import Styles
@@ -165,7 +166,7 @@ WmlWrite :: [].{
 							node = Element({ name: kept.name, bindings: kept.bindings, attributes, children: out.nodes })
 							$children = List.append($children, node)
 							$state = out.state
-							$used = $used.insert(value_of(kept.attributes, "id") ?? "")
+							$used = $used.insert(Lenient.integer_key(value_of(kept.attributes, "id") ?? ""))
 						}
 
 						Err(_) => {}
@@ -218,7 +219,7 @@ WmlWrite :: [].{
 				Element(kept) if is_w(kept.name, local) and $ids.len() < count => {
 					id = value_of(kept.attributes, "id") ?? ""
 					$ids = List.append($ids, id)
-					$used = $used.insert(id)
+					$used = $used.insert(Lenient.integer_key(id))
 				}
 
 				_ => {}

@@ -2,6 +2,7 @@ import docx.Build
 import docx.Docx
 import docx.Document
 import fuzz.Model
+import NoteOwnership
 
 Spec := [].{}
 
