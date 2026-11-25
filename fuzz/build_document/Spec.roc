@@ -1,7 +1,9 @@
 import docx.Build
 import docx.Docx
 import docx.Document
+import docx.Opc
 import fuzz.Model
+import fuzz.Solve
 import NoteOwnership
 
 Spec := [].{}
@@ -177,4 +179,71 @@ expect {
 		}
 		_ => crash "${Model.explain(report)} ${Str.inspect(report.verdict)}"
 	}
+}
+
+## Build.table uses this saturated addition both for its whole-grid budget
+## and for individual spans when the grid exceeds I64. Each step fits
+## exactly when the next width fits in the remaining signed budget. Once a
+## prefix exceeds it, nonnegative widths keep that result outside the budget.
+## When the whole grid fits, every span fits by the same nonnegativity.
+expect Solve.prove_within(
+	{ subtotal: Solve.u64, column: Solve.u64 }.Solve,
+	|v| {
+		cap = Solve.num(9_223_372_036_854_775_807)
+		sum = Solve.if_else(v.subtotal.plus_overflows(v.column), Solve.num(U64.highest), v.subtotal + v.column)
+		fits = sum.lte(cap)
+		room = Solve.all([v.subtotal.lte(cap), v.column.lte(cap - v.subtotal)])
+		Solve.all([
+			fits.implies(room),
+			room.implies(fits),
+			room.implies(sum.eq(v.subtotal + v.column)),
+		])
+	},
+	5_000,
+) == Ok(Proved)
+
+# The grid and cell preferences are independent WML fields. Read them
+# back through the facade to exercise both widths that are written and the
+# schema's absent preferred width.
+table_widths = |columns, cells| {
+	table = Build.table({ widths: columns }, [cells])
+	document = Build.append(Docx.new_document({})?, [table])
+	written = Docx.to_bytes(document)?
+	read = Docx.parse(written)?
+	part = Opc.part_bytes(Opc.open(written, {})?, "/word/document.xml")?
+	xml = Str.from_utf8(part)?
+	preferred_count = xml.split_on("<w:tcW").len() - 1
+	Ok(
+		match Docx.body(read.document).first() {
+			Ok(Table(reopened)) => {
+				grid: reopened.grid,
+				widths: Document.table_rows(reopened).map(|row| Document.row_cells(row).map(|cell| cell.properties.width)),
+				preferred_count,
+			}
+			_ => { grid: [], widths: [], preferred_count }
+		},
+	)
+}
+
+## A preferred cell width at the signed boundary is exact. Larger column
+## widths and larger spanning sums stay in the grid, with no preferred
+## cell width. ECMA-376 Part 4 makes that property optional in CT_TcPrBase.
+expect {
+	cap = 9_223_372_036_854_775_807.U64
+	exact = [cap - 1, 1]
+	merged = Build.cell({ span: 2 }, [])
+	columns = [cap - 1, 1, cap + 1, cap, 1]
+	cells = [merged, Build.cell({}, []), merged]
+	table_widths(exact, [merged])? == { grid: exact.map(|width| Column(width)), widths: [[Twips(I64.highest)]], preferred_count: 1 }
+		and table_widths(columns, cells)?
+			== { grid: columns.map(|width| Column(width)), widths: [[Twips(I64.highest), Unset, Unset]], preferred_count: 1 }
+}
+
+## A spanning cell can exceed even U64. Once its preferred width is
+## unrepresentable, later columns and cells still follow the grid.
+expect {
+	columns = [U64.highest, 1, 0, 37]
+	cells = [Build.cell({ span: 3 }, []), Build.cell({}, [])]
+	table_widths(columns, cells)?
+		== { grid: columns.map(|width| Column(width)), widths: [[Unset, Twips(37)]], preferred_count: 1 }
 }
