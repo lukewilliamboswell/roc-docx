@@ -212,7 +212,10 @@ A new comment or reply is a `Comments.New`, a props record:
   `Blocks(blocks)`, paragraphs and tables of any kind;
 * `initials`, `Initials(text)` or, by default, `Unset`;
 * `date`, `Date(text)`, an XML Schema date and time such as
-  `2026-11-10T09:00:00Z`, or, by default, `Unset`.
+  `2026-11-10T09:00:00Z`, or, by default, `Unset`. Supported years are
+  `0001` through `9999`. A numeric UTC offset uses minutes from `00` through
+  `59` and is bounded by `-14:00` and `+14:00`. The same date parser is used
+  for tracked edits.
 
 The package reads no clock, so the author and the date come from the
 application, and a comment without a date has none. A new comment is not
