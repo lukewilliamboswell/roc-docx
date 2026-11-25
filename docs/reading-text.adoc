@@ -268,11 +268,14 @@ heading style as a heading.
 
 A paragraph is a list item when its numbering reference names a list. The
 reference is the paragraph's `numbering`: an `instance` and a `level` from
-0, stated on the paragraph or given by its paragraph style, so the
-effective one comes from `Styles.effective_paragraph`. `Docx.numbering`
-reads the document's numbering table with `Numbering.read`, and
-`Numbering.level` resolves a reference to the list level the paragraph is
-at:
+0. `Docx.paragraphs` gives the effective reference. When the applied
+paragraph style supplies the instance, its association with a level in
+the abstract definition selects that level. Direct numbering takes
+precedence. When the definition has no matching association, the query
+uses the effective reference as stated.
+
+`Docx.numbering` reads the document's numbering table with
+`Numbering.read`. `Numbering.level` resolves a chosen instance and level:
 
 [source,roc]
 ----
