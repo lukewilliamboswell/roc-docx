@@ -1,6 +1,7 @@
 import docx.Docx
 import docx.Opc
 import fuzz.Solve
+import Streaming
 
 Spec := [].{}
 

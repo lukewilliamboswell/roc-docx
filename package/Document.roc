@@ -1191,16 +1191,28 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 
 	## The document without the part named `name`: the part, its tree, the
 	## relationships whose source it is, and every internal relationship
-	## that targets it are gone. A name that is not a part changes nothing.
+	## that targets it are gone. The part and internal targets compare
+	## without regard to ASCII case. A name that is not a part changes nothing.
 	without_part : Document, Str -> Document
 	without_part = |document, name| {
-		kept = |relationships| relationships.drop_if(|rel| rel.mode == Internal and rel.target == name)
-		parts = document.graph.parts.drop_if(|part| part.name == name).map(|part| { name: part.name, content_type: part.content_type, relationships: kept(part.relationships) })
+		kept = |relationships| relationships.drop_if(|rel| rel.mode == Internal and Str.caseless_ascii_equals(rel.target, name))
+		var $parts = List.with_capacity(document.graph.parts.len().minus_saturated(1))
+		var $removed = Err(NotFound)
+		for part in document.graph.parts {
+			if part.name == name or Str.caseless_ascii_equals(part.name, name) {
+				$removed = Ok(part.name)
+			} else if part.relationships.is_empty() {
+				$parts = $parts.append(part)
+			} else {
+				$parts = $parts.append({ ..part, relationships: kept(part.relationships) })
+			}
+		}
+		removed = $removed ?? return document
 		kept_body = match document.body {
-			Blocks(read) if read.part == name => Whole
+			Blocks(read) if read.part == removed => Whole
 			other => other
 		}
-		{ pkg: document.pkg, graph: { relationships: kept(document.graph.relationships), parts }, trees: document.trees.remove(name), body: kept_body, notes: document.notes.drop_if(|held| held.part == name) }
+		{ pkg: document.pkg, graph: { relationships: kept(document.graph.relationships), parts: $parts }, trees: document.trees.remove(removed), body: kept_body, notes: document.notes.drop_if(|held| held.part == removed) }
 	}
 
 	## Two documents are equivalent when they have the same package
