@@ -529,10 +529,23 @@ range_rule = |name, attributes| {
 with_name : RangeNames, { range : [Bookmark, MoveSource, MoveDestination], id : Str, name : Str } -> RangeNames
 with_name = |names, named|
 	match named.range {
-		Bookmark => { ..names, bookmarks: names.bookmarks.insert(named.id, named.name) }
-		MoveSource => { ..names, move_sources: names.move_sources.insert(named.id, named.name) }
-		MoveDestination => { ..names, move_destinations: names.move_destinations.insert(named.id, named.name) }
+		Bookmark => { ..names, bookmarks: insert_range_name(names.bookmarks, named.id, named.name) }
+		MoveSource => { ..names, move_sources: insert_range_name(names.move_sources, named.id, named.name) }
+		MoveDestination => { ..names, move_destinations: insert_range_name(names.move_destinations, named.id, named.name) }
 	}
+
+# Keep literal matching for nonconforming duplicate IDs and register the
+# integer value for a boundary that spells the same ID differently.
+insert_range_name : Dict(Str, Str), Str, Str -> Dict(Str, Str)
+insert_range_name = |names, id, name| {
+	key = Lenient.integer_key(id)
+	with_alias = if key != id and !names.contains(key) {
+		names.insert(key, name)
+	} else {
+		names
+	}
+	with_alias.insert(id, name)
+}
 
 # The note elements of a footnotes or endnotes part's root.
 note_elements : XmlTree.Node -> List(Element)
@@ -2588,7 +2601,8 @@ move_end = |element, within|
 	if only(element, ["id"]) {
 		id = value_of(element, "id") ? |_| Unknown
 		(side, names) = if (element.name.local == "moveFromRangeEnd") (Source, within.move_sources) else (Destination, within.move_destinations)
-		Ok(MoveEnd({ side, name: names.get(id) ? |_| Unknown }))
+		name = names.get(id) ?? (names.get(Lenient.integer_key(id)) ? |_| Unknown)
+		Ok(MoveEnd({ side, name }))
 	} else {
 		Err(Unknown)
 	}
@@ -2656,7 +2670,8 @@ bookmark_end : Element, Reading -> Try(Document.Inline, [Unknown])
 bookmark_end = |element, within|
 	if only(element, ["id"]) {
 		id = value_of(element, "id") ? |_| Unknown
-		Ok(BookmarkEnd(within.bookmarks.get(id) ? |_| Unknown))
+		name = within.bookmarks.get(id) ?? (within.bookmarks.get(Lenient.integer_key(id)) ? |_| Unknown)
+		Ok(BookmarkEnd(name))
 	} else {
 		Err(Unknown)
 	}
