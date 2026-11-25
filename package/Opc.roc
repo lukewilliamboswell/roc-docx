@@ -290,12 +290,12 @@ Opc :: [].{
 		Ok($found)
 	}
 
-	## The main document part: the target of the package's `officeDocument`
-	## relationship, wherever the producer placed it.
+	## The main document part is the target of the package's first internal
+	## `officeDocument` relationship, wherever the producer placed it.
 	main_document : Package -> Try(Part, [MissingPart(Str), RelationshipsNotXml({ part : Str, problem : XmlTree.ReadError }), MissingAttribute(AttributeLocation), TargetOutsidePackage({ part : Str, id : Str, target : Str }), NoMainDocument])
 	main_document = |pkg| {
 		rels = Opc.relationships(pkg, "/")?
-		rel = rels.find_first(|candidate| candidate.kind == Opc.officedocument_relationship) ? |_| NoMainDocument
+		rel = rels.find_first(|candidate| candidate.mode == Internal and candidate.kind == Opc.officedocument_relationship) ? |_| NoMainDocument
 		Opc.part(pkg, rel.target)
 	}
 
