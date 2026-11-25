@@ -95,8 +95,8 @@ Lenient :: [].{
 
 	## A decimal number, an optional sign, digits and an optional fraction,
 	## multiplied by `factor` and rounded to the nearest whole number, halves
-	## away from zero; `exact` says the scaled value was already whole. Up to
-	## fifteen digits before the point and factors up to 1000 are accepted,
+	## away from zero. The `exact` flag says the scaled value was already whole.
+	## Up to fifteen digits before the point and factors up to 1000 are accepted,
 	## bounding the result. All fractional digits contribute to rounding.
 	decimal : Str, U64 -> Try({ value : I64, exact : Bool }, [NotNumber])
 	decimal = |text, factor| signed_decimal(text, factor, Narrow)
