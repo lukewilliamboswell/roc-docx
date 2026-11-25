@@ -1844,7 +1844,16 @@ at_block = |blocks, state, at, apply| {
 	var $state = owned_text(state)
 	var $index = 0.U64
 	for block in blocks {
-		if begins(block) and line_start($state) and $state.text.len() == at {
+		begins_line = match block {
+			Table(_) => {
+				# A table ends the preceding line even when its mark is deleted.
+				$state = line_end($state)
+				Bool.True
+			}
+			Paragraph(_) => Bool.True
+			_ => Bool.False
+		}
+		if begins_line and line_start($state) and $state.text.len() == at {
 			outcome = match apply(blocks, $index, $state) {
 				Ok(edited) => Applied(edited)
 				Err(problem) => Failed(problem)
@@ -1853,7 +1862,7 @@ at_block = |blocks, state, at, apply| {
 		}
 		inner = match block {
 			Table(table) => {
-				found = at_table(table.content, line_end($state), at, apply)
+				found = at_table(table.content, $state, at, apply)
 				{ state: line_end(found.state), outcome: found_in(found.outcome, |content| Table({ ..table, content })) }
 			}
 

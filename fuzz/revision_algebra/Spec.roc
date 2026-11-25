@@ -2,10 +2,12 @@ import docx.Build
 import docx.Comments
 import docx.Docx
 import docx.Document
+import docx.Opc
 import docx.Revisions
 import docx.WmlRead
 import fuzz.Model
 import fuzz.Solve
+import BlockHistory
 
 # A character is part of the original, or needs its insertion to stand.
 # Independently, a pending deletion hides the character until rejected.
@@ -264,4 +266,51 @@ expect {
 			|written| Docx.add_comment(document, span, new(written)).map_ok(|_| {}) == Err(NotADate(written))
 				and Docx.reply(added.document, added.id, new(written)).map_ok(|_| {}) == Err(NotADate(written)),
 		)
+}
+
+## Structural edits distinguish a table from the paragraphs in its cells.
+## Exhaust short histories of tracked insertions, deletions, resolutions,
+## and failed attempts at byte and cell boundaries.
+expect BlockHistory.exhausted({})
+
+## A tracked-deleted paragraph mark cannot join through a table. The
+## table's byte boundary refers to the table itself. Refuse a span ending
+## inside it, then retry both public block edits at that outer boundary.
+expect {
+	part = "/word/document.xml"
+	first = "<w:p><w:pPr><w:rPr><w:del w:id='1' w:author='Ada'/></w:rPr></w:pPr><w:r><w:t>é</w:t></w:r></w:p>"
+	table = "<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w='1000'/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"
+	last = "<w:p><w:r><w:t>after</w:t></w:r></w:p>"
+	xml = "<w:document xmlns:w='http://schemas.openxmlformats.org/wordprocessingml/2006/main'><w:body>${first}${table}${last}</w:body></w:document>"
+	bytes = Opc.to_bytes(
+		{
+			relationships: [{ id: "rId1", kind: Opc.officedocument_relationship, target: part, mode: Internal }],
+			parts: [{ name: part, content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml", relationships: [] }],
+		},
+		|_| Bytes(xml.to_utf8()),
+	)?
+	document = (Docx.parse(bytes)?).document
+	original_body = Docx.body(document)
+	refused = Docx.delete_blocks(document, { start: 3, end: 7 }, Untracked).map_ok(|_| {})
+	new_table = Build.table({}, [[Build.cell({}, [Build.paragraph({}, [Build.text("new", {})])])]])
+	put_before = Docx.insert_blocks(document, 3, [new_table], Untracked)?
+	removed = Docx.delete_blocks(document, { start: 3, end: 8 }, Untracked)?
+	by_bo = Tracked({ author: "Bo", date: Unset })
+	tracked_insert = Docx.insert_blocks(document, 3, [new_table], by_bo)?
+	tracked_remove = Docx.delete_blocks(document, { start: 3, end: 8 }, by_bo)?
+	match original_body {
+		[before, old_table, after] =>
+			Docx.text(document) == "é\ncell\nafter\n"
+				and refused == Err(NotABlockBoundary(7))
+				and Docx.body(document) == original_body
+				and Docx.body(put_before) == [before, new_table, old_table, after]
+				and Docx.body(removed) == [before, after]
+				and Docx.text(removed) == "éafter\n"
+				and Docx.original_text(removed) == "é\nafter\n"
+				and Docx.body(Docx.accept(tracked_insert, By("Bo"))?) == Docx.body(put_before)
+				and Docx.body(Docx.reject(tracked_insert, By("Bo"))?) == original_body
+				and Docx.body(Docx.accept(tracked_remove, By("Bo"))?) == Docx.body(removed)
+				and Docx.body(Docx.reject(tracked_remove, By("Bo"))?) == original_body
+		_ => Bool.False
+	}
 }
