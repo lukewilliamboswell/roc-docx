@@ -331,13 +331,16 @@ lower it when a change allocates less, and when a change needs a higher
 ceiling, record the cause in the pull request beside the new value.
 
 When a refactor changes the work done per input, compare CPU time as well
-as allocation reports. Use the same compiler and optimization mode for
-both builds, interleave repeated measurements, and include ordinary inputs
-and the longest relevant boundary case. Check that both builds produce the
-expected result for each measured input. If timing varies enough to obscure
-a small difference, interleave runs of the same executable to estimate
-measurement noise. Retired instruction counts can also show whether a
-change adds work on the same input.
+as allocation reports. Run the affected target's optimized `check` first
+so its declared examples exercise the existing allocation ceilings. Use
+the same compiler and optimization mode for both timing builds, interleave
+repeated measurements, and include ordinary inputs and the longest
+relevant boundary case. Verify equal output on the inputs used to measure
+regressions. Time corrected cases too, and record which output changed so
+that extra work to produce it is visible in the comparison. If timing
+varies enough to obscure a small difference, interleave runs of the same
+executable to estimate measurement noise. Retired instruction counts can
+also show whether a change adds work on the same input.
 
 == Fixtures and oracles
 
