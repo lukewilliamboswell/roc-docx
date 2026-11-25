@@ -230,7 +230,8 @@ expect {
 
 ## A separator added by a revision changes how the same untracked chunk
 ## reads. Accepting and rejecting must agree with the corresponding text
-## views, and saving must retain both the raw chunk and the separator.
+## views, and saving must retain both the raw chunk and the separator. An
+## anchor within the visible chunk uses the same byte positions as text.
 expect {
 	bookmark = "<w:bookmarkStart w:id='1' w:name='Toc1'/><w:bookmarkEnd w:id='1'/>"
 	instruction = " HYPERLINK \\l Toc1 "
@@ -247,6 +248,9 @@ expect {
 	rejected = Docx.reject_all(reopened.document)?
 	current = "before|${raw}|after\n"
 	original = "before||after\n"
+	start = "before|\\o \"".count_utf8_bytes()
+	marked = Docx.add_comment(document, { start, end: start + "A note".count_utf8_bytes() }, { author: "Lin Reviewer", content: Text("Check the wording.") })?
+	marked_reopened = Docx.parse(Docx.to_bytes(marked.document)?)?.document
 	Docx.text(document) == current
 		and Docx.final_text(document) == current
 		and Docx.original_text(document) == original
@@ -255,6 +259,9 @@ expect {
 		and Docx.text(rejected) == original
 		and Docx.fields(accepted) == [{ code: instruction, result: raw }]
 		and Docx.fields(rejected) == [{ code: "${instruction}${raw}", result: "" }]
+		and Docx.text(marked_reopened) == current
+		and Docx.original_text(marked_reopened) == original
+		and Docx.comments(marked_reopened).comments.map(|comment| comment.anchor) == [Range("A note")]
 		and saved.contains(">\\o \"A note\"</w:instrText>")
 		and saved.contains("<w:ins ")
 }
