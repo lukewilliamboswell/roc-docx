@@ -1386,8 +1386,8 @@ page_size = |element| {
 	if !holds(element, ["w", "h", "orient"]) {
 		return Err(CannotHold)
 	}
-	width = unsigned(element, "w")?
-	height = unsigned(element, "h")?
+	width = unsigned_measure(element, "w")?
+	height = unsigned_measure(element, "h")?
 	orientation = match value_of(element, "orient") {
 		Err(NotFound) | Ok("portrait") => Portrait
 		Ok("landscape") => Landscape
@@ -1403,28 +1403,28 @@ margins = |element| {
 	if !holds(element, ["top", "right", "bottom", "left", "header", "footer", "gutter"]) {
 		return Err(CannotHold)
 	}
-	top = whole_or_zero(element, "top")?
-	right = unsigned_or_zero(element, "right")?
-	bottom = whole_or_zero(element, "bottom")?
-	left = unsigned_or_zero(element, "left")?
-	header = unsigned_or_zero(element, "header")?
-	footer = unsigned_or_zero(element, "footer")?
-	gutter = unsigned_or_zero(element, "gutter")?
+	top = signed_measure_or_zero(element, "top")?
+	right = unsigned_measure_or_zero(element, "right")?
+	bottom = signed_measure_or_zero(element, "bottom")?
+	left = unsigned_measure_or_zero(element, "left")?
+	header = unsigned_measure_or_zero(element, "header")?
+	footer = unsigned_measure_or_zero(element, "footer")?
+	gutter = unsigned_measure_or_zero(element, "gutter")?
 	noticed = [top.noticed, right.noticed, bottom.noticed, left.noticed, header.noticed, footer.noticed, gutter.noticed].fold(List.with_capacity(0), List.concat)
 	Ok({ value: Margins({ top: top.value, right: right.value, bottom: bottom.value, left: left.value, header: header.value, footer: footer.value, gutter: gutter.value }), noticed })
 }
 
-whole_or_zero : Element, Str -> Try(Read(I64), [CannotHold])
-whole_or_zero = |element, local|
+signed_measure_or_zero : Element, Str -> Try(Read(I64), [CannotHold])
+signed_measure_or_zero = |element, local|
 	match value_of(element, local) {
-		Ok(_) => whole(element, local)
+		Ok(text) => signed_measure_value(element, local, text)
 		Err(NotFound) => Ok({ value: 0, noticed: [Defaulted({ element: element.name.local, attribute: local })] })
 	}
 
-unsigned_or_zero : Element, Str -> Try(Read(U64), [CannotHold])
-unsigned_or_zero = |element, local|
+unsigned_measure_or_zero : Element, Str -> Try(Read(U64), [CannotHold])
+unsigned_measure_or_zero = |element, local|
 	match value_of(element, local) {
-		Ok(_) => unsigned(element, local)
+		Ok(text) => unsigned_measure_value(element, local, text)
 		Err(NotFound) => Ok({ value: 0, noticed: [Defaulted({ element: element.name.local, attribute: local })] })
 	}
 
@@ -2421,15 +2421,19 @@ whole = |element, local| {
 }
 
 signed_measure : Element, Str -> Try(Read(I64), [CannotHold])
-signed_measure = |element, local| {
-	text = value_of(element, local) ? |_| CannotHold
+signed_measure = |element, local| signed_measure_value(element, local, value_of(element, local) ? |_| CannotHold)
+
+signed_measure_value : Element, Str, Str -> Try(Read(I64), [CannotHold])
+signed_measure_value = |element, local, text| {
 	read = Lenient.measure(text, 1) ? |_| CannotHold
 	Ok({ value: read.value, noticed: if (text.contains(".")) [rounded(element, local, text)] else [] })
 }
 
 unsigned_measure : Element, Str -> Try(Read(U64), [CannotHold])
-unsigned_measure = |element, local| {
-	text = value_of(element, local) ? |_| CannotHold
+unsigned_measure = |element, local| unsigned_measure_value(element, local, value_of(element, local) ? |_| CannotHold)
+
+unsigned_measure_value : Element, Str, Str -> Try(Read(U64), [CannotHold])
+unsigned_measure_value = |element, local, text| {
 	read = Lenient.unsigned_measure(text) ? |_| CannotHold
 	Ok({ value: read, noticed: if (text.contains(".")) [rounded(element, local, text)] else [] })
 }
