@@ -7,13 +7,14 @@
 ## joins the parts Word keeps threads in with the comments on reading, and
 ## splits the threads into those parts again on writing.
 import Document
+import FieldPhase
 import WmlRead
 import XmlTree
 
 Comments :: [].{
 
 	## Where a comment applies in the body: the current text its range
-	## covers, as [Document.paragraph_text] counts text, each paragraph's end
+	## covers, as [Docx.text] counts text, each paragraph's end
 	## within the range a line feed; a point, where the body refers to the
 	## comment without a range around it; or nowhere, when the body neither
 	## marks a range for it nor refers to it.
@@ -39,15 +40,18 @@ Comments :: [].{
 		if comments.is_empty() {
 			return []
 		}
-		start = { marks: List.repeat({ begun: NotYet, range: NoRange }, comments.len()), text: List.with_capacity(1024), joining: Bool.False, events: 0 }
+		start = { marks: List.repeat({ begun: NotYet, range: NoRange }, comments.len()), text: List.with_capacity(1024), joining: Bool.False, events: 0, phase: FieldPhase.empty }
 		walked = line_end(body.fold(start, walk_block))
+		# Range strings can share this buffer after the walk; keep only the bytes
+		# written, without the space reserved for further appends.
+		text = if (walked.marks.any(|entry| entry.range != NoRange)) walked.text.release_excess_capacity() else walked.text
 		var $out = List.with_capacity(comments.len())
 		var $id = 0.U64
 		for one_comment in comments {
 			anchor_mark = walked.marks.get($id) ?? { begun: NotYet, range: NoRange }
 			anchor = match anchor_mark.range {
-				Open(from) => Range(text_between(walked.text, from, walked.text.len()))
-				Closed({ begin: from, end: to }) => Range(text_between(walked.text, from, to))
+				Open(from) => Range(text_between(text, from, text.len()))
+				Closed({ begin: from, end: to }) => Range(text_between(text, from, to))
 				NoRange => if (anchor_mark.begun == NotYet) Unanchored else Point
 			}
 			order = match anchor_mark.begun {
@@ -416,7 +420,7 @@ Comments :: [].{
 		if span.start > span.end {
 			return Err(OutsideText(span))
 		}
-		start = { at: 0, joining: Bool.False, place, start: span.start, end: span.end, started: Bool.False, ended: Bool.False, refer: Bool.False, problem: Fine }
+		start = { at: 0, joining: Bool.False, place, start: span.start, end: span.end, started: Bool.False, ended: Bool.False, refer: Bool.False, problem: Fine, phase: FieldPhase.empty }
 		walked = mark_blocks(body, start)
 		match walked.state.problem {
 			Boundary(at) => Err(NotACharacterBoundary(at))
@@ -460,7 +464,7 @@ Comments :: [].{
 # placed, and whether the end was placed inside a hyperlink, field or change,
 # so the reference follows the paragraph's inline around it; and a span
 # boundary inside a character.
-Marking : { at : U64, joining : Bool, place : U64, start : U64, end : U64, started : Bool, ended : Bool, refer : Bool, problem : [Fine, Boundary(U64)] }
+Marking : { at : U64, joining : Bool, place : U64, start : U64, end : U64, started : Bool, ended : Bool, refer : Bool, problem : [Fine, Boundary(U64)], phase : FieldPhase }
 
 mark_blocks : List(Document.Block), Marking -> { blocks : List(Document.Block), state : Marking }
 mark_blocks = |blocks, state| {
@@ -605,8 +609,8 @@ mark_inline = |inline, state, current, top|
 		}
 
 		SimpleField({ code, preserved, content }) => {
-			marked = mark_inlines(content, state, current)
-			{ inlines: [SimpleField({ code, preserved, content: marked.inlines })], state: marked.state }
+			marked = mark_inlines(content, { ..state, phase: FieldPhase.empty }, current)
+			{ inlines: [SimpleField({ code, preserved, content: marked.inlines })], state: { ..marked.state, phase: state.phase } }
 		}
 
 		Container({ element, content }) => {
@@ -645,7 +649,17 @@ mark_run = |run, state, top| {
 	var $held = List.with_capacity(run.content.len())
 	var $cut = Bool.False
 	for item in run.content {
-		size = Document.inline_text(Run({ properties: run.properties, content: [item] })).to_utf8().len()
+		size = match item {
+			FieldMark({ kind, element: _ }) => {
+				$state = { ..$state, phase: FieldPhase.step($state.phase, kind) }
+				0
+			}
+			Text(text) => text.count_utf8_bytes()
+			FieldCode(text) => if (FieldPhase.is_instruction($state.phase)) 0 else text.count_utf8_bytes()
+			Tab | Break(_) => 1
+			Symbol(_) | SoftHyphen | NonBreakingHyphen => Document.inline_text(Run({ properties: run.properties, content: [item] })).count_utf8_bytes()
+			_ => 0
+		}
 		var $cuts = List.with_capacity(2)
 		if !$state.started and $state.start >= $state.at and $state.start < $state.at + size {
 			$cuts = List.append($cuts, { boundary: Start, offset: $state.start - $state.at })
@@ -714,12 +728,22 @@ split_item = |item, size, offsets| {
 		Err(_) => Err(NoneInside)
 	}
 	match item {
-		Text(text) => {
+		Text(text) | FieldCode(text) => {
+			field_code = match item {
+				FieldCode(_) => Bool.True
+				_ => Bool.False
+			}
 			bytes = text.to_utf8()
 			var $pieces = List.with_capacity(offsets.len() + 1)
 			var $from = 0.U64
 			for offset in List.append(offsets, size) {
-				$pieces = List.append($pieces, if (offset > $from) [Text(Str.from_utf8(bytes.sublist({ start: $from, len: offset - $from })) ?? "")] else [])
+				chunk = if offset > $from {
+					fragment = Str.from_utf8(bytes.sublist({ start: $from, len: offset - $from })) ?? ""
+					[if (field_code) FieldCode(fragment) else Text(fragment)]
+				} else {
+					[]
+				}
+				$pieces = List.append($pieces, chunk)
 				$from = offset
 			}
 			{ pieces: $pieces, inside: inside(|offset| is_boundary(bytes, offset)) }
@@ -934,7 +958,7 @@ parent_of = |comments, place|
 # The body's current text so far, with every comment's range as offsets in
 # it; whether the last paragraph joins the next; and how many anchors have
 # begun, which orders them.
-Walk : { marks : List(Mark), text : List(U8), joining : Bool, events : U64 }
+Walk : { marks : List(Mark), text : List(U8), joining : Bool, events : U64, phase : FieldPhase }
 
 # Whether a comment's anchor has begun, and its range in the text.
 Mark : { begun : [NotYet, Begun(U64)], range : [NoRange, Open(U64), Closed({ begin : U64, end : U64 })] }
@@ -984,24 +1008,12 @@ walk_row_content = |state, content|
 walk_inline : Walk, Document.Inline, Bool -> Walk
 walk_inline = |state, inline, current|
 	match inline {
-		Run(run) => {
-			referred = run.content.fold(
-				state,
-				|inner, content|
-					match content {
-						CommentReference(id) => refer(inner, id)
-						_ => inner
-					},
-			)
-			if current {
-				{ ..referred, text: List.concat(referred.text, Document.inline_text(inline).to_utf8()) }
-			} else {
-				referred
-			}
-		}
-
+		Run(run) => run.content.fold(state, |inner, item| walk_run_content(inner, item, run.properties, current))
 		Hyperlink({ target: _, preserved: _, content }) => content.fold(state, |inner, child| walk_inline(inner, child, current))
-		SimpleField({ code: _, preserved: _, content }) => content.fold(state, |inner, child| walk_inline(inner, child, current))
+		SimpleField({ code: _, preserved: _, content }) => {
+			walked = content.fold({ ..state, phase: FieldPhase.empty }, |inner, child| walk_inline(inner, child, current))
+			{ ..walked, phase: state.phase }
+		}
 		Container({ element: _, content }) => content.fold(state, |inner, child| walk_inline(inner, child, current))
 		Revision({ kind, author: _, date: _, content, preserved: _ }) => content.fold(state, |inner, child| walk_inline(inner, child, current and kind != Deletion and kind != MoveSource))
 		CommentStart(id) => begin(state, id)
@@ -1011,6 +1023,21 @@ walk_inline = |state, inline, current|
 		MoveStart(_) => state
 		MoveEnd(_) => state
 		Preserved(_) => state
+	}
+
+walk_run_content : Walk, Document.RunContent, Document.RunProperties, Bool -> Walk
+walk_run_content = |state, item, properties, current|
+	match item {
+		CommentReference(id) => refer(state, id)
+		_ if !current => state
+		FieldMark({ kind, element: _ }) => { ..state, phase: FieldPhase.step(state.phase, kind) }
+		FieldCode(text) if !FieldPhase.is_instruction(state.phase) => { ..state, text: text.iter_utf8().fold(state.text, |bytes, byte| bytes.append(byte)) }
+		Text(text) => { ..state, text: text.iter_utf8().fold(state.text, |bytes, byte| bytes.append(byte)) }
+		Tab => { ..state, text: state.text.append(9) }
+		Break(_) => { ..state, text: state.text.append(10) }
+		Symbol(_) | SoftHyphen | NonBreakingHyphen =>
+			{ ..state, text: Document.append_inline_text(state.text, Run({ properties, content: [item] })) }
+		_ => state
 	}
 
 # A range's start: the comment's anchor begins here unless a reference began
@@ -1255,6 +1282,31 @@ anchors_of = |content, ids| {
 	comment : Document.Comment
 	comment = { author: "Ada Reviewer", initials: Unset, date: Unset, content: [], preserved: [], parent: Unset, resolved: Bool.False, durable_id: Unset, utc_date: Unset }
 	Comments.anchored(body, List.repeat(comment, ids.len())).map(|entry| { id: entry.id, anchor: entry.anchor })
+}
+
+## A comment can split literal field text in a result that continues from
+## another paragraph. Each fragment keeps its raw run-content kind and a
+## continuation byte is rejected as it is for ordinary text.
+expect {
+	mark_field = |kind| FieldMark({ kind, element: Text("") })
+	run = |content| Run({ properties: Document.no_run_properties, content })
+	paragraph = |content| Paragraph({ properties: Document.no_paragraph_properties, content })
+	body = [
+		paragraph([run([mark_field(Begin), FieldCode("instruction"), mark_field(Separate)])]),
+		paragraph([run([FieldCode("AéZ"), mark_field(End)])]),
+	]
+	marked = Comments.mark(body, 0, { start: 2, end: 4 })?
+	new = Comments.comment({ author: "Ada", content: Text("Check this") })?
+	match marked {
+		[Paragraph(_), Paragraph({ properties: _, content: [Run(before), CommentStart(0), Run(within), CommentEnd(0), Run(reference), Run(after)] })] =>
+			before.content == [FieldCode("A")]
+				and within.content == [FieldCode("é")]
+				and after.content == [FieldCode("Z"), mark_field(End)]
+				and reference.content == [CommentReference(0)]
+				and Comments.anchored(marked, [new]).map(|one| one.anchor) == [Range("é")]
+				and Comments.mark(body, 0, { start: 3, end: 4 }) == Err(NotACharacterBoundary(3))
+		_ => Bool.False
+	}
 }
 
 ## A range covers the current text between its start and its end, a line
