@@ -108,9 +108,9 @@ model holds the address itself, so an application never sees the
 relationship's identifier.
 
 A bookmark is a `BookmarkStart(name)` inline where it begins and a
-`BookmarkEnd(name)` where it ends, named by its name, which an internal
-link's target uses too. The document's own numeric identifiers for
-bookmarks are not part of the model.
+`BookmarkEnd(name)` where it ends. An internal link targets the bookmark by
+that name. The reader pairs each boundary by the integer value of its
+identifier, so `+01` and `1` can name the same bookmark.
 
 What the package cannot resolve is kept rather than guessed at: a hyperlink
 whose relationship is missing, or that names no target, is a `Container` of

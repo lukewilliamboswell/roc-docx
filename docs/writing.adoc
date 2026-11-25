@@ -191,8 +191,8 @@ relationships alone:
   no element kept as it was read uses as its `w:id`, in the order the
   bookmarks begin, so that bookmarks, comments and revisions share one space
   of identifiers without colliding. A bookmark's end takes its start's
-  identifier. The space is the document's: no bookmark takes a number an
-  element kept in any part uses, and the parts take theirs in turn, the
+  identifier. Kept identifiers reserve their integer values across the
+  document. The parts take their numbers in turn, the
   body first, then the footnotes, the endnotes and the headers and footers
   in the order the main document relates to them, each from the number
   after the last the part before it took, so that no two parts share one.

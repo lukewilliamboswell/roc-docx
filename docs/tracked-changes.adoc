@@ -100,8 +100,9 @@ instructions are `FieldCode`, so deleted content reads like any other.
 A move is recorded twice: where the content was and where it went. Each side
 stands inside a range, `MoveStart({ side, name, author, date, preserved })`
 to `MoveEnd({ side, name })`, with `side` either `Source` or `Destination`.
-The source's and the destination's ranges share the move's name, which pairs
-them. A range's `date` is a `Document.Timestamp` itself, not `Unset` or
+The reader pairs a range's start and end by the integer value of their
+identifiers. The source's and the destination's ranges share the move's
+name, which pairs them. A range's `date` is a `Document.Timestamp` itself, not `Unset` or
 `Date`, because the schema requires a move's range to say when it was made.
 
 The schema requires every change to name its author. A change without one is
