@@ -1,6 +1,7 @@
 import docx.Docx
 import docx.Document
 import docx.Opc
+import docx.Snapshot
 import fuzz.Model
 
 FieldHistories := [].{}
@@ -62,16 +63,19 @@ document_with = |placement, layout, after_separator| {
 		Paragraphs => "${paragraph(first)}${paragraph(middle)}${paragraph(last)}"
 		ContentControl => "${paragraph(first)}<w:sdt><w:sdtContent>${paragraph(middle)}</w:sdtContent></w:sdt>${paragraph(last)}"
 	}
-	packed = Opc.to_bytes(
-		{
-			relationships: [{ id: "rId1", kind: Opc.officedocument_relationship, target: part, mode: Internal }],
-			parts: [{ name: part, content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml", relationships: [] }],
-		},
-		|_| Bytes("<w:document xmlns:w='http://schemas.openxmlformats.org/wordprocessingml/2006/main'><w:body>${body}</w:body></w:document>".to_utf8()),
-	) ?? crash "could not package field history"
+	packed = body_bytes(body) ?? crash "could not package field history"
 	parsed = Docx.parse(packed) ?? crash "could not parse field history"
 	parsed.document
 }
+
+body_bytes : Str -> Try(List(U8), Opc.WriteError)
+body_bytes = |body| Opc.to_bytes(
+	{
+		relationships: [{ id: "rId1", kind: Opc.officedocument_relationship, target: part, mode: Internal }],
+		parts: [{ name: part, content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml", relationships: [] }],
+	},
+	|_| Bytes("<w:document xmlns:w='http://schemas.openxmlformats.org/wordprocessingml/2006/main'><w:body>${body}</w:body></w:document>".to_utf8()),
+)
 
 step : State, Action -> State
 step = |state, action| match (state, action) {
@@ -158,4 +162,91 @@ expect {
 	codes(document) == expected
 		and codes(reopened.document) == expected
 		and main.contains(">Outside instruction</w:instrText>")
+}
+
+## ECMA-376 Part 1 §17.16.23. Standalone instrText, instrText after an end,
+## and instrText in a hyperlink result are ordinary text. The instruction
+## between begin and separator remains field code. Field state spans
+## paragraphs, and the visible text takes part in ordinary edit offsets.
+expect {
+	bookmark = "<w:bookmarkStart w:id='1' w:name='Toc1'/><w:bookmarkEnd w:id='1'/>"
+	instruction = " HYPERLINK \\l Toc1 "
+	before = paragraph("${bookmark}${code("Standalone")}${mark("begin")}${code(instruction)}")
+	after = paragraph("${mark("separate")}${code("suffix")}${text("Reference")}${mark("end")}${code("After field")}")
+	source = body_bytes("${before}${after}")?
+	streamed = Docx.parse(source)?
+	whole = Document.from_package(Opc.open(source, {})?, {})?
+	reopened = Docx.parse(Docx.to_bytes(streamed.document)?)?
+	read = |document| Docx.text(document) == "Standalone\nsuffixReferenceAfter field\n"
+		and Docx.fields(document) == [{ code: instruction, result: "suffixReference" }]
+	snapshot = Snapshot.json(streamed.document, { path: "", version: "" })
+	offset = "Standalone\nsu".count_utf8_bytes()
+	edited = Docx.insert_text(streamed.document, offset, "-", Untracked)?
+	broken = Docx.insert_text(streamed.document, offset, "x\ny", Untracked)?
+	archive = Opc.open(Docx.to_bytes(edited)?, {})?
+	saved = Str.from_utf8(Opc.part_bytes(archive, part)?)?
+	read(streamed.document)
+		and read(whole.document)
+		and read(reopened.document)
+		and Docx.read_body(streamed.document) == Docx.read_body(whole.document)
+		and snapshot.contains("\"text\": \"suffixReference\"")
+		and snapshot.contains("\"link\": \"#Toc1\"")
+		and Docx.text(edited) == "Standalone\nsu-ffixReferenceAfter field\n"
+		and Docx.text(broken) == "Standalone\nsux\nyffixReferenceAfter field\n"
+		and saved.contains(">su</w:instrText>")
+		and saved.contains(">ffix</w:instrText>")
+}
+
+## A separator added by a revision changes how the same untracked chunk
+## reads. Accepting and rejecting must agree with the corresponding text
+## views, and saving must retain both the raw chunk and the separator.
+expect {
+	bookmark = "<w:bookmarkStart w:id='1' w:name='Toc1'/><w:bookmarkEnd w:id='1'/>"
+	instruction = " HYPERLINK \\l Toc1 "
+	tooltip = "\\o &quot;A note&quot;"
+	separator = "<w:ins w:id='2' w:author='Ada Reviewer'>${mark("separate")}</w:ins>"
+	source = body_bytes(paragraph("${bookmark}${text("before|")}${mark("begin")}${code(instruction)}${separator}${code(tooltip)}${mark("end")}${text("|after")}"))?
+	parsed = Docx.parse(source)?
+	document = parsed.document
+	bytes = Docx.to_bytes(document)?
+	saved = Str.from_utf8(Opc.part_bytes(Opc.open(bytes, {})?, part)?)?
+	reopened = Docx.parse(bytes)?
+	raw = "\\o \"A note\""
+	accepted = Docx.accept_all(reopened.document)?
+	rejected = Docx.reject_all(reopened.document)?
+	current = "before|${raw}|after\n"
+	original = "before||after\n"
+	Docx.text(document) == current
+		and Docx.final_text(document) == current
+		and Docx.original_text(document) == original
+		and Docx.fields(document) == [{ code: instruction, result: raw }]
+		and Docx.text(accepted) == current
+		and Docx.text(rejected) == original
+		and Docx.fields(accepted) == [{ code: instruction, result: raw }]
+		and Docx.fields(rejected) == [{ code: "${instruction}${raw}", result: "" }]
+		and saved.contains(">\\o \"A note\"</w:instrText>")
+		and saved.contains("<w:ins ")
+}
+
+## ECMA-376 Part 1 §17.16.13. A deleted instruction-shaped run outside a
+## field is deleted text. It is visible only in the original view or
+## after rejecting the deletion.
+expect {
+	deleted = "<w:del w:id='1' w:author='Ada Reviewer'><w:r><w:delInstrText>before</w:delInstrText></w:r></w:del>"
+	parsed = Docx.parse(body_bytes(paragraph("${deleted}${text("after")}"))?)?
+	rejected = Docx.reject_all(parsed.document)?
+	Docx.text(parsed.document) == "after\n"
+		and Docx.original_text(parsed.document) == "beforeafter\n"
+		and Docx.text(rejected) == "beforeafter\n"
+}
+
+## Revision excerpts include ordinary inserted instrText and omit actual
+## instructions, following the field phase across paragraphs in story order.
+expect {
+	insertion = |id, value| "<w:ins w:id='${id}' w:author='Ada Reviewer'>${code(value)}</w:ins>"
+	before = paragraph("${insertion("1", "seen")}${mark("begin")}")
+	after = paragraph("${insertion("2", " PAGE ")}${mark("separate")}${text("3")}${mark("end")}")
+	parsed = Docx.parse(body_bytes("${before}${after}")?)?
+	Docx.revisions(parsed.document).map(|change| change.text) == ["seen", ""]
+		and Docx.text(parsed.document) == "seen\n3\n"
 }
