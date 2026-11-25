@@ -166,8 +166,10 @@ for any list of blocks, such as a note's content:
 include::../tests/manual.roc[tag=fields,indent=0]
 ----
 
-A field nested in another's result, as page numbers are inside the links of
-a table of contents, is part of that result too. `Document.field_target`
+A field nested in a complex field's result, as page numbers are inside
+the links of a table of contents, contributes to that result. A field used
+in a nested instruction has its own cached result, which stays out of the
+enclosing complex field's displayed text. `Document.field_target`
 reads the target a `HYPERLINK` field code names, as Word and LibreOffice
 write links in fields, in the same form as a hyperlink's target.
 
@@ -219,9 +221,10 @@ styles it is based on, then the paragraph's direct properties; for a run,
 then the character style and its bases, then the run's direct properties.
 A paragraph without a style has the document's default paragraph style.
 Toggle properties (bold, italic, caps, small caps, both strikes and hidden)
-are combined as the standard says: each kind of style that turns one on
-inverts it, so a bold character style in a bold paragraph style gives text
-that is not bold, and direct formatting sets it outright. A table style and a numbering level contribute
+start with the document defaults. Each kind of style that turns a toggle
+on inverts it. With bold off by default, a bold character style applied
+over a bold paragraph style turns it off. Direct formatting sets the
+value outright. A table style and a numbering level contribute
 only when the caller passes their properties, as `{ table_paragraph,
 table_run, numbering }`, the last from the paragraph's list level as
 <<lists>> describes. `Styles.table_properties` gives a table's: those of
