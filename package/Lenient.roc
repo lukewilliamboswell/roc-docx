@@ -95,47 +95,59 @@ Lenient :: [].{
 
 	## A decimal number, an optional sign, digits and an optional fraction,
 	## multiplied by `factor` and rounded to the nearest whole number, halves
-	## away from zero; `exact` says nothing was rounded away. At most fifteen
-	## digits are read, so the value cannot overflow: a number with more
-	## before its point is not one, and digits past the fifteenth that follow
-	## the point only make the value inexact; with a factor of one the value
-	## is rounded as the full fraction would be (`863.9999999999999` is 864).
+	## away from zero; `exact` says the scaled value was already whole. Up to
+	## fifteen digits before the point and factors up to 1000 are accepted,
+	## bounding the result. All fractional digits contribute to rounding.
 	decimal : Str, U64 -> Try({ value : I64, exact : Bool }, [NotNumber])
 	decimal = |text, factor| {
 		bytes = text.to_utf8()
 		negative = bytes.first() == Ok('-')
 		start = if (negative or bytes.first() == Ok('+')) 1 else 0
-		var $mantissa = 0.U64
-		var $scale = 1.U64
-		var $digits = 0.U64
-		var $point = Bool.False
-		var $dropped = Bool.False
+		if factor > 1_000 or start == bytes.len() {
+			return Err(NotNumber)
+		}
+		var $whole = 0.U64
 		var $index = start
-		while $index < bytes.len() {
+		var $point = Bool.False
+		while $index < bytes.len() and !$point {
 			byte = bytes.get($index) ?? 0
-			if byte == '.' and !$point {
+			if byte == '.' {
 				$point = Bool.True
-			} else if byte >= '0' and byte <= '9' and $digits < 15 {
-				$mantissa = $mantissa * 10 + (byte - '0').to_u64()
-				$digits = $digits + 1
-				if $point {
-					$scale = $scale * 10
-				}
-			} else if byte >= '0' and byte <= '9' and $point {
-				$dropped = $dropped or byte != '0'
+			} else if byte >= '0' and byte <= '9' and $index - start < 15 {
+				$whole = $whole * 10 + (byte - '0').to_u64()
 			} else {
 				return Err(NotNumber)
 			}
 			$index = $index + 1
 		}
-		if $digits == 0 or factor > 1_000 {
+		if $point and bytes.len() == start + 1 {
 			return Err(NotNumber)
 		}
-		scaled = $mantissa * factor
-		magnitude = scaled // $scale + (if (2 * (scaled % $scale) >= $scale) 1 else 0)
+		fraction = scale_fraction(bytes, $index, factor.to_u32_wrap())?
+		magnitude = $whole * factor + fraction.rounded
 		value = magnitude.to_i64_wrap()
-		Ok({ value: if (negative) -value else value, exact: scaled % $scale == 0 and !$dropped })
+		Ok({ value: if (negative) -value else value, exact: fraction.exact })
 	}
+}
+
+# Multiply the fractional digits by the factor, right to left. Only the
+# carry, the tenths digit and whether any fractional digit is nonzero
+# survive. The carry is at most 999: every step adds it to at most 9 * 1000.
+scale_fraction : List(U8), U64, U32 -> Try({ rounded : U64, exact : Bool }, [NotNumber])
+scale_fraction = |bytes, start, factor| {
+	var $index = bytes.len()
+	var $product = 0.U32
+	var $exact = Bool.True
+	while $index > start {
+		$index = $index - 1
+		byte = bytes.get($index) ?? 0
+		if byte < '0' or byte > '9' {
+			return Err(NotNumber)
+		}
+		$product = (byte - '0').to_u32() * factor + $product // 10
+		$exact = $exact and $product % 10 == 0
+	}
+	Ok({ rounded: ($product // 10 + (if ($product % 10 >= 5) 1 else 0)).to_u64(), exact: $exact })
 }
 
 wordprocessingml : Str
@@ -165,9 +177,9 @@ rounded = |whole, attribute|
 		Err(Kept)
 	}
 
-## Numbers are read leniently and rounded halves away from zero, digits past
-## the fifteenth after the point make a value inexact, and what is not a
-## number, or has more digits before its point than are read, is not one.
+## Numbers are read leniently and rounded halves away from zero. Long
+## fractions retain their rounding and exactness, and invalid spellings
+## or whole parts longer than fifteen digits are rejected.
 expect {
 	Lenient.decimal("12", 1) == Ok({ value: 12, exact: Bool.True })
 		and Lenient.decimal("-2.5", 1) == Ok({ value: -3, exact: Bool.False })
