@@ -774,8 +774,10 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 	## character, a soft hyphen U+00AD and a non-breaking hyphen U+2011. Field
 	## phase begins empty when this paragraph is read by itself.
 	paragraph_text : Paragraph -> Str
-	paragraph_text = |paragraph|
-		paragraph_inlines({ text: "", phase: FieldPhase.empty }, paragraph.content).text
+	paragraph_text = |paragraph| match paragraph.content {
+		[Run({ content: [Text(value)], .. })] => value
+		_ => paragraph_inlines({ text: Str.with_capacity(64), phase: FieldPhase.empty }, paragraph.content).text
+	}
 
 	## A table's rows in order, through the content controls and custom XML
 	## that hold them.
@@ -1344,11 +1346,14 @@ paragraph_inlines = |state, inlines| {
 	var $state = { text: state.text, phase: state.phase }
 	for inline in inlines {
 		$state = match inline {
+			Run({ content: [Text(value)], .. }) => { ..$state, text: $state.text.concat(value) }
 			Run(run) => match run.content {
 				[item] => paragraph_run($state, item)
 				_ => run.content.fold($state, paragraph_run)
 			}
+			Hyperlink({ content: [Run({ content: [Text(value)], .. })], .. }) => { ..$state, text: $state.text.concat(value) }
 			Container({ content, .. }) | Hyperlink({ content, .. }) => paragraph_inlines($state, content)
+			SimpleField({ content: [Run({ content: [Text(value)], .. })], .. }) => { ..$state, text: $state.text.concat(value) }
 			SimpleField({ content, .. }) => {
 				phase = $state.phase
 				read = paragraph_inlines({ text: $state.text, phase: FieldPhase.empty }, content)

@@ -91,8 +91,8 @@ Revisions :: [].{
 	## insertions and move destinations.
 	paragraph_text : Document.Paragraph, View -> Str
 	paragraph_text = |paragraph, view| {
-		read = paragraph.content.fold({ bytes: List.with_capacity(64), phase: FieldPhase.empty }, |state, inline| FieldText.inline(state, inline, projected_view(view)))
-		Str.from_utf8(read.bytes) ?? ""
+		read = paragraph.content.fold({ text: Str.with_capacity(64), phase: FieldPhase.empty }, |state, inline| FieldText.inline(state, inline, projected_view(view)))
+		read.text
 	}
 
 	## The text of blocks in a view: every paragraph's text, as
@@ -106,11 +106,11 @@ Revisions :: [].{
 	## mark inserted or moved in.
 	text : List(Document.Block), View -> Str
 	text = |blocks, view| {
-		var $state = { text: List.with_capacity(1024), joining: Bool.False, phase: FieldPhase.empty }
+		var $state = { text: Str.with_capacity(1024), joining: Bool.False, phase: FieldPhase.empty }
 		for block in blocks {
 			$state = block_text($state, block, view)
 		}
-		Str.from_utf8(line_end($state).text) ?? ""
+		line_end($state).text
 	}
 
 	## Which tracked changes an accept or a reject applies to: every change;
@@ -257,11 +257,11 @@ Revisions :: [].{
 	insert_blocks : List(Document.Block), U64, List(Document.Block), Context -> Try(List(Document.Block), [NotABlockBoundary(U64), NoParagraphToJoin(U64), NotADate(Str)])
 	insert_blocks = |blocks, at, new, context| {
 		made = made_by(context)?
-		placed = at_block(blocks, { text: List.with_capacity(1024), joining: Bool.False, phase: FieldPhase.empty }, at, |items, index, _| inserted_at(items, index, new, made, at))
+		placed = at_block(blocks, { text: Str.with_capacity(1024), joining: Bool.False, phase: FieldPhase.empty }, at, |items, index, _| inserted_at(items, index, new, made, at))
 		match placed.outcome {
 			Applied(edited) => Ok(edited)
 			Failed(problem) => Err(problem)
-			Pending if line_start(placed.state) and placed.state.text.len() == at => {
+			Pending if line_start(placed.state) and placed.state.text.count_utf8_bytes() == at => {
 				index = match blocks.last() {
 					Ok(Section(_)) => blocks.len() - 1
 					_ => blocks.len()
@@ -294,7 +294,7 @@ Revisions :: [].{
 	delete_blocks : List(Document.Block), { start : U64, end : U64 }, Context -> Try(List(Document.Block), [NotABlockBoundary(U64), NoParagraphToJoin(U64), NotADate(Str)])
 	delete_blocks = |blocks, span, context| {
 		made = made_by(context)?
-		placed = at_block(blocks, { text: List.with_capacity(1024), joining: Bool.False, phase: FieldPhase.empty }, span.start, |items, index, state| deleted_at(items, index, state, span, made))
+		placed = at_block(blocks, { text: Str.with_capacity(1024), joining: Bool.False, phase: FieldPhase.empty }, span.start, |items, index, state| deleted_at(items, index, state, span, made))
 		match placed.outcome {
 			Applied(edited) => Ok(edited)
 			Failed(problem) => Err(problem)
@@ -429,17 +429,10 @@ list_content = |walk, content| {
 			}
 
 			Run(run) => {
-				phase = run.content.fold(
-					$walk.phase,
-					|before, item| match item {
-						FieldMark({ kind, element: _ }) => FieldPhase.step(before, kind)
-						_ => before
-					},
-				)
 				match run.properties.change.first() {
 					Ok(changed) => {
 						id = $walk.listed.len()
-						read = FieldText.inline({ bytes: List.with_capacity(16), phase: $walk.phase }, inline, Shown)
+						read = FieldText.inline({ text: Str.with_capacity(16), phase: $walk.phase }, inline, Shown)
 						listed = {
 							id,
 							kind: Formatting,
@@ -448,18 +441,29 @@ list_content = |walk, content| {
 							date: changed.date,
 							content: [inline],
 							move: Unpaired,
-							text: Str.from_utf8(read.bytes) ?? "",
+							text: read.text,
 							follows: $previous == Ok(id),
 						}
-						$walk = { ..$walk, listed: List.append($walk.listed, listed) }
+						$walk = { ..$walk, listed: List.append($walk.listed, listed), phase: read.phase }
 						$previous = Ok(id + 1)
 					}
 
 					Err(_) => {
+						phase = match run.content {
+							[FieldMark({ kind, .. })] => FieldPhase.step($walk.phase, kind)
+							[_] => $walk.phase
+							_ => run.content.fold(
+								$walk.phase,
+								|before, item| match item {
+									FieldMark({ kind, .. }) => FieldPhase.step(before, kind)
+									_ => before
+								},
+							)
+						}
+						$walk = { ..$walk, phase }
 						$previous = Err(NoChange)
 					}
 				}
-				$walk = { ..$walk, phase }
 			}
 
 			MoveStart({ side: Source, name, author: _, date: _, preserved: _ }) => {
@@ -600,9 +604,9 @@ content_kind = |kind|
 # An excerpt for the revision inventory. All of its nested tracked
 # alternatives are shown and marks are followed in that same order.
 shown_text : List(Document.Inline), FieldPhase, U64 -> Str
-shown_text = |content, phase, capacity| {
-	read = content.fold({ bytes: List.with_capacity(capacity), phase }, |state, item| FieldText.inline(state, item, Shown))
-	Str.from_utf8(read.bytes) ?? ""
+shown_text = |content, phase, capacity| match content {
+	[Run({ content: [Text(value)], .. })] => value
+	_ => content.fold({ text: Str.with_capacity(capacity), phase }, |state, item| FieldText.inline(state, item, Shown)).text
 }
 
 projected_view : Revisions.View -> [Current, Final, Original, Shown]
@@ -612,7 +616,7 @@ projected_view = |view| match view {
 	Original => Original
 }
 
-TextState : { text : List(U8), joining : Bool, phase : FieldPhase }
+TextState : { text : Str, joining : Bool, phase : FieldPhase }
 
 # The text so far owned by the loop that carries it, as [owned] makes
 # resolving's state.
@@ -623,11 +627,11 @@ block_text : TextState, Document.Block, Revisions.View -> TextState
 block_text = |state, block, view|
 	match block {
 		Paragraph(paragraph) => {
-			read = paragraph.content.fold({ bytes: state.text, phase: state.phase }, |walk, inline| FieldText.inline(walk, inline, projected_view(view)))
+			read = paragraph.content.fold({ text: state.text, phase: state.phase }, |walk, inline| FieldText.inline(walk, inline, projected_view(view)))
 			if joins_next(paragraph, view) {
-				{ text: read.bytes, joining: Bool.True, phase: read.phase }
+				{ text: read.text, joining: Bool.True, phase: read.phase }
 			} else {
-				{ text: List.append(read.bytes, 10), joining: Bool.False, phase: read.phase }
+				{ text: read.text.concat("\n"), joining: Bool.False, phase: read.phase }
 			}
 		}
 
@@ -663,7 +667,7 @@ row_text = |state, item, view|
 
 # The line feed a joining paragraph owes where nothing follows it to join.
 line_end : TextState -> TextState
-line_end = |state| if (state.joining) { ..state, text: List.append(state.text, 10), joining: Bool.False } else state
+line_end = |state| if (state.joining) { ..state, text: state.text.concat("\n"), joining: Bool.False } else state
 
 # Whether a view takes away a paragraph's mark: in the current and final
 # text a mark deleted or moved away, in the original text one inserted or
@@ -1558,8 +1562,8 @@ split_inlines = |inlines, offset, phase| {
 		if $found {
 			$after = List.append($after, inline)
 		} else {
-			read = FieldText.inline({ bytes: List.with_capacity(16), phase: $phase }, inline, Current)
-			width = read.bytes.len()
+			read = FieldText.inline({ text: Str.with_capacity(16), phase: $phase }, inline, Current)
+			width = read.text.count_utf8_bytes()
 			if offset < $at + width {
 				split = split_inline(inline, offset - $at, $phase)
 				$before = List.concat($before, split.before)
@@ -1906,7 +1910,7 @@ at_block = |blocks, state, at, apply| {
 			Paragraph(_) => Bool.True
 			_ => Bool.False
 		}
-		if begins_line and line_start($state) and $state.text.len() == at {
+		if begins_line and line_start($state) and $state.text.count_utf8_bytes() == at {
 			outcome = match apply(blocks, $index, $state) {
 				Ok(edited) => Applied(edited)
 				Err(problem) => Failed(problem)
@@ -2022,14 +2026,7 @@ begins = |block|
 
 # Whether the current text so far ends a line, with no paragraph to join.
 line_start : TextState -> Bool
-line_start = |state|
-	!state.joining
-		and (
-			match state.text.last() {
-				Ok(byte) => byte == 10
-				Err(_) => Bool.True
-			}
-		)
+line_start = |state| !state.joining and (state.text.is_empty() or state.text.ends_with("\n"))
 
 # The paragraphs and tables of blocks in reading order, through content
 # controls but not into tables.
@@ -2214,12 +2211,12 @@ deleted_at = |items, index, state, span, made| {
 		if $last == Err(NotFound) {
 			$state = block_text($state, block, Current)
 			ends = match block {
-				Paragraph(_) | Table(_) | Container(_) => !$state.joining and $state.text.len() == span.end
+				Paragraph(_) | Table(_) | Container(_) => !$state.joining and $state.text.count_utf8_bytes() == span.end
 				_ => Bool.False
 			}
 			if ends {
 				$last = Ok($at)
-			} else if $state.text.len() > span.end {
+			} else if $state.text.count_utf8_bytes() > span.end {
 				return Err(NotABlockBoundary(span.end))
 			}
 			$at = $at + 1
