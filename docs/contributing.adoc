@@ -242,7 +242,9 @@ When checking a writer, inspect the serialized facts that the contract
 names. A round trip or byte agreement between two writer entry points can
 miss a defect in code they share. For example, check that a removed part
 and its inbound relationships are absent from the archive as well as
-comparing buffered and streamed output.
+comparing buffered and streamed output. When an edit adds a part, check
+where its relationship points and compare the bytes of any existing part
+that occupies the usual name.
 
 * Use `Model` for sequences of actions. Bound the action alphabet and the
   state or history size. Require an exhausted search and check that it
