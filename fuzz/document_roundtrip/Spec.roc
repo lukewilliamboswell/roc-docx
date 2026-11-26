@@ -4,6 +4,7 @@ import fuzz.Solve
 import Streaming
 import FieldHistories
 import CorePropertyHistory
+import FacadePartHistory
 import RangeIds
 
 Spec := [].{}

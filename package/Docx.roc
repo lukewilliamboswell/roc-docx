@@ -1078,14 +1078,9 @@ new_part = |document, kind, tree| {
 		Ok({ before, after: _ }) => before
 		Err(_) => ""
 	}
-	var $name = "${directory}/${local}.xml"
-	var $number = 1.U64
-	while Document.xml_parts(document).any(|part| part.name == $name) {
-		$number = $number + 1
-		$name = "${directory}/${local}${$number.to_str()}.xml"
-	}
+	name = Document.free_xml_part_name(document, "${directory}/${local}.xml")
 	content_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.${local}+xml"
-	{ document: Document.with_new_part(document, { source: main, kind, name: $name, content_type }, tree), name: $name }
+	{ document: Document.with_new_part(document, { source: main, kind, name: name, content_type }, tree), name: name }
 }
 
 # The document with the part the main document's relationship of `kind`
