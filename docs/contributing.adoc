@@ -236,7 +236,10 @@ position or produces a misleading diagnostic.
 
 When meaning depends on context, keep the construct fixed and vary its
 surroundings. For a nested field, put the same cached value inside the
-enclosing field's instruction and inside its result.
+enclosing field's instruction and inside its result. When a tracked edit
+changes those surroundings, construct meaningful documents in both views.
+Check each view against its own expected text and the corresponding
+resolved document.
 
 When checking a writer, inspect the serialized facts that the contract
 names. A round trip or byte agreement between two writer entry points can

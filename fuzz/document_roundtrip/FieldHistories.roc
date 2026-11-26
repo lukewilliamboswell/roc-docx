@@ -266,6 +266,136 @@ expect {
 		and saved.contains("<w:ins ")
 }
 
+MovedMark : [Begin, Separate, End]
+
+Position : [Earlier, Later]
+
+MarkPlacement : (MovedMark, Position)
+
+MarkAction : [Move(MarkPlacement), Reopen]
+
+MarkHistory : [
+	Unplaced,
+	Moved({ placement : MarkPlacement, document : Document }),
+	Saved({ placement : MarkPlacement, document : Document, accepted : Document, rejected : Document }),
+]
+
+marked_document : MarkPlacement -> Document
+marked_document = |(kind, current)| {
+	name = match kind {
+		Begin => "begin"
+		Separate => "separate"
+		End => "end"
+	}
+	inserted = "<w:ins w:id='1' w:author='Ada Reviewer'>${mark(name)}</w:ins>"
+	deleted = "<w:del w:id='2' w:author='Ada Reviewer'>${mark(name)}</w:del>"
+	(early, late) = if (current == Earlier) (inserted, deleted) else (deleted, inserted)
+	probes = "${early}${code("α")}${late}${code("✓")}"
+	field = match kind {
+		Begin => "${probes}${mark("separate")}${text("result")}${mark("end")}"
+		Separate => "${mark("begin")}${probes}${mark("end")}"
+		End => "${mark("begin")}${probes}"
+	}
+	source = body_bytes(paragraph("${text("before|")}${field}${text("|after")}")) ?? crash "could not package moved field mark"
+	parsed = Docx.parse(source) ?? crash "could not read moved field mark"
+	parsed.document
+}
+
+expected_mark_text : MarkPlacement -> Str
+expected_mark_text = |placement| {
+	middle = match placement {
+		(Begin, Earlier) => "result"
+		(Begin, Later) => "αresult"
+		(Separate, Earlier) | (End, Earlier) => "α✓"
+		(Separate, Later) | (End, Later) => "✓"
+	}
+	"before|${middle}|after\n"
+}
+
+other_position : Position -> Position
+other_position = |position| match position {
+	Earlier => Later
+	Later => Earlier
+}
+
+mark_views_agree : MarkPlacement, Document -> Bool
+mark_views_agree = |(kind, current), document| {
+	current_text = expected_mark_text((kind, current))
+	Docx.text(document) == current_text
+		and Docx.final_text(document) == current_text
+		and Docx.original_text(document) == expected_mark_text((kind, other_position(current)))
+}
+
+## Moving each complex field boundary in both directions leaves a complete
+## field in either view and changes the visibility of the intervening text.
+## Save and reopen each arrangement, then verify both resolution directions.
+expect {
+	reopened_end = "reopen an end marker moved across visible text"
+	mark_actions : MarkHistory -> List(MarkAction)
+	mark_actions = |state| match state {
+		Unplaced => [
+			Move((Begin, Earlier)),
+			Move((Begin, Later)),
+			Move((Separate, Earlier)),
+			Move((Separate, Later)),
+			Move((End, Earlier)),
+			Move((End, Later)),
+		]
+		Moved(_) => [Reopen]
+		Saved(_) => []
+	}
+	report = Model.explore(
+		{
+			init: Unplaced,
+			actions: mark_actions,
+			step: |state, action| match (state, action) {
+				(Unplaced, Move(placement)) => Moved({ placement, document: marked_document(placement) })
+				(Moved({ placement, document }), Reopen) => {
+					bytes = Docx.to_bytes(document) ?? crash "could not save moved field mark"
+					reopened = Docx.parse(bytes) ?? crash "could not reopen moved field mark"
+					accepted = Docx.accept_all(reopened.document) ?? crash "could not accept moved field mark"
+					rejected = Docx.reject_all(reopened.document) ?? crash "could not reject moved field mark"
+					Saved({ placement, document: reopened.document, accepted, rejected })
+				}
+				_ => crash "invalid moved field mark action"
+			},
+			rules: [
+				Model.always(
+					"all text views agree with the position of their field boundary",
+					|state| match state {
+						Unplaced => Bool.True
+						Moved({ placement, document }) => mark_views_agree(placement, document)
+						Saved({ placement: (kind, current), document, accepted, rejected }) =>
+							mark_views_agree((kind, current), document)
+								and Docx.text(accepted) == expected_mark_text((kind, current))
+								and Docx.text(rejected) == expected_mark_text((kind, other_position(current)))
+					},
+				),
+				Model.sometimes(
+					reopened_end,
+					|state| match state {
+						Saved({ placement: (End, Earlier), .. }) => Bool.True
+						_ => Bool.False
+					},
+				),
+			],
+		},
+		{
+			depth: 3,
+			key: |state| match state {
+				Unplaced => Unplaced
+				Moved({ placement, .. }) => Moved(placement)
+				Saved({ placement, .. }) => Saved(placement)
+			},
+			verify: EveryStep,
+		},
+	)
+	match report.verdict {
+		Holds(Exhausted) => Model.witness(report, reopened_end) == Ok([Move((End, Earlier)), Reopen])
+		_ => crash "${Model.explain(report)} ${Str.inspect(report.verdict)}"
+	}
+}
+
 ## ECMA-376 Part 1 §17.16.13. A deleted instruction-shaped run outside a
 ## field is deleted text. It is visible only in the original view or
 ## after rejecting the deletion.
