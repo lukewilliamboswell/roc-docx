@@ -1785,7 +1785,7 @@ scan_kept = |state, event, scan|
 		Start(start) => {
 			depth = state.depth + 1
 			go_back_start = start.name.local == "bookmarkStart" and start.name.namespace == Uri(wordprocessingml) and value_in(start.attributes, "name") == Ok("_GoBack")
-			go_back = if (go_back_start) List.append(state.go_back, value_in(start.attributes, "id") ?? "") else state.go_back
+			go_back = if (go_back_start) List.append(state.go_back, bookmark_id(start.attributes)) else state.go_back
 			if state.skip > 0 {
 				{ ..state, depth, go_back }
 			} else if depth > 1 and (go_back_start or is_dropped_mark(start.name)) {
@@ -1856,7 +1856,7 @@ dropped_kind = |name, attributes, go_back|
 		ProofingMark
 	} else if name.local == "bookmarkStart" and value_in(attributes, "name") == Ok("_GoBack") {
 		GoBackStart
-	} else if name.local == "bookmarkEnd" and go_back.contains(value_in(attributes, "id") ?? "") {
+	} else if !go_back.is_empty() and name.local == "bookmarkEnd" and was_go_back(attributes, go_back) {
 		GoBackEnd
 	} else {
 		Kept
@@ -1872,7 +1872,7 @@ go_back_ids = |root| {
 			Ok(Element(element)) => {
 				$pending = List.concat(List.drop_last($pending, 1), element.children)
 				if element.name.namespace == Uri(wordprocessingml) and element.name.local == "bookmarkStart" and value_of(element, "name") == Ok("_GoBack") {
-					$ids = List.append($ids, value_of(element, "id") ?? "")
+					$ids = List.append($ids, bookmark_id(element.attributes))
 				}
 			}
 
@@ -1883,6 +1883,17 @@ go_back_ids = |root| {
 	}
 	$ids
 }
+
+# Check the end's spelling directly before comparing integer values.
+was_go_back : List(XmlTree.Attribute), List(Str) -> Bool
+was_go_back = |attributes, ids| {
+	id = value_in(attributes, "id") ?? ""
+	ids.contains(id) or ids.contains(Lenient.integer_key(id))
+}
+
+# Compare the identifier of a bookmark by its XML Schema integer value.
+bookmark_id : List(XmlTree.Attribute) -> Str
+bookmark_id = |attributes| Lenient.integer_key(value_in(attributes, "id") ?? "")
 
 # The value of a WordprocessingML attribute of an element.
 value_of : Element, Str -> Try(Str, [NotFound])

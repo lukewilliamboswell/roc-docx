@@ -1646,6 +1646,31 @@ expect {
 		and Document.body(parsed.document) == Ok(read)
 }
 
+## The editor's bookmark and its end share an integer ID. Both reading
+## paths drop the pair once and preserve the neighboring named bookmark.
+expect {
+	first = "<w:p><w:bookmarkStart w:id='2' w:name='terms'/><w:bookmarkStart w:id='+00731' w:name='_GoBack'/><w:r><w:t>one</w:t></w:r></w:p>"
+	second = "<w:p><w:r><w:t>two</w:t></w:r><w:bookmarkEnd w:id=' 731 '/><w:bookmarkEnd w:id='02'/></w:p>"
+	bytes = package_of(first.concat(second))?
+	streamed = Docx.parse(bytes)?
+	tree = Document.from_package(Opc.open(bytes, {})?, {})?
+	written = Docx.to_bytes(streamed.document)?
+	main = "/word/document.xml"
+	xml = Str.from_utf8(Opc.part_bytes(Opc.open(written, {})?, main)?)?
+	diagnostics = [Dropped({ part: main, content: GoBackBookmark, count: 1 })]
+	body = Docx.body(streamed.document)
+	kept = match body {
+		[Paragraph({ properties: _, content: [BookmarkStart("terms"), Run(_)] }), Paragraph({ properties: _, content: [Run(_), BookmarkEnd("terms")] })] => Bool.True
+		_ => Bool.False
+	}
+	expected = "<w:body><w:p><w:bookmarkStart w:id=\"0\" w:name=\"terms\"/><w:r><w:t>one</w:t></w:r></w:p><w:p><w:r><w:t>two</w:t></w:r><w:bookmarkEnd w:id=\"0\"/></w:p></w:body>"
+	streamed.diagnostics == diagnostics
+		and tree.diagnostics == diagnostics
+		and Docx.body(tree.document) == body
+		and kept
+		and xml.contains(expected)
+}
+
 ## Notes, headers and footers are written from the model: they read back
 ## the same, a toggle written with a value is written as the element alone,
 ## and a note's link keeps its part's relationship.
