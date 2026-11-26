@@ -1,0 +1,48 @@
+= roc-docx 0.3.0
+
+This release fixes how roc-docx reads, edits and writes documents containing
+tracked fields, review ranges and existing package parts.
+
+== Text and review
+
+* Current, final and original text interpret complex fields using the
+  boundaries visible in each view. A tracked separator can turn the same
+  chunk into field code in one view and visible text in another. Snapshots,
+  text edits and comment anchors use the same field-aware text rules.
+* Nested field results contribute to the enclosing result when the nested
+  field appears in that result. Field instructions remain available when
+  reading the document and are preserved when saving.
+* Comments, bookmarks, move ranges and notes recognize equivalent integer
+  identifiers, including identifiers padded with leading zeroes. Block edits
+  recognize the outer boundary of a table after a deleted paragraph mark.
+* Review timestamps reject invalid year and time-zone values. Paragraph
+  numbering resolves through the inherited style cascade.
+
+== Reading and writing
+
+* The reader honors ignored markup in compatibility alternatives and
+  selects the main document through the internal OPC relationship.
+* Large table widths, page dimensions and margins retain their typed
+  values. Custom integer properties are read within their declared ranges.
+* Edits that add settings, comments or core properties choose a free part
+  name when the usual name is occupied. OPC part-name comparisons ignore
+  ASCII case. Writing also removes internal links to omitted extension
+  parts.
+
+== Upgrade an application
+
+Use the package URL for this release. The command-line examples use
+basic-cli 0.28.1:
+
+[source,roc]
+----
+app [main!] {
+	cli: platform "https://github.com/roc-lang/basic-cli/releases/download/0.28.1/7brgwR8YUqfeGrkdfF1V4GPPN7DnP7ftqub9KcrTEZtr.tar.zst",
+	docx: "{package-url}",
+}
+----
+
+The package and examples were tested with Roc
+`nightly-2026-11-25-d5a4f1e`. Repository scripts use the same nightly.
+The test harness uses roc-fuzz 0.8.0 with four suites covering 13 fuzz
+targets, alongside bounded models and integer proofs.
