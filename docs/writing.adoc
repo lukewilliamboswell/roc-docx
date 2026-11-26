@@ -61,6 +61,10 @@ identifiers, those `WmlWrite.kept_ids` finds in every part, and the
 previous part's `next` as `from`, as <<identifiers>> describes. Both
 default to a part written on its own.
 
+When an edit adds settings or comment parts, it uses free names beside
+the main document part. The new relationships identify the parts when the
+document is reopened.
+
 == Choose how a document is written
 
 `Docx.to_bytes` writes with the default options. `Docx.to_bytes_with`
