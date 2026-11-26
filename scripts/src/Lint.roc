@@ -116,7 +116,7 @@ Lint :: [].{
 	## Every fuzz target declares examples and carries a measurement or ceiling.
 	fuzz_target_shape : Source -> List(Violation)
 	fuzz_target_shape = |source|
-		if source.path.starts_with("fuzz/") and source.path.ends_with("/Property.roc") {
+		if is_fuzz_target(source.path) {
 			examples = if !source.text.contains("examples: [") or source.text.contains("examples: []") {
 				[{ path: source.path, line: 1, message: "a fuzz target declares at least one example" }]
 			} else {
@@ -194,8 +194,7 @@ Lint :: [].{
 		)
 	}
 
-	## The architecture's fuzz inventory names every fuzz target, a
-	## `fuzz/<name>/Property.roc`, in a row of its own, and names no other.
+	## The architecture's fuzz inventory lists each target in its own row.
 	fuzz_inventory : List(Source) -> List(Violation)
 	fuzz_inventory = |sources| {
 		architecture = "docs/architecture.adoc"
@@ -216,16 +215,13 @@ Lint :: [].{
 					_ => Err(NotARow)
 				},
 		)
-		found_targets = sources.keep_oks(
-			|source|
-				if source.path.starts_with("fuzz/") and source.path.ends_with("/Property.roc") {
-					Ok(source.path.drop_prefix("fuzz/").drop_suffix("/Property.roc"))
-				} else {
-					Err(NotATarget)
-				},
+		row_key = |name| Str.join_with(name.split_on("_"), "")
+		keys = rows.map(row_key)
+		declared = sources.keep_if(|source| is_fuzz_target(source.path)).map(
+			|source| { path: source.path, key: source.path.drop_prefix("fuzz/").drop_suffix("Target.roc").with_ascii_lowercased() },
 		)
-		missing = found_targets.drop_if(|name| rows.contains(name)).map(|name| { path: "fuzz/${name}/Property.roc", line: 1, message: "${architecture}'s fuzz inventory names every fuzz target" })
-		stale = rows.drop_if(|name| found_targets.contains(name)).map(|name| { path: architecture, line: 1, message: "the fuzz inventory names `${name}`, which is not a target under fuzz/" })
+		missing = declared.drop_if(|target| keys.contains(target.key)).map(|target| { path: target.path, line: 1, message: "${architecture}'s fuzz inventory names every fuzz target" })
+		stale = rows.drop_if(|name| declared.any(|target| target.key == row_key(name))).map(|name| { path: architecture, line: 1, message: "the fuzz inventory names `${name}`, which is not a target under fuzz/" })
 		List.concat(missing, stale)
 	}
 
@@ -241,21 +237,21 @@ Lint :: [].{
 		sources.keep_oks(
 			|source| {
 				match source.path.split_on("/") {
-					["fuzz", name, "Property.roc"] =>
-						if suites.keep_if(|suite| includes_property(suite.text, name)).len() == 1 {
+					["fuzz", file] if file.ends_with("Target.roc") =>
+						if suites.keep_if(|suite| includes_target(suite.text, file.drop_suffix(".roc"))).len() == 1 {
 							Err(Runnable)
 						} else {
 							Ok({ path: source.path, line: 1, message: "list this property in exactly one fuzz suite" })
 						}
-					["fuzz", name, "Spec.roc"] =>
-						if suites.any(|suite| includes_property(suite.text, name) and suite.text.split_on("\n").any(|line| line.starts_with("import ${name}/Spec as "))) {
+					["fuzz", file] if file.ends_with("Spec.roc") =>
+						if suites.any(|suite| includes_target(suite.text, "${file.drop_suffix("Spec.roc")}Target") and suite.text.split_on("\n").contains("import ${file.drop_suffix(".roc")}")) {
 							Err(Runnable)
 						} else {
 							Ok({ path: source.path, line: 1, message: "import this specification from the suite that runs the property" })
 						}
 					_ =>
-						if source.path.starts_with("fuzz/") and source.path.ends_with("/Spec.roc") {
-							Ok({ path: source.path, line: 1, message: "put the specification beside its property" })
+						if source.path.starts_with("fuzz/") and (source.path.ends_with("Spec.roc") or source.path.ends_with("Target.roc") or source.path.ends_with("/Property.roc")) {
+							Ok({ path: source.path, line: 1, message: "put the named target or specification directly under fuzz/" })
 						} else {
 							Err(NotAMember)
 						}
@@ -602,15 +598,15 @@ expect {
 
 ## Fuzz targets declare examples and measure or ratchet allocations.
 expect {
-	bare = { path: "fuzz/t/Property.roc", text: "examples: [],\n" }
-	measured = { path: "fuzz/t/Property.roc", text: "examples: [a],\nFuzz.measure!(\"r\", || x)\n" }
+	bare = { path: "fuzz/ExampleTarget.roc", text: "examples: [],\n" }
+	measured = { path: "fuzz/ExampleTarget.roc", text: "examples: [a],\nFuzz.measure!(\"r\", || x)\n" }
 	Lint.fuzz_target_shape(bare).len() == 2 and Lint.fuzz_target_shape(measured) == []
 }
 
 ## A package or fuzz expect needs a doc comment on the preceding line.
 expect {
 	text = "## Named.\nexpect 1 == 1\n\nexpect 2 == 2\nexpected = 1\nexpected_main : U64\nexpect\n\t3 == 3\n"
-	["package/A.roc", "fuzz/t/Spec.roc"].all(|path| Lint.expect_doc({ path, text }).map(|violation| violation.line) == [4, 7])
+	["package/A.roc", "fuzz/ExampleSpec.roc"].all(|path| Lint.expect_doc({ path, text }).map(|violation| violation.line) == [4, 7])
 }
 
 ## Chapters open with a title and are included by the index; release notes by the releases chapter.
@@ -630,18 +626,19 @@ expect {
 	]
 }
 
-# Match the alias imported for a property to an entry in the suite list.
-includes_property : Str, Str -> Bool
-includes_property = |text, name| {
-	prefix = "import ${name}/Property as "
-	imported = text.split_on("\n").find_first(|line| line.starts_with(prefix)).map_ok(|line| line.drop_prefix(prefix))
-	match (imported, text.split_first("Fuzz.suite([")) {
-		(Ok(alias), Ok({ after, .. })) => {
+is_fuzz_target : Str -> Bool
+is_fuzz_target = |path| path.starts_with("fuzz/") and path.ends_with("Target.roc")
+
+# Match a target module's import to its entry in the suite list.
+includes_target : Str, Str -> Bool
+includes_target = |text, name| {
+	match text.split_first("Fuzz.suite([") {
+		Ok({ before: header_text, after }) if header_text.split_on("\n").contains("import ${name}") => {
 			members = match after.split_first("])") {
 				Ok({ before, .. }) => before
 				Err(_) => ""
 			}
-			members.split_on(",").any(|item| item.trim() == "${alias}.target")
+			members.split_on(",").any(|item| item.trim() == "${name}.target")
 		}
 		_ => Bool.False
 	}
@@ -649,10 +646,10 @@ includes_property = |text, name| {
 
 ## The fuzz inventory names every target under fuzz/ and no other.
 expect {
-	architecture = { path: "docs/architecture.adoc", text: "[cols=\"1,3\"]\n|===\n|Target |Property\n|`listed` |A rule\n|`gone` |Another\n|===\n" }
-	sources = [architecture, { path: "fuzz/listed/Property.roc", text: "" }, { path: "fuzz/unlisted/Property.roc", text: "" }]
+	architecture = { path: "docs/architecture.adoc", text: "[cols=\"1,3\"]\n|===\n|Target |Property\n|`is_listed` |A rule\n|`gone` |Another\n|===\n" }
+	sources = [architecture, { path: "fuzz/IsListedTarget.roc", text: "" }, { path: "fuzz/UnlistedTarget.roc", text: "" }]
 	Lint.fuzz_inventory(sources).map(|violation| "${violation.path}: ${violation.message}") == [
-		"fuzz/unlisted/Property.roc: docs/architecture.adoc's fuzz inventory names every fuzz target",
+		"fuzz/UnlistedTarget.roc: docs/architecture.adoc's fuzz inventory names every fuzz target",
 		"docs/architecture.adoc: the fuzz inventory names `gone`, which is not a target under fuzz/",
 	]
 }
@@ -661,15 +658,17 @@ expect {
 expect {
 	header = "app [target] {}\n"
 	sources = [
-		{ path: "fuzz/one_suite.roc", text: header.concat("import listed/Property as Listed\nimport missing/Property as Missing\nimport other/Spec as OtherSpec\ntarget = Fuzz.suite([Listed.target, Other.target])") },
-		{ path: "fuzz/two_suite.roc", text: header.concat("import other/Property as Other\nimport listed/Property as Listed\ntarget = Fuzz.suite([Other.target, Listed.target])") },
-		{ path: "fuzz/listed/Property.roc", text: "" },
-		{ path: "fuzz/missing/Property.roc", text: "" },
-		{ path: "fuzz/other/Property.roc", text: "" },
-		{ path: "fuzz/other/Spec.roc", text: "" },
+		{ path: "fuzz/one_suite.roc", text: header.concat("import ListedTarget\nimport MissingTarget\nimport OtherSpec\nimport ValidTarget\nimport ValidSpec\ntarget = Fuzz.suite([ListedTarget.target, OtherTarget.target, ValidTarget.target])") },
+		{ path: "fuzz/two_suite.roc", text: header.concat("import OtherTarget\nimport ListedTarget\ntarget = Fuzz.suite([OtherTarget.target, ListedTarget.target])") },
+		{ path: "fuzz/ListedTarget.roc", text: "" },
+		{ path: "fuzz/MissingTarget.roc", text: "" },
+		{ path: "fuzz/OtherTarget.roc", text: "" },
+		{ path: "fuzz/OtherSpec.roc", text: "" },
+		{ path: "fuzz/ValidTarget.roc", text: "" },
+		{ path: "fuzz/ValidSpec.roc", text: "" },
 		{ path: "fuzz/other/nested/Spec.roc", text: "" },
 	]
-	Lint.fuzz_suite_members(sources).map(|violation| violation.path) == ["fuzz/listed/Property.roc", "fuzz/missing/Property.roc", "fuzz/other/Spec.roc", "fuzz/other/nested/Spec.roc"]
+	Lint.fuzz_suite_members(sources).map(|violation| violation.path) == ["fuzz/ListedTarget.roc", "fuzz/MissingTarget.roc", "fuzz/OtherSpec.roc", "fuzz/other/nested/Spec.roc"]
 }
 
 ## Roc listings in chapters include a region of the snippet program or an example; release notes may write theirs out.

@@ -6,16 +6,16 @@ app [target] {
 }
 
 import fuzz.Fuzz
-import document_roundtrip/Property as DocumentRoundtrip
-import structure_oracle/Property as StructureOracle
-import build_document/Property as BuildDocument
+import DocumentRoundtripTarget
+import StructureOracleTarget
+import BuildDocumentTarget
 
 # roc test runs these specifications with the suite.
-import document_roundtrip/Spec as DocumentRoundtripSpec
-import build_document/Spec as BuildDocumentSpec
+import DocumentRoundtripSpec
+import BuildDocumentSpec
 
 target = Fuzz.suite([
-	DocumentRoundtrip.target,
-	StructureOracle.target,
-	BuildDocument.target,
+	DocumentRoundtripTarget.target,
+	StructureOracleTarget.target,
+	BuildDocumentTarget.target,
 ])

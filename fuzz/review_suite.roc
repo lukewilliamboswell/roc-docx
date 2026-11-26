@@ -4,14 +4,14 @@ app [target] {
 }
 
 import fuzz.Fuzz
-import revision_algebra/Property as RevisionAlgebra
-import comment_anchors/Property as CommentAnchors
+import RevisionAlgebraTarget
+import CommentAnchorsTarget
 
 # roc test runs these specifications with the suite.
-import revision_algebra/Spec as RevisionAlgebraSpec
-import comment_anchors/Spec as CommentAnchorsSpec
+import RevisionAlgebraSpec
+import CommentAnchorsSpec
 
 target = Fuzz.suite([
-	RevisionAlgebra.target,
-	CommentAnchors.target,
+	RevisionAlgebraTarget.target,
+	CommentAnchorsTarget.target,
 ])

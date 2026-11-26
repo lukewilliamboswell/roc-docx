@@ -5,18 +5,18 @@ app [target] {
 }
 
 import fuzz.Fuzz
-import parse_never_crashes/Property as ParseNeverCrashes
-import table_reading/Property as TableReading
-import style_resolution/Property as StyleResolution
-import numbering_resolution/Property as NumberingResolution
+import ParseNeverCrashesTarget
+import TableReadingTarget
+import StyleResolutionTarget
+import NumberingResolutionTarget
 
 # roc test runs these specifications with the suite.
-import table_reading/Spec as TableReadingSpec
-import numbering_resolution/Spec as NumberingResolutionSpec
+import TableReadingSpec
+import NumberingResolutionSpec
 
 target = Fuzz.suite([
-	ParseNeverCrashes.target,
-	TableReading.target,
-	StyleResolution.target,
-	NumberingResolution.target,
+	ParseNeverCrashesTarget.target,
+	TableReadingTarget.target,
+	StyleResolutionTarget.target,
+	NumberingResolutionTarget.target,
 ])

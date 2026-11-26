@@ -276,13 +276,15 @@ that occupies the usual name.
   difference, then discard the mutation. Keep a minimized regression for
   a real bug the specification exposes.
 
-Keep each property in `fuzz/<property>/Property.roc` and register its
-target in the applicable `Fuzz.suite`. The `container`, `reading`,
+Name each property module for its target, such as
+`fuzz/MceProcessingTarget.roc`, and register it in the applicable
+`Fuzz.suite`. The `container`, `reading`,
 `writing`, and `review` suites compile their members together. A member
 keeps its own generator, declared examples, corpus, and allocation ceilings.
-Put deterministic checks in `Spec.roc` beside the property and import that
-module from the same suite. Run the suite's expectations with
-`roc test fuzz/<name>_suite.roc`.
+Put deterministic checks in the matching specification module, such as
+`fuzz/MceProcessingSpec.roc`, and import it from the same suite. Name
+supporting models and proofs for the rules they check. Run the suite's
+expectations with `roc test fuzz/<name>_suite.roc`.
 
 Report the domain explored and the behaviours covered by existing tests
 or independent oracles. Stop adding model states when they exercise the

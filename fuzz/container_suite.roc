@@ -5,19 +5,19 @@ app [target] {
 }
 
 import fuzz.Fuzz
-import opc_open/Property as OpcOpen
-import zip_opc_roundtrip/Property as ZipOpcRoundtrip
-import xml_namespace_roundtrip/Property as XmlNamespaceRoundtrip
-import mce_processing/Property as MceProcessing
+import OpcOpenTarget
+import ZipOpcRoundtripTarget
+import XmlNamespaceRoundtripTarget
+import MceProcessingTarget
 
 # roc test runs these specifications with the suite.
-import opc_open/Spec as OpcOpenSpec
-import zip_opc_roundtrip/Spec as ZipOpcRoundtripSpec
-import mce_processing/Spec as MceProcessingSpec
+import OpcOpenSpec
+import ZipOpcRoundtripSpec
+import MceProcessingSpec
 
 target = Fuzz.suite([
-	OpcOpen.target,
-	ZipOpcRoundtrip.target,
-	XmlNamespaceRoundtrip.target,
-	MceProcessing.target,
+	OpcOpenTarget.target,
+	ZipOpcRoundtripTarget.target,
+	XmlNamespaceRoundtripTarget.target,
+	MceProcessingTarget.target,
 ])
