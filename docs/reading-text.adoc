@@ -112,6 +112,9 @@ A bookmark is a `BookmarkStart(name)` inline where it begins and a
 that name. The reader pairs each boundary by the integer value of its
 identifier, so `+01` and `1` can name the same bookmark.
 
+The `_GoBack` bookmark records the editor's last position. Reading drops
+both boundaries and reports one `GoBackBookmark` drop for the pair.
+
 What the package cannot resolve is kept rather than guessed at: a hyperlink
 whose relationship is missing, or that names no target, is a `Container` of
 its runs, and a bookmark end without a start, or a bookmark spanning table
