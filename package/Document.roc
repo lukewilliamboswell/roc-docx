@@ -895,7 +895,8 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 	with_new_part : Document, { source : Str, kind : Str, name : Str, content_type : Str }, XmlTree.Node -> Document
 	with_new_part = |document, new, tree| {
 		{ pkg, graph, trees, body: held_body, notes: models } = document
-		if graph.parts.any(|part| Str.caseless_ascii_equals(part.name, new.name)) or (new.source != "/" and !graph.parts.any(|part| part.name == new.source)) {
+		name_bytes = new.name.count_utf8_bytes()
+		if graph.parts.any(|part| part.name.count_utf8_bytes() == name_bytes and Str.caseless_ascii_equals(part.name, new.name)) or (new.source != "/" and !graph.parts.any(|part| part.name == new.source)) {
 			return { pkg, graph, trees, body: held_body, notes: models }
 		}
 		related_from = |relationships| {
