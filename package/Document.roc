@@ -889,13 +889,13 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 	## `tree`, and a relationship of type `kind` to it from the part named
 	## `source`, or from the package itself when `source` is `/`, whose
 	## identifier is the lowest `rIdN` from `rId1` up that no relationship of
-	## the source uses. A name the document already has, or a source it does
-	## not, changes nothing. The part is written from its tree, as
-	## [Document.to_bytes] writes every XML part.
+	## the source uses. A name the document already has, ignoring ASCII case
+	## as OPC does, or a source it does not, changes nothing. The part is
+	## written from its tree, as [Document.to_bytes] writes every XML part.
 	with_new_part : Document, { source : Str, kind : Str, name : Str, content_type : Str }, XmlTree.Node -> Document
 	with_new_part = |document, new, tree| {
 		{ pkg, graph, trees, body: held_body, notes: models } = document
-		if graph.parts.any(|part| part.name == new.name) or (new.source != "/" and !graph.parts.any(|part| part.name == new.source)) {
+		if graph.parts.any(|part| Str.caseless_ascii_equals(part.name, new.name)) or (new.source != "/" and !graph.parts.any(|part| part.name == new.source)) {
 			return { pkg, graph, trees, body: held_body, notes: models }
 		}
 		related_from = |relationships| {
