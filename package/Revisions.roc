@@ -11,6 +11,8 @@
 ## identified by their place among the body's changes in reading order, so
 ## the identifiers a document writes for them are never needed.
 import Document
+import FieldPhase
+import FieldText
 import WmlRead
 
 Revisions :: [].{
@@ -74,18 +76,24 @@ Revisions :: [].{
 	## cell's insertion, deletion or merge and its formatting before its
 	## content.
 	list : List(Document.Block) -> List(Listed)
-	list = |blocks| blocks.fold({ listed: List.with_capacity(blocks.fold(0, block_changes)), sources: [], destinations: [], previous: Err(NoChange) }, list_block).listed
-
-	## A paragraph's text in a view. The current and final text are the
-	## current text of [Document.paragraph_text]; the original text has
-	## inserted and moved-in text left out and deleted and moved-away text
-	## in.
-	paragraph_text : Document.Paragraph, View -> Str
-	paragraph_text = |paragraph, view|
-		match view {
-			Current | Final => Document.paragraph_text(paragraph)
-			Original => Str.from_utf8(paragraph.content.fold(List.with_capacity(64), |bytes, inline| inline_bytes(bytes, inline, Original))) ?? ""
+	list = |blocks| {
+		count = blocks.fold(0, block_changes)
+		if count == 0 {
+			[]
+		} else {
+			blocks.fold({ listed: List.with_capacity(count), sources: [], destinations: [], previous: Err(NoChange), phase: FieldPhase.empty }, list_block).listed
 		}
+	}
+
+	## A paragraph's text in a view, starting outside any complex field.
+	## [Revisions.text] carries the field phase between paragraphs of a story.
+	## The original text includes deletions and move sources in place of
+	## insertions and move destinations.
+	paragraph_text : Document.Paragraph, View -> Str
+	paragraph_text = |paragraph, view| {
+		read = paragraph.content.fold({ text: Str.with_capacity(64), phase: FieldPhase.empty }, |state, inline| FieldText.inline(state, inline, projected_view(view)))
+		read.text
+	}
 
 	## The text of blocks in a view: every paragraph's text, as
 	## [Revisions.paragraph_text] gives it, followed by a line feed, in
@@ -98,11 +106,11 @@ Revisions :: [].{
 	## mark inserted or moved in.
 	text : List(Document.Block), View -> Str
 	text = |blocks, view| {
-		var $state = { text: List.with_capacity(1024), joining: Bool.False }
+		var $state = { text: Str.with_capacity(1024), joining: Bool.False, phase: FieldPhase.empty }
 		for block in blocks {
 			$state = block_text($state, block, view)
 		}
-		Str.from_utf8(line_end($state).text) ?? ""
+		line_end($state).text
 	}
 
 	## Which tracked changes an accept or a reject applies to: every change;
@@ -249,11 +257,11 @@ Revisions :: [].{
 	insert_blocks : List(Document.Block), U64, List(Document.Block), Context -> Try(List(Document.Block), [NotABlockBoundary(U64), NoParagraphToJoin(U64), NotADate(Str)])
 	insert_blocks = |blocks, at, new, context| {
 		made = made_by(context)?
-		placed = at_block(blocks, { text: List.with_capacity(1024), joining: Bool.False }, at, |items, index, _| inserted_at(items, index, new, made, at))
+		placed = at_block(blocks, { text: Str.with_capacity(1024), joining: Bool.False, phase: FieldPhase.empty }, at, |items, index, _| inserted_at(items, index, new, made, at))
 		match placed.outcome {
 			Applied(edited) => Ok(edited)
 			Failed(problem) => Err(problem)
-			Pending if line_start(placed.state) and placed.state.text.len() == at => {
+			Pending if line_start(placed.state) and placed.state.text.count_utf8_bytes() == at => {
 				index = match blocks.last() {
 					Ok(Section(_)) => blocks.len() - 1
 					_ => blocks.len()
@@ -286,7 +294,7 @@ Revisions :: [].{
 	delete_blocks : List(Document.Block), { start : U64, end : U64 }, Context -> Try(List(Document.Block), [NotABlockBoundary(U64), NoParagraphToJoin(U64), NotADate(Str)])
 	delete_blocks = |blocks, span, context| {
 		made = made_by(context)?
-		placed = at_block(blocks, { text: List.with_capacity(1024), joining: Bool.False }, span.start, |items, index, state| deleted_at(items, index, state, span, made))
+		placed = at_block(blocks, { text: Str.with_capacity(1024), joining: Bool.False, phase: FieldPhase.empty }, span.start, |items, index, state| deleted_at(items, index, state, span, made))
 		match placed.outcome {
 			Applied(edited) => Ok(edited)
 			Failed(problem) => Err(problem)
@@ -298,7 +306,7 @@ Revisions :: [].{
 # The changes listed so far, the names of the moves' source and destination
 # ranges open where they end, innermost last, and the change that the next
 # one follows directly, if it comes next.
-Walk : { listed : List(Revisions.Listed), sources : List(Str), destinations : List(Str), previous : Try(U64, [NoChange]) }
+Walk : { listed : List(Revisions.Listed), sources : List(Str), destinations : List(Str), previous : Try(U64, [NoChange]), phase : FieldPhase }
 
 # A walk owned by the loop that carries it, as [owned] makes resolving's
 # state.
@@ -381,7 +389,7 @@ structural = |walk, changes, covered|
 		changes.fold(
 			{ ..walk, previous: Err(NoChange) },
 			|out, change| {
-				text = if (change.of == Paragraph) Str.from_utf8(covered.fold(List.with_capacity(64), |bytes, inner| inline_bytes(bytes, inner, Shown))) ?? "" else ""
+				text = if (change.of == Paragraph) shown_text(covered, out.phase, 64) else ""
 				listed = { id: out.listed.len(), kind: change.kind, of: change.of, author: change.author, date: change.date, content: if (change.of == Paragraph) covered else [], move: Unpaired, text, follows: Bool.False }
 				{ ..out, listed: List.append(out.listed, listed) }
 			},
@@ -413,17 +421,18 @@ list_content = |walk, content| {
 					date: revision.date,
 					content: revision.content,
 					move,
-					text: Str.from_utf8(revision.content.fold(List.with_capacity(16), |text, inner| inline_bytes(text, inner, Shown))) ?? "",
+					text: shown_text(revision.content, $walk.phase, 16),
 					follows: $previous == Ok(id),
 				}
 				$walk = list_content({ ..$walk, listed: List.append($walk.listed, listed), previous: Err(NoChange) }, revision.content)
 				$previous = if ($walk.listed.len() == id + 1) Ok(id + 1) else Err(NoChange)
 			}
 
-			Run(run) =>
+			Run(run) => {
 				match run.properties.change.first() {
 					Ok(changed) => {
 						id = $walk.listed.len()
+						read = FieldText.inline({ text: Str.with_capacity(16), phase: $walk.phase }, inline, Shown)
 						listed = {
 							id,
 							kind: Formatting,
@@ -432,17 +441,30 @@ list_content = |walk, content| {
 							date: changed.date,
 							content: [inline],
 							move: Unpaired,
-							text: Str.from_utf8(inline_bytes(List.with_capacity(16), inline, Shown)) ?? "",
+							text: read.text,
 							follows: $previous == Ok(id),
 						}
-						$walk = { ..$walk, listed: List.append($walk.listed, listed) }
+						$walk = { ..$walk, listed: List.append($walk.listed, listed), phase: read.phase }
 						$previous = Ok(id + 1)
 					}
 
 					Err(_) => {
+						phase = match run.content {
+							[FieldMark({ kind, .. })] => FieldPhase.step($walk.phase, kind)
+							[_] => $walk.phase
+							_ => run.content.fold(
+								$walk.phase,
+								|before, item| match item {
+									FieldMark({ kind, .. }) => FieldPhase.step(before, kind)
+									_ => before
+								},
+							)
+						}
+						$walk = { ..$walk, phase }
 						$previous = Err(NoChange)
 					}
 				}
+			}
 
 			MoveStart({ side: Source, name, author: _, date: _, preserved: _ }) => {
 				$walk = { ..$walk, sources: List.append($walk.sources, name) }
@@ -470,7 +492,8 @@ list_content = |walk, content| {
 			}
 
 			SimpleField({ code: _, preserved: _, content: inner }) => {
-				$walk = list_content({ ..$walk, previous: Err(NoChange) }, inner)
+				outer_phase = $walk.phase
+				$walk = { ..list_content({ ..$walk, previous: Err(NoChange), phase: FieldPhase.empty }, inner), phase: outer_phase }
 				$previous = Err(NoChange)
 			}
 
@@ -578,28 +601,22 @@ content_kind = |kind|
 		MoveDestination => MoveDestination
 	}
 
-# An inline's text in a view, or with every change shown, appended as UTF-8.
-inline_bytes : List(U8), Document.Inline, [Current, Final, Original, Shown] -> List(U8)
-inline_bytes = |text, inline, view|
-	match inline {
-		Revision(revision) if hidden(revision.kind, view) => text
-		Revision(revision) => revision.content.fold(text, |inner, child| inline_bytes(inner, child, view))
-		Hyperlink({ target: _, preserved: _, content }) => content.fold(text, |inner, child| inline_bytes(inner, child, view))
-		SimpleField({ code: _, preserved: _, content }) => content.fold(text, |inner, child| inline_bytes(inner, child, view))
-		Container({ element: _, content }) => content.fold(text, |inner, child| inline_bytes(inner, child, view))
-		_ => Document.append_inline_text(text, inline)
-	}
+# An excerpt for the revision inventory. All of its nested tracked
+# alternatives are shown and marks are followed in that same order.
+shown_text : List(Document.Inline), FieldPhase, U64 -> Str
+shown_text = |content, phase, capacity| match content {
+	[Run({ content: [Text(value)], .. })] => value
+	_ => content.fold({ text: Str.with_capacity(capacity), phase }, |state, item| FieldText.inline(state, item, Shown)).text
+}
 
-# Whether a view leaves out a change's content.
-hidden : Document.RevisionKind, [Current, Final, Original, Shown] -> Bool
-hidden = |kind, view|
-	match view {
-		Current | Final => kind == Deletion or kind == MoveSource
-		Original => kind == Insertion or kind == MoveDestination
-		Shown => Bool.False
-	}
+projected_view : Revisions.View -> [Current, Final, Original, Shown]
+projected_view = |view| match view {
+	Current => Current
+	Final => Final
+	Original => Original
+}
 
-TextState : { text : List(U8), joining : Bool }
+TextState : { text : Str, joining : Bool, phase : FieldPhase }
 
 # The text so far owned by the loop that carries it, as [owned] makes
 # resolving's state.
@@ -610,16 +627,11 @@ block_text : TextState, Document.Block, Revisions.View -> TextState
 block_text = |state, block, view|
 	match block {
 		Paragraph(paragraph) => {
-			shown_in = match view {
-				Current => Current
-				Final => Final
-				Original => Original
-			}
-			text = paragraph.content.fold(state.text, |bytes, inline| inline_bytes(bytes, inline, shown_in))
+			read = paragraph.content.fold({ text: state.text, phase: state.phase }, |walk, inline| FieldText.inline(walk, inline, projected_view(view)))
 			if joins_next(paragraph, view) {
-				{ text, joining: Bool.True }
+				{ text: read.text, joining: Bool.True, phase: read.phase }
 			} else {
-				{ text: List.append(text, 10), joining: Bool.False }
+				{ text: read.text.concat("\n"), joining: Bool.False, phase: read.phase }
 			}
 		}
 
@@ -655,7 +667,7 @@ row_text = |state, item, view|
 
 # The line feed a joining paragraph owes where nothing follows it to join.
 line_end : TextState -> TextState
-line_end = |state| if (state.joining) { text: List.append(state.text, 10), joining: Bool.False } else state
+line_end = |state| if (state.joining) { ..state, text: state.text.concat("\n"), joining: Bool.False } else state
 
 # Whether a view takes away a paragraph's mark: in the current and final
 # text a mark deleted or moved away, in the original text one inserted or
@@ -1275,6 +1287,7 @@ range_key = |side, name|
 # are to be split, with the mark the part before each takes.
 Editing : {
 	at : U64,
+	phase : FieldPhase,
 	joining : Bool,
 	fresh : Bool,
 	start : U64,
@@ -1296,6 +1309,7 @@ Editing : {
 no_edit : Editing
 no_edit = {
 	at: 0,
+	phase: FieldPhase.empty,
 	joining: Bool.False,
 	fresh: Bool.True,
 	start: 0,
@@ -1468,7 +1482,7 @@ edit_paragraph = |paragraph, state| {
 		line_feed($state)
 	}
 	breaks = $state.breaks.keep_if(|offset| offset >= entered.at and offset < $state.at).map(|offset| offset - entered.at)
-	blocks = if (breaks.is_empty()) [Paragraph({ properties, content: $content })] else broken({ properties, content: $content }, breaks, $state.mark)
+	blocks = if (breaks.is_empty()) [Paragraph({ properties, content: $content })] else broken({ properties, content: $content }, breaks, $state.mark, entered.phase)
 	{ blocks, state: { ..ended, joining: joins } }
 }
 
@@ -1515,13 +1529,15 @@ broken_lines = |blocks, start, text, made| {
 # A paragraph split at the line feeds at these offsets of its current text,
 # in order, each removed: every part but the last has the paragraph's
 # properties with `mark` as its mark's changes, and the last its own.
-broken : Document.Paragraph, List(U64), List(Document.MarkChange) -> List(Document.Block)
-broken = |paragraph, offsets, mark| {
+broken : Document.Paragraph, List(U64), List(Document.MarkChange), FieldPhase -> List(Document.Block)
+broken = |paragraph, offsets, mark, phase| {
 	var $blocks = List.with_capacity(offsets.len() + 1)
 	var $rest = paragraph.content
 	var $passed = 0.U64
+	var $phase = phase
 	for offset in offsets {
-		split = split_inlines($rest, offset - $passed)
+		split = split_inlines($rest, offset - $passed, $phase)
+		$phase = split.phase
 		$blocks = List.append($blocks, Paragraph({ properties: { ..paragraph.properties, mark }, content: split.before }))
 		$rest = split.after
 		$passed = offset + 1
@@ -1533,84 +1549,104 @@ broken = |paragraph, offsets, mark| {
 # is removed: what comes before it and what comes after it, each hyperlink,
 # field, content control or change that holds it split in two, a part left
 # empty left out.
-split_inlines : List(Document.Inline), U64 -> { before : List(Document.Inline), after : List(Document.Inline) }
-split_inlines = |inlines, offset| {
+SplitInlines : { before : List(Document.Inline), after : List(Document.Inline), phase : FieldPhase }
+
+split_inlines : List(Document.Inline), U64, FieldPhase -> SplitInlines
+split_inlines = |inlines, offset, phase| {
 	var $before = List.with_capacity(inlines.len())
 	var $after = List.with_capacity(inlines.len())
 	var $at = 0.U64
 	var $found = Bool.False
+	var $phase = phase
 	for inline in inlines {
 		if $found {
 			$after = List.append($after, inline)
 		} else {
-			width = inline_bytes(List.with_capacity(16), inline, Current).len()
+			read = FieldText.inline({ text: Str.with_capacity(16), phase: $phase }, inline, Current)
+			width = read.text.count_utf8_bytes()
 			if offset < $at + width {
-				split = split_inline(inline, offset - $at)
+				split = split_inline(inline, offset - $at, $phase)
 				$before = List.concat($before, split.before)
 				$after = List.concat($after, split.after)
+				$phase = split.phase
 				$found = Bool.True
 			} else {
 				$before = List.append($before, inline)
+				$phase = read.phase
 				$at = $at + width
 			}
 		}
 	}
-	{ before: $before, after: $after }
+	{ before: $before, after: $after, phase: $phase }
 }
 
-split_inline : Document.Inline, U64 -> { before : List(Document.Inline), after : List(Document.Inline) }
-split_inline = |inline, offset|
+split_inline : Document.Inline, U64, FieldPhase -> SplitInlines
+split_inline = |inline, offset, phase|
 	match inline {
 		Run(run) => {
 			var $before = List.with_capacity(run.content.len())
 			var $after = List.with_capacity(run.content.len())
 			var $at = 0.U64
+			var $found = Bool.False
+			var $phase = phase
 			for item in run.content {
-				size = Document.inline_text(Run({ properties: run.properties, content: [item] })).to_utf8().len()
-				if $at > offset {
+				if $found {
 					$after = List.append($after, item)
-				} else if offset < $at + size {
-					match item {
-						Text(text) => {
-							bytes = text.to_utf8()
-							head = bytes.sublist({ start: 0, len: offset - $at })
-							tail = bytes.drop_first(offset - $at + 1)
-							if !head.is_empty() {
-								$before = List.append($before, Text(Str.from_utf8(head) ?? ""))
-							}
-							if !tail.is_empty() {
-								$after = List.append($after, Text(Str.from_utf8(tail) ?? ""))
-							}
-						}
-
-						_ => {
-							$before = List.append($before, item)
-						}
-					}
 				} else {
-					$before = List.append($before, item)
+					positioned = positioned_content(item, $phase)
+					$phase = positioned.phase
+					if offset < $at + positioned.size {
+						match item {
+							Text(text) | FieldCode(text) => {
+								bytes = text.to_utf8()
+								head = bytes.take_first(offset - $at)
+								tail = bytes.drop_first(offset - $at + 1)
+								if !head.is_empty() {
+									$before = List.append($before, text_slice(item, Str.from_utf8(head) ?? ""))
+								}
+								if !tail.is_empty() {
+									$after = List.append($after, text_slice(item, Str.from_utf8(tail) ?? ""))
+								}
+							}
+
+							_ => {
+								$before = List.append($before, item)
+							}
+						}
+						$found = Bool.True
+					} else {
+						$before = List.append($before, item)
+						$at = $at + positioned.size
+					}
 				}
-				$at = $at + size
 			}
 			{
 				before: if ($before.is_empty()) [] else [Run({ properties: run.properties, content: $before })],
 				after: if ($after.is_empty()) [] else [Run({ properties: run.properties, content: $after })],
+				phase: $phase,
 			}
 		}
 
-		Hyperlink({ target, preserved, content }) => split_around(content, offset, |part| Hyperlink({ target, preserved, content: part }))
-		SimpleField({ code, preserved, content }) => split_around(content, offset, |part| SimpleField({ code, preserved, content: part }))
-		Container({ element, content }) => split_around(content, offset, |part| Container({ element, content: part }))
-		Revision(revision) => split_around(revision.content, offset, |part| Revision({ ..revision, content: part }))
-		_ => { before: [inline], after: [] }
+		Hyperlink({ target, preserved, content }) => split_around(content, offset, phase, |part| Hyperlink({ target, preserved, content: part }))
+		SimpleField({ code, preserved, content }) => {
+			split = split_around(content, offset, FieldPhase.empty, |part| SimpleField({ code, preserved, content: part }))
+			{ ..split, phase }
+		}
+		Container({ element, content }) => split_around(content, offset, phase, |part| Container({ element, content: part }))
+		Revision(revision) => split_around(revision.content, offset, phase, |part| Revision({ ..revision, content: part }))
+		_ => { before: [inline], after: [], phase }
 	}
 
 # Content split as [split_inlines] splits it, each part not empty wrapped
 # as the content was.
-split_around : List(Document.Inline), U64, (List(Document.Inline) -> Document.Inline) -> { before : List(Document.Inline), after : List(Document.Inline) }
-split_around = |content, offset, wrap| {
-	split = split_inlines(content, offset)
-	{ before: if (split.before.is_empty()) [] else [wrap(split.before)], after: if (split.after.is_empty()) [] else [wrap(split.after)] }
+split_around : List(Document.Inline), U64, FieldPhase, (List(Document.Inline) -> Document.Inline) -> SplitInlines
+split_around = |content, offset, phase, wrap| {
+	split = split_inlines(content, offset, phase)
+	{
+		before: if (split.before.is_empty()) [] else [wrap(split.before)],
+		after: if (split.after.is_empty()) [] else [wrap(split.after)],
+		phase: split.phase,
+	}
 }
 
 # The properties of the first run in content, through hyperlinks, fields
@@ -1685,8 +1721,8 @@ edit_inline = |inline, state, current|
 		}
 
 		SimpleField({ code, preserved, content }) => {
-			edited = edit_inlines(content, state, current)
-			{ inlines: [SimpleField({ code, preserved, content: edited.inlines })], state: edited.state }
+			edited = edit_inlines(content, { ..state, phase: FieldPhase.empty }, current)
+			{ inlines: [SimpleField({ code, preserved, content: edited.inlines })], state: { ..edited.state, phase: state.phase } }
 		}
 
 		Container({ element, content }) => {
@@ -1717,7 +1753,8 @@ edit_run = |run, state| {
 	var $index = 0.U64
 	for item in run.content {
 		$index = $index + 1
-		size = Document.inline_text(Run({ properties: run.properties, content: [item] })).to_utf8().len()
+		{ size, phase } = positioned_content(item, $state.phase)
+		$state = { ..$state, phase }
 		from = $state.at
 		if size == 0 {
 			gone = $state.start < from and from < $state.end and !is_reference(item)
@@ -1753,6 +1790,18 @@ edit_run = |run, state| {
 	{ inlines: runs_of($pieces, run.properties, $state), state: $state }
 }
 
+# The byte width of the item in this view, counting field text only
+# outside the instruction. Marks have zero width but change the phase
+# of following items.
+positioned_content : Document.RunContent, FieldPhase -> { size : U64, phase : FieldPhase }
+positioned_content = |item, phase|
+	match item {
+		Text(value) => { size: value.count_utf8_bytes(), phase }
+		FieldCode(value) => { size: if (FieldPhase.is_instruction(phase)) 0 else value.count_utf8_bytes(), phase }
+		FieldMark({ kind, element: _ }) => { size: 0, phase: FieldPhase.step(phase, kind) }
+		_ => { size: Document.inline_text(Run({ properties: Document.no_run_properties, content: [item] })).count_utf8_bytes(), phase }
+	}
+
 # Whether run content is a comment's reference, which an edit keeps.
 is_reference : Document.RunContent -> Bool
 is_reference = |item|
@@ -1768,12 +1817,13 @@ split_content : Document.RunContent, U64, U64, List(U64) -> { pieces : List({ co
 split_content = |item, from, size, cuts|
 	match (item, cuts.first()) {
 		(_, Err(_)) => { pieces: [{ content: item, from, to: from + size }], inside: Fine }
-		(Text(text), Ok(_)) => {
+		(Text(text), Ok(_)) | (FieldCode(text), Ok(_)) => {
 			bytes = text.to_utf8()
 			var $pieces = List.with_capacity(cuts.len() + 1)
 			var $last = 0.U64
 			for offset in List.append(cuts.map(|cut| cut - from), size) {
-				$pieces = List.append($pieces, { content: Text(Str.from_utf8(bytes.sublist({ start: $last, len: offset - $last })) ?? ""), from: from + $last, to: from + offset })
+				value = Str.from_utf8(bytes.sublist({ start: $last, len: offset - $last })) ?? ""
+				$pieces = List.append($pieces, { content: text_slice(item, value), from: from + $last, to: from + offset })
 				$last = offset
 			}
 			inside = match cuts.find_first(|cut| !is_boundary(bytes, cut - from)) {
@@ -1785,6 +1835,13 @@ split_content = |item, from, size, cuts|
 
 		(_, Ok(cut)) => { pieces: [{ content: item, from, to: from + size }], inside: Boundary(cut) }
 	}
+
+# Keep the input spelling of a text piece when an edit divides it.
+text_slice : Document.RunContent, Str -> Document.RunContent
+text_slice = |item, value| match item {
+	FieldCode(_) => FieldCode(value)
+	_ => Text(value)
+}
 
 # Whether an offset into UTF-8 text is between characters.
 is_boundary : List(U8), U64 -> Bool
@@ -1853,7 +1910,7 @@ at_block = |blocks, state, at, apply| {
 			Paragraph(_) => Bool.True
 			_ => Bool.False
 		}
-		if begins_line and line_start($state) and $state.text.len() == at {
+		if begins_line and line_start($state) and $state.text.count_utf8_bytes() == at {
 			outcome = match apply(blocks, $index, $state) {
 				Ok(edited) => Applied(edited)
 				Err(problem) => Failed(problem)
@@ -1969,14 +2026,7 @@ begins = |block|
 
 # Whether the current text so far ends a line, with no paragraph to join.
 line_start : TextState -> Bool
-line_start = |state|
-	!state.joining
-		and (
-			match state.text.last() {
-				Ok(byte) => byte == 10
-				Err(_) => Bool.True
-			}
-		)
+line_start = |state| !state.joining and (state.text.is_empty() or state.text.ends_with("\n"))
 
 # The paragraphs and tables of blocks in reading order, through content
 # controls but not into tables.
@@ -2161,12 +2211,12 @@ deleted_at = |items, index, state, span, made| {
 		if $last == Err(NotFound) {
 			$state = block_text($state, block, Current)
 			ends = match block {
-				Paragraph(_) | Table(_) | Container(_) => !$state.joining and $state.text.len() == span.end
+				Paragraph(_) | Table(_) | Container(_) => !$state.joining and $state.text.count_utf8_bytes() == span.end
 				_ => Bool.False
 			}
 			if ends {
 				$last = Ok($at)
-			} else if $state.text.len() > span.end {
+			} else if $state.text.count_utf8_bytes() > span.end {
 				return Err(NotABlockBoundary(span.end))
 			}
 			$at = $at + 1
