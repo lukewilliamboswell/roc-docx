@@ -48,13 +48,13 @@ Lenient :: [].{
 			return { attributes, repairs: [] }
 		}
 		missing = required.keep_if(|entry| !attributes.any(|attribute| is_w(attribute.name, entry.attribute)))
-		if missing.is_empty() and !attributes.any(|attribute| rounded(whole, attribute).is_ok()) {
+		if missing.is_empty() and !attributes.any(|attribute| rounded(name.local, whole, attribute).is_ok()) {
 			return { attributes, repairs: [] }
 		}
 		var $attributes = List.with_capacity(attributes.len() + missing.len())
 		var $repairs = List.with_capacity(missing.len() + 1)
 		for attribute in attributes {
-			match rounded(whole, attribute) {
+			match rounded(name.local, whole, attribute) {
 				Ok(value) => {
 					$attributes = List.append($attributes, { name: attribute.name, value })
 					$repairs = List.append($repairs, Rounded({ element: name.local, attribute: attribute.name.local, value: attribute.value }))
@@ -93,50 +93,219 @@ Lenient :: [].{
 			_ => []
 		}
 
+	## The equality key of an XML Schema integer lexical form. Preserve malformed
+	## text verbatim. Keys disregard the optional plus sign, redundant zeroes
+	## and surrounding XML whitespace without limiting the integer's magnitude.
+	integer_key : Str -> Str
+	integer_key = |text| {
+		if text.count_utf8_bytes() <= 1 {
+			return text
+		}
+		var $at = 0.U64
+		var $start = 0.U64
+		var $end = 0.U64
+		var $leading = 0.U64
+		var $sign = Bool.False
+		var $negative = Bool.False
+		for byte in text.iter_utf8() {
+			if byte >= '0' and byte <= '9' {
+				if $end != 0 and $end != $at {
+					return text
+				}
+				$end = $at + 1
+				if byte == '0' and $at == $start + $leading {
+					$leading = $leading + 1
+				}
+			} else if byte == ' ' or byte == '\t' or byte == '\r' or byte == '\n' {
+				if $end == 0 {
+					if $sign {
+						return text
+					}
+					$start = $at + 1
+				}
+			} else if (byte == '+' or byte == '-') and $end == 0 and !$sign {
+				$sign = Bool.True
+				$negative = byte == '-'
+				$start = $at + 1
+			} else {
+				return text
+			}
+			$at = $at + 1
+		}
+		if $end == 0 or ($end == $at and $leading == 0 and ($start == 0 or ($negative and $start == 1))) {
+			return text
+		}
+		first = $start + $leading
+		if first == $end {
+			return "0"
+		}
+		cropped = text.drop_last_bytes($at - $end) ?? return text
+		if $negative and $leading == 0 {
+			return cropped.drop_first_bytes($start - 1) ?? text
+		}
+		magnitude = cropped.drop_first_bytes(first) ?? return text
+		if ($negative) "-".concat(magnitude) else magnitude
+	}
+
 	## A decimal number, an optional sign, digits and an optional fraction,
 	## multiplied by `factor` and rounded to the nearest whole number, halves
-	## away from zero; `exact` says nothing was rounded away. At most fifteen
-	## digits are read, so the value cannot overflow: a number with more
-	## before its point is not one, and digits past the fifteenth that follow
-	## the point only make the value inexact; with a factor of one the value
-	## is rounded as the full fraction would be (`863.9999999999999` is 864).
+	## away from zero. The `exact` flag says the scaled value was already whole.
+	## Up to fifteen digits before the point and factors up to 1000 are accepted,
+	## bounding the result. All fractional digits contribute to rounding.
 	decimal : Str, U64 -> Try({ value : I64, exact : Bool }, [NotNumber])
-	decimal = |text, factor| {
-		bytes = text.to_utf8()
-		negative = bytes.first() == Ok('-')
-		start = if (negative or bytes.first() == Ok('+')) 1 else 0
-		var $mantissa = 0.U64
-		var $scale = 1.U64
-		var $digits = 0.U64
-		var $point = Bool.False
-		var $dropped = Bool.False
-		var $index = start
-		while $index < bytes.len() {
-			byte = bytes.get($index) ?? 0
-			if byte == '.' and !$point {
-				$point = Bool.True
-			} else if byte >= '0' and byte <= '9' and $digits < 15 {
-				$mantissa = $mantissa * 10 + (byte - '0').to_u64()
-				$digits = $digits + 1
-				if $point {
-					$scale = $scale * 10
-				}
-			} else if byte >= '0' and byte <= '9' and $point {
-				$dropped = $dropped or byte != '0'
-			} else {
-				return Err(NotNumber)
-			}
-			$index = $index + 1
+	decimal = |text, factor| signed_decimal(text, factor, Narrow)
+
+	## A signed measure rounded as [Lenient.decimal], covering the full I64
+	## model range. A larger magnitude is left for the caller to preserve.
+	measure : Str, U64 -> Try({ value : I64, exact : Bool }, [NotNumber])
+	measure = |text, factor| signed_decimal(text, factor, Signed)
+
+	## An unsigned twip measure rounded as [Lenient.decimal], covering the
+	## full U64 model range. A negative rounded value cannot be held.
+	unsigned_measure : Str -> Try(U64, [NotNumber])
+	unsigned_measure = |text| {
+		read = magnitude(text, 1, Unsigned)?
+		if read.negative and read.amount != 0 {
+			Err(NotNumber)
+		} else {
+			Ok(read.amount)
 		}
-		if $digits == 0 or factor > 1_000 {
-			return Err(NotNumber)
-		}
-		scaled = $mantissa * factor
-		magnitude = scaled // $scale + (if (2 * (scaled % $scale) >= $scale) 1 else 0)
-		value = magnitude.to_i64_wrap()
-		Ok({ value: if (negative) -value else value, exact: scaled % $scale == 0 and !$dropped })
 	}
 }
+
+MeasureRange : [Narrow, Signed, Unsigned]
+
+signed_decimal : Str, U64, MeasureRange -> Try({ value : I64, exact : Bool }, [NotNumber])
+signed_decimal = |text, factor, range| {
+	read = magnitude(text, factor, range)?
+	# Apply the sign before reinterpreting the bits so I64.lowest does not
+	# need to be negated as a signed integer.
+	bits = if (read.negative) (0.U64).minus_wrap(read.amount) else read.amount
+	Ok({ value: bits.to_i64_wrap(), exact: read.exact })
+}
+
+magnitude : Str, U64, MeasureRange -> Try({ amount : U64, negative : Bool, exact : Bool }, [NotNumber])
+magnitude = |text, factor, range| {
+	bytes = text.to_utf8()
+	first = bytes.first() ?? 0
+	negative = first == '-'
+	start = if (negative or first == '+') 1 else 0
+	if factor > 1_000 or start == bytes.len() {
+		return Err(NotNumber)
+	}
+	var $whole = 0.U64
+	var $index = start
+	var $point = Bool.False
+	while $index < bytes.len() and !$point {
+		byte = bytes.get($index) ?? 0
+		if byte == '.' {
+			$point = Bool.True
+		} else if byte >= '0' and byte <= '9' {
+			digit = (byte - '0').to_u64()
+			if $index - start >= 15 and (range == Narrow or $whole > (U64.highest - digit) // 10) {
+				return Err(NotNumber)
+			}
+			$whole = $whole * 10 + digit
+		} else {
+			return Err(NotNumber)
+		}
+		$index = $index + 1
+	}
+	if $point and bytes.len() == start + 1 {
+		return Err(NotNumber)
+	}
+	fraction = match bytes.len() - $index {
+		0 => { rounded: 0, exact: Bool.True }
+		1 => {
+			digit = fraction_digit(bytes, $index)?
+			scaled = digit * factor.to_u32_wrap()
+			{ rounded: ((scaled + 5) // 10).to_u64(), exact: scaled % 10 == 0 }
+		}
+		2 => scale_prefix(bytes, $index, factor.to_u32_wrap())?
+		_ =>
+			if factor == 1 or factor == 50 {
+				scale_prefix(bytes, $index, factor.to_u32_wrap())?
+			} else {
+				scale_fraction(bytes, $index, factor.to_u32_wrap())?
+			}
+	}
+	# At most fifteen whole digits and a factor of at most 1000 fit either
+	# range even after rounding. Guard scaling only for wider numbers.
+	if range != Narrow and $whole >= 1_000_000_000_000_000 and factor != 0 {
+		maximum = if range == Unsigned {
+			U64.highest
+		} else {
+			9_223_372_036_854_775_807 + (if (negative) 1 else 0)
+		}
+		if $whole > (maximum - fraction.rounded) // factor {
+			return Err(NotNumber)
+		}
+	}
+	Ok({ amount: $whole * factor + fraction.rounded, negative, exact: fraction.exact })
+}
+
+# A fraction of up to two digits is exact in hundredths. For twips and
+# percent, both the integral and halfway boundaries are also multiples of
+# .01. Read those digits, then validate the rest in document order, where
+# a nonzero digit only changes exactness.
+scale_prefix : List(U8), U64, U32 -> Try({ rounded : U64, exact : Bool }, [NotNumber])
+scale_prefix = |bytes, start, factor| {
+	first = fraction_digit(bytes, start)?
+	second = fraction_digit(bytes, start + 1)?
+	scaled = (first * 10 + second) * factor
+	var $exact = scaled % 100 == 0
+	var $index = start + 2
+	while $index < bytes.len() {
+		digit = fraction_digit(bytes, $index)?
+		$exact = $exact and digit == 0
+		$index = $index + 1
+	}
+	Ok({ rounded: ((scaled + 50) // 100).to_u64(), exact: $exact })
+}
+
+fraction_digit : List(U8), U64 -> Try(U32, [NotNumber])
+fraction_digit = |bytes, index| {
+	byte = bytes.get(index) ?? '0'
+	if byte < '0' or byte > '9' {
+		Err(NotNumber)
+	} else {
+		Ok((byte - '0').to_u32())
+	}
+}
+
+# Validate from the point forwards, then multiply from right to left,
+# handling groups of four decimal digits until only the leading digits
+# remain. Each group adds a carry of at most 999 to at most 9999 * 1000.
+scale_fraction : List(U8), U64, U32 -> Try({ rounded : U64, exact : Bool }, [NotNumber])
+scale_fraction = |bytes, start, factor| {
+	var $front = start
+	while $front < bytes.len() {
+		_ = fraction_digit(bytes, $front)?
+		$front = $front + 1
+	}
+	var $index = bytes.len()
+	var $carry = 0.U32
+	var $exact = Bool.True
+	while $index - start > 4 {
+		$index = $index - 4
+		group = decoded_digit(bytes, $index) * 1000 + decoded_digit(bytes, $index + 1) * 100 + decoded_digit(bytes, $index + 2) * 10 + decoded_digit(bytes, $index + 3)
+		product = group * factor + $carry
+		$carry = product // 10_000
+		$exact = $exact and product % 10_000 == 0
+	}
+	var $tenths = 0.U32
+	while $index > start {
+		$index = $index - 1
+		product = decoded_digit(bytes, $index) * factor + $carry
+		$carry = product // 10
+		$tenths = product % 10
+		$exact = $exact and $tenths == 0
+	}
+	Ok({ rounded: ($carry + (if ($tenths >= 5) 1 else 0)).to_u64(), exact: $exact })
+}
+
+decoded_digit : List(U8), U64 -> U32
+decoded_digit = |bytes, index| (bytes.get(index) ?? '0').minus_wrap('0').to_u32()
 
 wordprocessingml : Str
 wordprocessingml = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -154,20 +323,24 @@ is_w : XmlTree.Name, Str -> Bool
 is_w = |name, local| name.namespace == Uri(wordprocessingml) and name.local == local
 
 # The whole number an attribute of `whole` written with a fraction rounds to.
-rounded : List(Str), XmlTree.Attribute -> Try(Str, [Kept])
-rounded = |whole, attribute|
+rounded : Str, List(Str), XmlTree.Attribute -> Try(Str, [Kept])
+rounded = |element, whole, attribute|
 	if attribute.name.namespace == Uri(wordprocessingml) and whole.contains(attribute.name.local) and attribute.value.contains(".") {
-		match Lenient.decimal(attribute.value, 1) {
-			Ok(read) => Ok(read.value.to_str())
-			Err(NotNumber) => Err(Kept)
+		if element == "gridCol" {
+			value = Lenient.unsigned_measure(attribute.value) ? |_| Kept
+			Ok(value.to_str())
+		} else {
+			parse = if (element == "tblW" or element == "tcW") Lenient.measure else Lenient.decimal
+			read = parse(attribute.value, 1) ? |_| Kept
+			Ok(read.value.to_str())
 		}
 	} else {
 		Err(Kept)
 	}
 
-## Numbers are read leniently and rounded halves away from zero, digits past
-## the fifteenth after the point make a value inexact, and what is not a
-## number, or has more digits before its point than are read, is not one.
+## Numbers are read leniently and rounded halves away from zero. Long
+## fractions retain their rounding and exactness, and invalid spellings
+## or whole parts longer than fifteen digits are rejected.
 expect {
 	Lenient.decimal("12", 1) == Ok({ value: 12, exact: Bool.True })
 		and Lenient.decimal("-2.5", 1) == Ok({ value: -3, exact: Bool.False })
@@ -204,4 +377,20 @@ expect {
 		and Lenient.repair(w("tcW"), foreign) == { attributes: foreign, repairs: [] }
 		and Lenient.repair(w("jc"), [{ name: w("val"), value: "1.5" }]).repairs == []
 		and Lenient.repair({ namespace: Uri("urn:example:x"), local: "pgMar", prefix: Prefix("x") }, []).repairs == []
+}
+
+## XSD integer spellings use only XML whitespace. Invalid spellings keep
+## their literal identity, and even adjacent values wider than a machine
+## integer receive distinct keys.
+expect {
+	wide = "10000000000000000000000000000000000000000"
+	Lenient.integer_key("\t-000\r\n") == "0"
+		and Lenient.integer_key("-00${wide} ") == "-${wide}"
+		and Lenient.integer_key(" +00${wide}") == wide
+		and Lenient.integer_key("+0${wide}1") == "${wide}1"
+		and Lenient.integer_key(" ${wide} ") == wide
+		and Lenient.integer_key("+ 12") == "+ 12"
+		and Lenient.integer_key("01 2") == "01 2"
+		and Lenient.integer_key("+01a") == "+01a"
+		and Lenient.integer_key("\u(A0)12") == "\u(A0)12"
 }

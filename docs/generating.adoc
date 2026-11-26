@@ -77,10 +77,12 @@ that holds the address is added when the document is written.
 by `Build.cell`. Its `widths` are its columns' in twips (1,440 to the inch),
 and without them the columns share the width of an A4 page between one-inch
 margins; its first `header_rows` rows repeat at the top of each page it runs
-onto. A cell `span`s grid columns, and is as wide as the columns it spans; a
-cell with `merge: Restart` starts a vertical merge that the cells below it
-with `merge: Continue` join. A cell ends with a paragraph, so an empty one is
-given one.
+onto. A cell `span`s grid columns and takes their total as its preferred
+width. If that total exceeds `I64`'s maximum, the cell leaves its preferred
+width unset and keeps its span and the supplied grid widths. A cell with
+`merge: Restart` starts a vertical merge that the cells below it with
+`merge: Continue` join. A cell ends with a paragraph, so an empty one is given
+one.
 
 == Notes, headers and footers
 

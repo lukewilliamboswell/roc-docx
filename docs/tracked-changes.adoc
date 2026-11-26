@@ -100,8 +100,9 @@ instructions are `FieldCode`, so deleted content reads like any other.
 A move is recorded twice: where the content was and where it went. Each side
 stands inside a range, `MoveStart({ side, name, author, date, preserved })`
 to `MoveEnd({ side, name })`, with `side` either `Source` or `Destination`.
-The source's and the destination's ranges share the move's name, which pairs
-them. A range's `date` is a `Document.Timestamp` itself, not `Unset` or
+The reader pairs a range's start and end by the integer value of their
+identifiers. The source's and the destination's ranges share the move's
+name, which pairs them. A range's `date` is a `Document.Timestamp` itself, not `Unset` or
 `Date`, because the schema requires a move's range to say when it was made.
 
 The schema requires every change to name its author. A change without one is
@@ -286,9 +287,10 @@ where one begins to where one ends, with its line feed. Both take a
 include::../tests/manual.roc[tag=block-edits,indent=0]
 ----
 
-Where a table begins, new blocks go before the table, not into its first
-cell; to insert into a cell, give the offset where one of its paragraphs
-begins.
+The offset where a table begins addresses that table as a whole block.
+This also applies after a deleted paragraph mark, because the table starts
+a new line in `Docx.text`. To edit inside a cell, use the offset of one of
+its paragraphs beyond the table's starting offset.
 
 Tracked, a new paragraph's content is an insertion and its mark is inserted,
 and a new table's rows are inserted with their cells' content. A deleted

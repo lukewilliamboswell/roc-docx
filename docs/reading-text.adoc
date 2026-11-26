@@ -108,9 +108,12 @@ model holds the address itself, so an application never sees the
 relationship's identifier.
 
 A bookmark is a `BookmarkStart(name)` inline where it begins and a
-`BookmarkEnd(name)` where it ends, named by its name, which an internal
-link's target uses too. The document's own numeric identifiers for
-bookmarks are not part of the model.
+`BookmarkEnd(name)` where it ends. An internal link targets the bookmark by
+that name. The reader pairs each boundary by the integer value of its
+identifier, so `+01` and `1` can name the same bookmark.
+
+The `_GoBack` bookmark records the editor's last position. Reading drops
+both boundaries and reports one `GoBackBookmark` drop for the pair.
 
 What the package cannot resolve is kept rather than guessed at: a hyperlink
 whose relationship is missing, or that names no target, is a `Container` of
@@ -138,8 +141,10 @@ include::../tests/manual.roc[tag=notes,indent=0]
 ----
 
 Inside a note, the mark that numbers it is `NoteMark(kind)`. Neither the
-reference nor the mark contributes text. A reference whose mark is the text
-written after it, rather than a number, is kept as `Preserved`.
+reference nor the mark contributes text. A reference resolves by the
+integer value of its identifier in its own note part, so spellings such as
+`1` and `+001` identify the same note. A reference whose mark is the text
+written after it is kept as `Preserved`.
 
 == Fields
 
@@ -155,7 +160,19 @@ result, and `FieldMark({ kind: End, element })`. Each mark keeps its
 element, with what the model does not hold, such as a lock or form field
 data.
 
-`Docx.fields` gathers the body's fields, in the order they begin, as
+The model keeps `w:instrText` as `FieldCode(text)` so it can write the
+element and its text back. In a text view, a chunk outside the nearest complex
+field's instruction is ordinary text. The field phase carries across
+blocks in the same story. A tracked separator can make the same chunk
+visible in the final text and part of the instruction in the original
+text. Current-text edit and comment offsets count a visible chunk in UTF-8
+bytes, just as they count text stored in `w:t`.
+
+`Document.paragraph_text` starts outside a field when it is given one
+paragraph on its own. `Docx.text` carries the phase from earlier paragraphs
+when a field spans them.
+
+`Docx.fields` gathers the body's current fields, in the order they begin, as
 `{ code, result }` with the result as text; `Document.fields` does the same
 for any list of blocks, such as a note's content:
 
@@ -164,8 +181,10 @@ for any list of blocks, such as a note's content:
 include::../tests/manual.roc[tag=fields,indent=0]
 ----
 
-A field nested in another's result, as page numbers are inside the links of
-a table of contents, is part of that result too. `Document.field_target`
+A field nested in a complex field's result, as page numbers are inside
+the links of a table of contents, contributes to that result. A field used
+in a nested instruction has its own cached result, which stays out of the
+enclosing complex field's displayed text. `Document.field_target`
 reads the target a `HYPERLINK` field code names, as Word and LibreOffice
 write links in fields, in the same form as a hyperlink's target.
 
@@ -217,9 +236,10 @@ styles it is based on, then the paragraph's direct properties; for a run,
 then the character style and its bases, then the run's direct properties.
 A paragraph without a style has the document's default paragraph style.
 Toggle properties (bold, italic, caps, small caps, both strikes and hidden)
-are combined as the standard says: each kind of style that turns one on
-inverts it, so a bold character style in a bold paragraph style gives text
-that is not bold, and direct formatting sets it outright. A table style and a numbering level contribute
+start with the document defaults. Each kind of style that turns a toggle
+on inverts it. With bold off by default, a bold character style applied
+over a bold paragraph style turns it off. Direct formatting sets the
+value outright. A table style and a numbering level contribute
 only when the caller passes their properties, as `{ table_paragraph,
 table_run, numbering }`, the last from the paragraph's list level as
 <<lists>> describes. `Styles.table_properties` gives a table's: those of
@@ -268,11 +288,14 @@ heading style as a heading.
 
 A paragraph is a list item when its numbering reference names a list. The
 reference is the paragraph's `numbering`: an `instance` and a `level` from
-0, stated on the paragraph or given by its paragraph style, so the
-effective one comes from `Styles.effective_paragraph`. `Docx.numbering`
-reads the document's numbering table with `Numbering.read`, and
-`Numbering.level` resolves a reference to the list level the paragraph is
-at:
+0. `Docx.paragraphs` gives the effective reference. When the applied
+paragraph style supplies the instance, its association with a level in
+the abstract definition selects that level. Direct numbering takes
+precedence. When the definition has no matching association, the query
+uses the effective reference as stated.
+
+`Docx.numbering` reads the document's numbering table with
+`Numbering.read`. `Numbering.level` resolves a chosen instance and level:
 
 [source,roc]
 ----
@@ -399,11 +422,12 @@ states nothing:
 
 * `start`, where the section begins: `NextPage`, `Continuous` on the same
   page, `EvenPage`, `OddPage` or `NextColumn`;
-* `page_size`, its `width` and `height` in twips (1,440 to the inch) and its
-  `orientation`, `Portrait` or `Landscape`;
-* `margins`, in twips: `top`, `right`, `bottom` and `left` from the page's
-  edges to the body, `header` and `footer` from the top and bottom edges to
-  the header and footer, and the `gutter` kept for binding;
+* `page_size`, its `width` and `height` as `U64` twips (1,440 to the inch)
+  and its `orientation`, `Portrait` or `Landscape`;
+* `margins`, in twips. The `top` and `bottom` distances from the page edges
+  to the body are `I64`. The `left` and `right` distances to the body, the
+  `header` and `footer` distances to those regions, and the binding
+  `gutter` are `U64`;
 * `columns`, `Equal({ count, space, separator })` for columns of one width
   with `space` twips between them, or `Unequal({ widths, separator })` with
   each column's `width` and the `space` after it; `separator` is `Line` when
@@ -469,8 +493,9 @@ document recorded: its `application` and `app_version`, the `company`,
 `words` and the `total_time` spent editing in minutes, as `Count(n)`.
 `Docx.custom_properties` lists the properties an application or person
 added, each `Property({ name, value })` with a value that is `Text`,
-`Integer`, `Boolean` or `Date`; one of any other type is kept as
-`Preserved`.
+`Integer`, `Boolean` or `Date`. An integer must fit both its declared
+variant type and the model's `I64` range. Values outside those ranges,
+malformed integers, and unsupported property types are kept as `Preserved`.
 
 Properties are read, like the body, from the trees a document writes back,
 so they pass through `Docx.parse` and `Docx.to_bytes` unchanged.

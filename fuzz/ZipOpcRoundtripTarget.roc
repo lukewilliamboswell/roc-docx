@@ -1,9 +1,3 @@
-app [target] {
-	docx: "../../package/main.roc",
-	fuzz: platform "https://github.com/lukewilliamboswell/roc-fuzz/releases/download/0.7.0/HBigHQhVZWEF2EkLxpYK35u8P6UNsAmPYxpNFTxXK1Br.tar.zst",
-	zip: "https://github.com/lukewilliamboswell/roc-zip/releases/download/0.3.0-rc3/8Cpaf9qGq5aA38zeGsUG91Bmk8u5pbcV9jnYUZv7d4RD.tar.zst",
-}
-
 import fuzz.Fuzz
 import docx.Limits
 import docx.Opc
@@ -328,14 +322,16 @@ package_of = |items| {
 	Zip.create($entries, Fastest) ?? crash "package_of: the paths are valid"
 }
 
-target = Fuzz.target_with!({
-	name: "zip-opc-roundtrip",
-	examples: [
-		Fuzz.example({ name: "empty", revision: "1", make: || [] }),
-		Fuzz.example({ name: "small-package", revision: "1", make: small_package }),
-		Fuzz.example({ name: "large-package", revision: "1", make: large_package }),
-	],
-	generator: Fuzz.bytes,
-	test!,
-	show: |bytes| Str.inspect(bytes),
-})
+ZipOpcRoundtripTarget := [].{
+	target = Fuzz.target_with!({
+		name: "zip-opc-roundtrip",
+		examples: [
+			Fuzz.example({ name: "empty", revision: "1", make: || [] }),
+			Fuzz.example({ name: "small-package", revision: "1", make: small_package }),
+			Fuzz.example({ name: "large-package", revision: "1", make: large_package }),
+		],
+		generator: Fuzz.bytes,
+		test!,
+		show: |bytes| Str.inspect(bytes),
+	})
+}

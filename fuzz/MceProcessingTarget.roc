@@ -1,33 +1,27 @@
-app [target] {
-	docx: "../../package/main.roc",
-	fuzz: platform "https://github.com/lukewilliamboswell/roc-fuzz/releases/download/0.7.0/HBigHQhVZWEF2EkLxpYK35u8P6UNsAmPYxpNFTxXK1Br.tar.zst",
-	zip: "https://github.com/lukewilliamboswell/roc-zip/releases/download/0.3.0-rc3/8Cpaf9qGq5aA38zeGsUG91Bmk8u5pbcV9jnYUZv7d4RD.tar.zst",
-}
-
 import fuzz.Fuzz
 import docx.Mce
 import docx.XmlTree
 import zip.Zip
-import "../../tests/fixtures/gdocs/resume.docx" as gdocs_resume : List(U8)
-import "../../tests/fixtures/pandoc/basics.docx" as pandoc_basics : List(U8)
-import "../../tests/fixtures/pandoc/comments.docx" as pandoc_comments : List(U8)
-import "../../tests/fixtures/pandoc/lists.docx" as pandoc_lists : List(U8)
-import "../../tests/fixtures/pandoc/notes.docx" as pandoc_notes : List(U8)
-import "../../tests/fixtures/pandoc/review.docx" as pandoc_review : List(U8)
-import "../../tests/fixtures/pandoc/revisions.docx" as pandoc_revisions : List(U8)
-import "../../tests/fixtures/pandoc/tables.docx" as pandoc_tables : List(U8)
-import "../../tests/fixtures/libreoffice/basics.docx" as libreoffice_basics : List(U8)
-import "../../tests/fixtures/libreoffice/comments.docx" as libreoffice_comments : List(U8)
-import "../../tests/fixtures/libreoffice/lists.docx" as libreoffice_lists : List(U8)
-import "../../tests/fixtures/libreoffice/notes.docx" as libreoffice_notes : List(U8)
-import "../../tests/fixtures/libreoffice/review.docx" as libreoffice_review : List(U8)
-import "../../tests/fixtures/libreoffice/revisions.docx" as libreoffice_revisions : List(U8)
-import "../../tests/fixtures/libreoffice/tables.docx" as libreoffice_tables : List(U8)
-import "../../tests/fixtures/word/comments.docx" as word_comments : List(U8)
-import "../../tests/fixtures/word/pages.docx" as word_pages : List(U8)
-import "../../tests/fixtures/word/report.docx" as word_report : List(U8)
-import "../../tests/fixtures/word/revisions.docx" as word_revisions : List(U8)
-import "../../tests/fixtures/word/tables.docx" as word_tables : List(U8)
+import "../tests/fixtures/gdocs/resume.docx" as gdocs_resume : List(U8)
+import "../tests/fixtures/pandoc/basics.docx" as pandoc_basics : List(U8)
+import "../tests/fixtures/pandoc/comments.docx" as pandoc_comments : List(U8)
+import "../tests/fixtures/pandoc/lists.docx" as pandoc_lists : List(U8)
+import "../tests/fixtures/pandoc/notes.docx" as pandoc_notes : List(U8)
+import "../tests/fixtures/pandoc/review.docx" as pandoc_review : List(U8)
+import "../tests/fixtures/pandoc/revisions.docx" as pandoc_revisions : List(U8)
+import "../tests/fixtures/pandoc/tables.docx" as pandoc_tables : List(U8)
+import "../tests/fixtures/libreoffice/basics.docx" as libreoffice_basics : List(U8)
+import "../tests/fixtures/libreoffice/comments.docx" as libreoffice_comments : List(U8)
+import "../tests/fixtures/libreoffice/lists.docx" as libreoffice_lists : List(U8)
+import "../tests/fixtures/libreoffice/notes.docx" as libreoffice_notes : List(U8)
+import "../tests/fixtures/libreoffice/review.docx" as libreoffice_review : List(U8)
+import "../tests/fixtures/libreoffice/revisions.docx" as libreoffice_revisions : List(U8)
+import "../tests/fixtures/libreoffice/tables.docx" as libreoffice_tables : List(U8)
+import "../tests/fixtures/word/comments.docx" as word_comments : List(U8)
+import "../tests/fixtures/word/pages.docx" as word_pages : List(U8)
+import "../tests/fixtures/word/report.docx" as word_report : List(U8)
+import "../tests/fixtures/word/revisions.docx" as word_revisions : List(U8)
+import "../tests/fixtures/word/tables.docx" as word_tables : List(U8)
 
 ## MCE processing gives the interpreted tree that a separately written
 ## reading of the Part 3 rules gives, reports the same undeclared extension
@@ -594,13 +588,15 @@ compatibility_attribute = |variant| {
 pick : List(Str), U64 -> Str
 pick = |choices, index| choices.get(index % choices.len()) ?? ""
 
-target = Fuzz.target_with!({
-	name: "mce-processing",
-	examples: [
-		Fuzz.example({ name: "small-tree", revision: "1", make: || Generated(small_program) }),
-		Fuzz.example({ name: "large-tree", revision: "1", make: || Generated(large_program) }),
-	].concat(fixtures.map_with_index(|fixture, index| Fuzz.example({ name: fixture.name, revision: "1", make: || Fixture(index) }))),
-	generator,
-	test!,
-	show: |input| Str.inspect(input),
-})
+MceProcessingTarget := [].{
+	target = Fuzz.target_with!({
+		name: "mce-processing",
+		examples: [
+			Fuzz.example({ name: "small-tree", revision: "1", make: || Generated(small_program) }),
+			Fuzz.example({ name: "large-tree", revision: "1", make: || Generated(large_program) }),
+		].concat(fixtures.map_with_index(|fixture, index| Fuzz.example({ name: fixture.name, revision: "1", make: || Fixture(index) }))),
+		generator,
+		test!,
+		show: |input| Str.inspect(input),
+	})
+}

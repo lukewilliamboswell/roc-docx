@@ -1,9 +1,3 @@
-app [target] {
-	docx: "../../package/main.roc",
-	fuzz: platform "https://github.com/lukewilliamboswell/roc-fuzz/releases/download/0.7.0/HBigHQhVZWEF2EkLxpYK35u8P6UNsAmPYxpNFTxXK1Br.tar.zst",
-	zip: "https://github.com/lukewilliamboswell/roc-zip/releases/download/0.3.0-rc3/8Cpaf9qGq5aA38zeGsUG91Bmk8u5pbcV9jnYUZv7d4RD.tar.zst",
-}
-
 import fuzz.Fuzz
 import docx.Limits
 import docx.Opc
@@ -269,18 +263,20 @@ write_u32 = |bytes, at, value|
 		.concat([1, 256, 65_536, 16_777_216].map(|unit| ((value // unit) % 256).to_u8_wrap()))
 		.concat(bytes.drop_first(at + 4))
 
-target = Fuzz.target_with!({
-	name: "opc-open-never-crashes",
-	examples: [
-		Fuzz.example({ name: "empty", revision: "1", make: || [] }),
-		Fuzz.example({ name: "zip-signature-only", revision: "1", make: || [0x50, 0x4B, 0x03, 0x04] }),
-		Fuzz.example({ name: "minimal-package", revision: "1", make: minimal_package }),
-		Fuzz.example({ name: "truthful-bomb", revision: "1", make: truthful_bomb }),
-		Fuzz.example({ name: "lying-bomb", revision: "1", make: lying_bomb }),
-		Fuzz.example({ name: "compressible-package", revision: "1", make: compressible_package }),
-		Fuzz.example({ name: "long-part-name", revision: "1", make: long_part_name_package }),
-	],
-	generator: Fuzz.bytes,
-	test!,
-	show: |bytes| Str.inspect(bytes),
-})
+OpcOpenTarget := [].{
+	target = Fuzz.target_with!({
+		name: "opc-open-never-crashes",
+		examples: [
+			Fuzz.example({ name: "empty", revision: "1", make: || [] }),
+			Fuzz.example({ name: "zip-signature-only", revision: "1", make: || [0x50, 0x4B, 0x03, 0x04] }),
+			Fuzz.example({ name: "minimal-package", revision: "1", make: minimal_package }),
+			Fuzz.example({ name: "truthful-bomb", revision: "1", make: truthful_bomb }),
+			Fuzz.example({ name: "lying-bomb", revision: "1", make: lying_bomb }),
+			Fuzz.example({ name: "compressible-package", revision: "1", make: compressible_package }),
+			Fuzz.example({ name: "long-part-name", revision: "1", make: long_part_name_package }),
+		],
+		generator: Fuzz.bytes,
+		test!,
+		show: |bytes| Str.inspect(bytes),
+	})
+}

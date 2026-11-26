@@ -279,9 +279,10 @@ WmlRead :: [].{
 	## property with a name and one value, text (`vt:lpwstr`, `vt:lpstr`,
 	## `vt:bstr`), a whole number (`vt:i1` to `vt:i8`, `vt:int`, `vt:ui1` to
 	## `vt:ui8`, `vt:uint`), a truth value (`vt:bool`) or a date (`vt:filetime`,
-	## `vt:date`), is read; any other is kept as it was read. The property's
-	## format and identifier attributes are how the part numbers it, not part
-	## of the property. A tree whose root is not custom properties has none.
+	## `vt:date`), is read. An integer must fit its declared type and I64.
+	## Other values retain their XML. The format and identifier attributes
+	## number properties within their part. A custom properties root supplies
+	## the list, and other roots yield an empty list.
 	custom_properties : XmlTree.Node -> List(Document.CustomProperty)
 	custom_properties = |tree|
 		property_elements(tree, custom_namespace, "Properties").map(
@@ -443,11 +444,17 @@ names_step = |state, event|
 			}
 	}
 
+# Literal matches take precedence when a nonconforming input has more
+# than one spelling of the same ID. Also register its canonical alias.
 places : List(Str) -> Dict(Str, U64)
 places = |ids| {
 	var $places = Dict.with_capacity(ids.len())
 	var $index = 0.U64
 	for id in ids {
+		canonical = Lenient.integer_key(id)
+		if canonical != id and !$places.contains(canonical) {
+			$places = $places.insert(canonical, $index)
+		}
 		$places = $places.insert(id, $index)
 		$index = $index + 1
 	}
@@ -522,10 +529,23 @@ range_rule = |name, attributes| {
 with_name : RangeNames, { range : [Bookmark, MoveSource, MoveDestination], id : Str, name : Str } -> RangeNames
 with_name = |names, named|
 	match named.range {
-		Bookmark => { ..names, bookmarks: names.bookmarks.insert(named.id, named.name) }
-		MoveSource => { ..names, move_sources: names.move_sources.insert(named.id, named.name) }
-		MoveDestination => { ..names, move_destinations: names.move_destinations.insert(named.id, named.name) }
+		Bookmark => { ..names, bookmarks: insert_range_name(names.bookmarks, named.id, named.name) }
+		MoveSource => { ..names, move_sources: insert_range_name(names.move_sources, named.id, named.name) }
+		MoveDestination => { ..names, move_destinations: insert_range_name(names.move_destinations, named.id, named.name) }
 	}
+
+# Keep literal matching for nonconforming duplicate IDs and register the
+# integer value for a boundary that spells the same ID differently.
+insert_range_name : Dict(Str, Str), Str, Str -> Dict(Str, Str)
+insert_range_name = |names, id, name| {
+	key = Lenient.integer_key(id)
+	with_alias = if key != id and !names.contains(key) {
+		names.insert(key, name)
+	} else {
+		names
+	}
+	with_alias.insert(id, name)
+}
 
 # The note elements of a footnotes or endnotes part's root.
 note_elements : XmlTree.Node -> List(Element)
@@ -605,13 +625,22 @@ timestamp = |written| {
 	rest = bytes.len() - $zone
 	offset = if rest == 0 or (rest == 1 and at($zone, 'Z')) {
 		0
-	} else if rest == 6 and (at($zone, '+') or at($zone, '-')) and at($zone + 3, ':') {
-		minutes = number($zone + 1, 2)? * 60 + number($zone + 4, 2)?
-		if (at($zone, '-')) 0 - minutes else minutes
+	} else if rest == 6 and at($zone + 3, ':') {
+		sign = bytes.get($zone) ? |_| NotDate
+		if sign != '+' and sign != '-' {
+			return Err(NotDate)
+		}
+		zone_hour = number($zone + 1, 2)?
+		zone_minute = number($zone + 4, 2)?
+		minutes = zone_hour * 60 + zone_minute
+		if zone_minute >= 60 or minutes > 14 * 60 {
+			return Err(NotDate)
+		}
+		if (sign == '-') 0 - minutes else minutes
 	} else {
 		return Err(NotDate)
 	}
-	if month < 1 or month > 12 or day < 1 or day > days_in_month(year, month) or hour > 23 or minute > 59 or second > 59 {
+	if year == 0 or month < 1 or month > 12 or day < 1 or day > days_in_month(year, month) or hour > 23 or minute > 59 or second > 59 {
 		return Err(NotDate)
 	}
 	Ok({ written, utc_seconds: days_from_civil(year, month, day) * 86400 + hour * 3600 + minute * 60 + second - offset * 60 })
@@ -627,12 +656,12 @@ days_in_month = |year, month|
 		31
 	}
 
-# The days from 1970-01-01 to a day of the proleptic Gregorian calendar,
+# The days from 1970-01-01 to a day in a positive Gregorian year,
 # counting each year from March so that a leap day ends it.
 days_from_civil : I64, I64, I64 -> I64
 days_from_civil = |year, month, day| {
 	shifted = if (month <= 2) year - 1 else year
-	era = (if (shifted >= 0) shifted else shifted - 399) // 400
+	era = shifted // 400
 	of_era = shifted - era * 400
 	of_year = (153 * (if (month > 2) month - 3 else month + 9) + 2) // 5 + day - 1
 	era * 146097 + of_era * 365 + of_era // 4 - of_era // 100 + of_year - 719468
@@ -1377,8 +1406,8 @@ page_size = |element| {
 	if !holds(element, ["w", "h", "orient"]) {
 		return Err(CannotHold)
 	}
-	width = unsigned(element, "w")?
-	height = unsigned(element, "h")?
+	width = unsigned_measure(element, "w")?
+	height = unsigned_measure(element, "h")?
 	orientation = match value_of(element, "orient") {
 		Err(NotFound) | Ok("portrait") => Portrait
 		Ok("landscape") => Landscape
@@ -1394,29 +1423,29 @@ margins = |element| {
 	if !holds(element, ["top", "right", "bottom", "left", "header", "footer", "gutter"]) {
 		return Err(CannotHold)
 	}
-	top = whole_or_zero(element, "top")?
-	right = unsigned_or_zero(element, "right")?
-	bottom = whole_or_zero(element, "bottom")?
-	left = unsigned_or_zero(element, "left")?
-	header = unsigned_or_zero(element, "header")?
-	footer = unsigned_or_zero(element, "footer")?
-	gutter = unsigned_or_zero(element, "gutter")?
+	top = signed_measure_or_zero(element, "top")?
+	right = unsigned_measure_or_zero(element, "right")?
+	bottom = signed_measure_or_zero(element, "bottom")?
+	left = unsigned_measure_or_zero(element, "left")?
+	header = unsigned_measure_or_zero(element, "header")?
+	footer = unsigned_measure_or_zero(element, "footer")?
+	gutter = unsigned_measure_or_zero(element, "gutter")?
 	noticed = [top.noticed, right.noticed, bottom.noticed, left.noticed, header.noticed, footer.noticed, gutter.noticed].fold(List.with_capacity(0), List.concat)
 	Ok({ value: Margins({ top: top.value, right: right.value, bottom: bottom.value, left: left.value, header: header.value, footer: footer.value, gutter: gutter.value }), noticed })
 }
 
-whole_or_zero : Element, Str -> Try(Read(I64), [CannotHold])
-whole_or_zero = |element, local|
-	match value_of(element, local) {
-		Ok(_) => whole(element, local)
-		Err(NotFound) => Ok({ value: 0, noticed: [Defaulted({ element: element.name.local, attribute: local })] })
-	}
+signed_measure_or_zero : Element, Str -> Try(Read(I64), [CannotHold])
+signed_measure_or_zero = |element, local|
+	measure_or_zero(element, local, 0.I64, |text| Lenient.measure(text, 1).map_ok(|read| read.value))
 
-unsigned_or_zero : Element, Str -> Try(Read(U64), [CannotHold])
-unsigned_or_zero = |element, local|
+unsigned_measure_or_zero : Element, Str -> Try(Read(U64), [CannotHold])
+unsigned_measure_or_zero = |element, local| measure_or_zero(element, local, 0.U64, Lenient.unsigned_measure)
+
+measure_or_zero : Element, Str, a, (Str -> Try(a, [NotNumber])) -> Try(Read(a), [CannotHold])
+measure_or_zero = |element, local, zero, read|
 	match value_of(element, local) {
-		Ok(_) => unsigned(element, local)
-		Err(NotFound) => Ok({ value: 0, noticed: [Defaulted({ element: element.name.local, attribute: local })] })
+		Ok(text) => Ok({ value: read(text) ? |_| CannotHold, noticed: if (text.contains(".")) [rounded(element, local, text)] else [] })
+		Err(NotFound) => Ok({ value: zero, noticed: [Defaulted({ element: element.name.local, attribute: local })] })
 	}
 
 SectionColumns : [Unset, Equal({ count : U64, space : U64, separator : [NoLine, Line] }), Unequal({ widths : List({ width : U64, space : U64 }), separator : [NoLine, Line] })]
@@ -1607,22 +1636,68 @@ custom_property = |node| {
 	text = plain_text(held)?
 	value = match held.name.local {
 		"lpwstr" | "lpstr" | "bstr" => Text(text)
-		"i1" | "i2" | "i4" | "i8" | "int" | "ui1" | "ui2" | "ui4" | "ui8" | "uint" => Integer(integer(text)?)
 		"bool" => Boolean(toggle(text)? == On)
 		"filetime" | "date" => if (is_w3c_date(text)) Date(text) else return Err(CannotHold)
-		_ => return Err(CannotHold)
+		kind => Integer(custom_integer(kind, text)?)
 	}
 	Ok(Property({ name, value }))
 }
 
-# A whole number, an optional sign and decimal digits, as [decimal] reads it.
-integer : Str -> Try(I64, [CannotHold])
-integer = |text|
-	if text.contains(".") {
-		Err(CannotHold)
-	} else {
-		Ok((Lenient.decimal(text, 1) ? |_| CannotHold).value)
+# Decimal XML Schema integers, in the intersection of the variant's
+# declared carrier and the I64 property model.
+custom_integer : Str, Str -> Try(I64, [CannotHold])
+custom_integer = |kind, text| {
+	limits : { negative : U64, positive : U64 }
+	limits = match kind {
+		"i1" => { negative: 128, positive: 127 }
+		"i2" => { negative: 32_768, positive: 32_767 }
+		"i4" | "int" => { negative: 2_147_483_648, positive: 2_147_483_647 }
+		"i8" => { negative: 9_223_372_036_854_775_808, positive: 9_223_372_036_854_775_807 }
+		"ui1" => { negative: 0, positive: 255 }
+		"ui2" => { negative: 0, positive: 65_535 }
+		"ui4" | "uint" => { negative: 0, positive: 4_294_967_295 }
+		"ui8" => { negative: 0, positive: 9_223_372_036_854_775_807 }
+		_ => return Err(CannotHold)
 	}
+	bytes = text.to_utf8()
+	var $start = 0.U64
+	while $start < bytes.len() and is_space(bytes.get($start) ?? 0) {
+		$start = $start + 1
+	}
+	var $end = bytes.len()
+	while $end > $start and is_space(bytes.get($end - 1) ?? 0) {
+		$end = $end - 1
+	}
+	first = bytes.get($start) ?? 0
+	negative = first == '-'
+	if negative or first == '+' {
+		$start = $start + 1
+	}
+	if $start == $end {
+		return Err(CannotHold)
+	}
+
+	limit = if (negative) limits.negative else limits.positive
+	prefix_limit = limit // 10
+	digit_limit = limit % 10
+	var $magnitude = 0.U64
+	var $index = $start
+	while $index < $end {
+		byte = bytes.get($index) ?? 0
+		if byte < '0' or byte > '9' {
+			return Err(CannotHold)
+		}
+		digit = (byte - '0').to_u64()
+		if $magnitude > prefix_limit or ($magnitude == prefix_limit and digit > digit_limit) {
+			return Err(CannotHold)
+		}
+		$magnitude = $magnitude * 10 + digit
+		$index = $index + 1
+	}
+	# Apply the sign in U64 so the magnitude of I64.lowest fits.
+	bits = if (negative) (0.U64).minus_wrap($magnitude) else $magnitude
+	Ok(bits.to_i64_wrap())
+}
 
 # The text of an element without attributes that holds only text.
 plain_text : Element -> Try(Str, [CannotHold])
@@ -1878,7 +1953,7 @@ grid = |children, diagnostics| {
 	var $diagnostics = diagnostics
 	for child in kept(children) {
 		read = match child {
-			Element(element) if is_w(element.name, "gridCol") and holds(element, ["w"]) => unsigned(element, "w")
+			Element(element) if is_w(element.name, "gridCol") and holds(element, ["w"]) => unsigned_measure(element, "w")
 			_ => Err(CannotHold)
 		}
 		match read {
@@ -2226,16 +2301,16 @@ width = |element| {
 		Ok("pct") => {
 			text = value_of(element, "w") ? |_| CannotHold
 			if text.ends_with("%") {
-				read = Lenient.decimal(Str.drop_suffix(text, "%"), 50) ? |_| CannotHold
+				read = Lenient.measure(Str.drop_suffix(text, "%"), 50) ? |_| CannotHold
 				Ok({ value: Fiftieths(read.value), noticed: if (read.exact) [] else [rounded(element, "w", text)] })
 			} else {
-				read = whole(element, "w")?
+				read = signed_measure(element, "w")?
 				Ok({ value: Fiftieths(read.value), noticed: read.noticed })
 			}
 		}
 
 		Ok("dxa") | Err(NotFound) => {
-			read = whole(element, "w")?
+			read = signed_measure(element, "w")?
 			Ok({ value: Twips(read.value), noticed: read.noticed })
 		}
 
@@ -2411,6 +2486,20 @@ whole = |element, local| {
 	Ok({ value: read.value, noticed: if (text.contains(".")) [rounded(element, local, text)] else [] })
 }
 
+signed_measure : Element, Str -> Try(Read(I64), [CannotHold])
+signed_measure = |element, local| {
+	text = value_of(element, local) ? |_| CannotHold
+	read = Lenient.measure(text, 1) ? |_| CannotHold
+	Ok({ value: read.value, noticed: if (text.contains(".")) [rounded(element, local, text)] else [] })
+}
+
+unsigned_measure : Element, Str -> Try(Read(U64), [CannotHold])
+unsigned_measure = |element, local| {
+	text = value_of(element, local) ? |_| CannotHold
+	read = Lenient.unsigned_measure(text) ? |_| CannotHold
+	Ok({ value: read, noticed: if (text.contains(".")) [rounded(element, local, text)] else [] })
+}
+
 unsigned : Element, Str -> Try(Read(U64), [CannotHold])
 unsigned = |element, local| {
 	read = whole(element, local)?
@@ -2512,7 +2601,8 @@ move_end = |element, within|
 	if only(element, ["id"]) {
 		id = value_of(element, "id") ? |_| Unknown
 		(side, names) = if (element.name.local == "moveFromRangeEnd") (Source, within.move_sources) else (Destination, within.move_destinations)
-		Ok(MoveEnd({ side, name: names.get(id) ? |_| Unknown }))
+		name = names.get(id) ?? (names.get(Lenient.integer_key(id)) ? |_| Unknown)
+		Ok(MoveEnd({ side, name }))
 	} else {
 		Err(Unknown)
 	}
@@ -2580,7 +2670,8 @@ bookmark_end : Element, Reading -> Try(Document.Inline, [Unknown])
 bookmark_end = |element, within|
 	if only(element, ["id"]) {
 		id = value_of(element, "id") ? |_| Unknown
-		Ok(BookmarkEnd(within.bookmarks.get(id) ? |_| Unknown))
+		name = within.bookmarks.get(id) ?? (within.bookmarks.get(Lenient.integer_key(id)) ? |_| Unknown)
+		Ok(BookmarkEnd(name))
 	} else {
 		Err(Unknown)
 	}
@@ -2591,7 +2682,7 @@ comment_place : Element, Reading -> Try(U64, [Unknown])
 comment_place = |element, within|
 	if only(element, ["id"]) {
 		id = value_of(element, "id") ? |_| Unknown
-		Ok(within.comments.get(id) ? |_| Unknown)
+		Ok(within.comments.get(id) ?? (within.comments.get(Lenient.integer_key(id)) ? |_| Unknown))
 	} else {
 		Err(Unknown)
 	}
@@ -2650,7 +2741,8 @@ note_reference : Element, Document.NoteKind, Dict(Str, U64) -> Try(Document.RunC
 note_reference = |element, kind, notes|
 	if only(element, ["id"]) {
 		id = value_of(element, "id") ? |_| Unknown
-		Ok(NoteReference({ kind, note: notes.get(id) ? |_| Unknown }))
+		place = notes.get(id) ?? (notes.get(Lenient.integer_key(id)) ? |_| Unknown)
+		Ok(NoteReference({ kind, note: place }))
 	} else {
 		Err(Unknown)
 	}
@@ -3147,6 +3239,17 @@ expect {
 				_ => Bool.False
 			}
 
+		_ => Bool.False
+	}
+}
+
+## Keep exact matches to ambiguous note IDs in a malformed imported
+## part. With no exact match, a lexical alias uses the canonical entry.
+expect {
+	run_xml = "<w:r><w:footnoteReference w:id='+01'/><w:footnoteReference w:id='1'/><w:footnoteReference w:id='001'/></w:r>"
+	match read_in("<w:p>${run_xml}</w:p>", { relationships: [], footnotes: ["1", "+01"], endnotes: [], comments: [] }) {
+		[Paragraph({ content: [Run({ content: [NoteReference(one), NoteReference(two), NoteReference(three)], .. })], .. })] =>
+			[one.note, two.note, three.note] == [1, 0, 0]
 		_ => Bool.False
 	}
 }

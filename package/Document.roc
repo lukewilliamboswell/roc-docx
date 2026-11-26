@@ -19,6 +19,7 @@
 ## same way once a footnote is added, so a body or notes built a piece at a
 ## time are changed in place; every other part's model is a reading of its
 ## tree.
+import FieldPhase
 import Lenient
 import Limits
 import Mce
@@ -732,7 +733,8 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 		}
 	}
 
-	## An inline's text, as [Document.paragraph_text] counts it.
+	## The text stored in one inline, without an incoming field phase.
+	## Field marks and code tokens contribute no text.
 	inline_text : Inline -> Str
 	inline_text = |inline| Str.from_utf8(inline_text_bytes(List.with_capacity(16), inline)) ?? ""
 
@@ -742,22 +744,22 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 	append_inline_text : List(U8), Inline -> List(U8)
 	append_inline_text = |text, inline| inline_text_bytes(text, inline)
 
-	## The fields of blocks in the order they begin, through containers,
+	## The current fields of blocks in the order they begin, through containers,
 	## hyperlinks and other fields: each simple field, with its content's text
 	## as its result, and each complex field, with the code between its
 	## beginning and its separator and the text between its separator and its
 	## end, where a paragraph's end is a line feed. A field nested in
-	## another's result is part of that result too, and a complex field that
+	## another's result is part of that result too. Result text stops at an
+	## enclosing field whose instruction is still open. A complex field that
 	## never ends ends with the blocks.
 	fields : List(Block) -> List(Field)
 	fields = |blocks| {
-		var $state = { open: List.with_capacity(4), done: List.with_capacity(8), begun: 0.U64 }
-		for block in blocks {
+		first = blocks.find_first_index(may_begin_fields) ?? return []
+		var $state = { open: List.with_capacity(4), fields: List.with_capacity(8), result_start: 0.U64 }
+		for block in blocks.drop_first(first) {
 			$state = block_fields($state, block)
 		}
-		List.concat($state.done, $state.open)
-			.sort_with(|a, b| if (a.order < b.order) Before else if (a.order > b.order) After else Same)
-			.map(|field| { code: Str.from_utf8(field.code) ?? "", result: Str.from_utf8(field.result) ?? "" })
+		$state.open.fold($state.fields, store_field)
 	}
 
 	## The sections that end in blocks, in order, through containers.
@@ -769,14 +771,12 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 	## text not, and nothing from the content the model keeps without
 	## reading, so field instructions and note references contribute none. A
 	## tab is a tab character, a break of any kind a line feed, a symbol its
-	## character, a soft hyphen U+00AD and a non-breaking hyphen U+2011.
+	## character, a soft hyphen U+00AD and a non-breaking hyphen U+2011. Field
+	## phase begins empty when this paragraph is read by itself.
 	paragraph_text : Paragraph -> Str
-	paragraph_text = |paragraph| {
-		var $text = List.with_capacity(64)
-		for inline in paragraph.content {
-			$text = inline_text_bytes($text, inline)
-		}
-		Str.from_utf8($text) ?? ""
+	paragraph_text = |paragraph| match paragraph.content {
+		[Run({ content: [Text(value)], .. })] => value
+		_ => paragraph_inlines({ text: Str.with_capacity(64), phase: FieldPhase.empty }, paragraph.content).text
 	}
 
 	## A table's rows in order, through the content controls and custom XML
@@ -857,17 +857,45 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 	has_part : Document, Str -> Bool
 	has_part = |document, name| document.graph.parts.any(|part| Str.caseless_ascii_equals(part.name, name))
 
+	## An unused XML part name, preferring the absolute `.xml` name given.
+	## On collision choose the first free numbered suffix from 2, with
+	## names compared as OPC compares them, ignoring ASCII case.
+	free_xml_part_name : Document, Str -> Str
+	free_xml_part_name = |document, preferred| {
+		if !Document.has_part(document, preferred) {
+			return preferred
+		}
+		stem = preferred.drop_suffix(".xml")
+		var $suffixes = Set.with_capacity(4)
+		for part in document.graph.parts {
+			match part.name.drop_prefix_caseless_ascii(stem) {
+				Ok(suffix) => {
+					$suffixes = $suffixes.insert(suffix.with_ascii_lowercased())
+				}
+				Err(_) => {}
+			}
+		}
+		var $number = 2.U64
+		var $suffix = "2.xml"
+		while $suffixes.contains($suffix) {
+			$number = $number + 1
+			$suffix = "${$number.to_str()}.xml"
+		}
+		"${stem}${$suffix}"
+	}
+
 	## The document with a new XML part: `name`, of `content_type`, holding
 	## `tree`, and a relationship of type `kind` to it from the part named
 	## `source`, or from the package itself when `source` is `/`, whose
 	## identifier is the lowest `rIdN` from `rId1` up that no relationship of
-	## the source uses. A name the document already has, or a source it does
-	## not, changes nothing. The part is written from its tree, as
-	## [Document.to_bytes] writes every XML part.
+	## the source uses. A name the document already has, ignoring ASCII case
+	## as OPC does, or a source it does not, changes nothing. The part is
+	## written from its tree, as [Document.to_bytes] writes every XML part.
 	with_new_part : Document, { source : Str, kind : Str, name : Str, content_type : Str }, XmlTree.Node -> Document
 	with_new_part = |document, new, tree| {
 		{ pkg, graph, trees, body: held_body, notes: models } = document
-		if graph.parts.any(|part| part.name == new.name) or (new.source != "/" and !graph.parts.any(|part| part.name == new.source)) {
+		name_bytes = new.name.count_utf8_bytes()
+		if graph.parts.any(|part| part.name.count_utf8_bytes() == name_bytes and Str.caseless_ascii_equals(part.name, new.name)) or (new.source != "/" and !graph.parts.any(|part| part.name == new.source)) {
 			return { pkg, graph, trees, body: held_body, notes: models }
 		}
 		related_from = |relationships| {
@@ -1191,16 +1219,28 @@ Document :: { pkg : Opc.Package, graph : Opc.Graph, trees : Dict(Str, XmlTree.No
 
 	## The document without the part named `name`: the part, its tree, the
 	## relationships whose source it is, and every internal relationship
-	## that targets it are gone. A name that is not a part changes nothing.
+	## that targets it are gone. The part and internal targets compare
+	## without regard to ASCII case. A name that is not a part changes nothing.
 	without_part : Document, Str -> Document
 	without_part = |document, name| {
-		kept = |relationships| relationships.drop_if(|rel| rel.mode == Internal and rel.target == name)
-		parts = document.graph.parts.drop_if(|part| part.name == name).map(|part| { name: part.name, content_type: part.content_type, relationships: kept(part.relationships) })
+		kept = |relationships| relationships.drop_if(|rel| rel.mode == Internal and Str.caseless_ascii_equals(rel.target, name))
+		var $parts = List.with_capacity(document.graph.parts.len().minus_saturated(1))
+		var $removed = Err(NotFound)
+		for part in document.graph.parts {
+			if part.name == name or Str.caseless_ascii_equals(part.name, name) {
+				$removed = Ok(part.name)
+			} else if part.relationships.is_empty() {
+				$parts = $parts.append(part)
+			} else {
+				$parts = $parts.append({ ..part, relationships: kept(part.relationships) })
+			}
+		}
+		removed = $removed ?? return document
 		kept_body = match document.body {
-			Blocks(read) if read.part == name => Whole
+			Blocks(read) if read.part == removed => Whole
 			other => other
 		}
-		{ pkg: document.pkg, graph: { relationships: kept(document.graph.relationships), parts }, trees: document.trees.remove(name), body: kept_body, notes: document.notes.drop_if(|held| held.part == name) }
+		{ pkg: document.pkg, graph: { relationships: kept(document.graph.relationships), parts: $parts }, trees: document.trees.remove(removed), body: kept_body, notes: document.notes.drop_if(|held| held.part == removed) }
 	}
 
 	## Two documents are equivalent when they have the same package
@@ -1325,6 +1365,55 @@ inline_text_bytes = |text, inline|
 		Preserved(_) => text
 	}
 
+# Current text of one isolated paragraph. A simple wrapper's interior
+# has its own phase, and deletion and move-source marks have no effect.
+ParagraphText : { text : Str, phase : FieldPhase }
+
+paragraph_inlines : ParagraphText, List(Document.Inline) -> ParagraphText
+paragraph_inlines = |state, inlines| {
+	var $state = { text: state.text, phase: state.phase }
+	for inline in inlines {
+		$state = match inline {
+			Run({ content: [Text(value)], .. }) => { ..$state, text: $state.text.concat(value) }
+			Run(run) => match run.content {
+				[item] => paragraph_run($state, item)
+				_ => run.content.fold($state, paragraph_run)
+			}
+			Hyperlink({ content: [Run({ content: [Text(value)], .. })], .. }) => { ..$state, text: $state.text.concat(value) }
+			Container({ content, .. }) | Hyperlink({ content, .. }) => paragraph_inlines($state, content)
+			SimpleField({ content: [Run({ content: [Text(value)], .. })], .. }) => { ..$state, text: $state.text.concat(value) }
+			SimpleField({ content, .. }) => {
+				phase = $state.phase
+				read = paragraph_inlines({ text: $state.text, phase: FieldPhase.empty }, content)
+				{ text: read.text, phase }
+			}
+			Revision({ kind: Deletion, .. }) | Revision({ kind: MoveSource, .. }) => $state
+			Revision({ content, .. }) => paragraph_inlines($state, content)
+			_ => $state
+		}
+	}
+	$state
+}
+
+paragraph_run : ParagraphText, Document.RunContent -> ParagraphText
+paragraph_run = |state, item| match item {
+	FieldMark({ kind, .. }) => { ..state, phase: FieldPhase.step(state.phase, kind) }
+	FieldCode(value) => {
+		if FieldPhase.is_instruction(state.phase) {
+			state
+		} else {
+			{ ..state, text: state.text.concat(value) }
+		}
+	}
+	Text(value) => { ..state, text: state.text.concat(value) }
+	Tab => { ..state, text: state.text.concat("\t") }
+	Break(_) => { ..state, text: state.text.concat("\n") }
+	SoftHyphen => { ..state, text: state.text.concat("\u(AD)") }
+	NonBreakingHyphen => { ..state, text: state.text.concat("\u(2011)") }
+	Symbol({ code, .. }) => { ..state, text: state.text.concat(Str.from_utf8(utf8(code)) ?? "") }
+	_ => state
+}
+
 sections_of : List(Document.Section), Document.Block -> List(Document.Section)
 sections_of = |sections, block|
 	match block {
@@ -1403,15 +1492,34 @@ is_hyperlink : Str -> Bool
 is_hyperlink = |word| word.to_utf8().map(|byte| if (byte >= 'a' and byte <= 'z') byte - 32 else byte) == "HYPERLINK".to_utf8()
 
 # The fields begun so far, as [Document.fields] gathers them: those still
-# open, innermost last, those ended, and how many have begun.
-FieldState : { open : List(OpenField), done : List(OpenField), begun : U64 }
+# open, innermost last, those ended, and how many have begun. Results are
+# visible only to fields that began after the innermost open instruction.
+FieldState : { open : List(OpenField), fields : List(Document.Field), result_start : U64 }
 
-OpenField : { order : U64, code : List(U8), result : List(U8), in_result : Bool }
+OpenField : { order : U64, code : [Simple(Str), Complex(List(U8))], result : List(U8), enclosing_result_start : U64 }
+
+empty_field : Document.Field
+empty_field = { code: "", result: "" }
+
+store_field : List(Document.Field), OpenField -> List(Document.Field)
+store_field = |fields, field| {
+	value = { code: field_text(field.code), result: Str.from_utf8(field.result) ?? "" }
+	fields.set(field.order, value) ?? []
+}
+
+field_text : [Simple(Str), Complex(List(U8))] -> Str
+field_text = |code| match code {
+	Simple(text) => text
+	Complex(bytes) => Str.from_utf8(bytes) ?? ""
+}
 
 block_fields : FieldState, Document.Block -> FieldState
 block_fields = |state, block|
 	match block {
-		Paragraph(paragraph) => to_results(paragraph.content.fold(state, inline_fields), [10])
+		Paragraph(paragraph) => {
+			inner = paragraph.content.fold(state, inline_fields)
+			if (inner.open.is_empty()) inner else to_results(inner, [10])
+		}
 		Table(table) => Document.table_rows(table).fold(state, |by_row, row| Document.row_cells(row).fold(by_row, |by_cell, cell| cell.content.fold(by_cell, block_fields)))
 		Container({ element: _, content }) => content.fold(state, block_fields)
 		Section(_) => state
@@ -1423,16 +1531,36 @@ block_fields = |state, block|
 inline_fields : FieldState, Document.Inline -> FieldState
 inline_fields = |state, inline|
 	match inline {
-		Run(run) => run.content.fold(state, run_content_fields)
+		Run(run) => match run.content {
+			[item] => run_content_fields(state, item)
+			_ if state.open.is_empty() and !run.content.any(begins_field) => state
+			_ => run.content.fold(state, run_content_fields)
+		}
 		Hyperlink({ target: _, preserved: _, content }) => content.fold(state, inline_fields)
-		SimpleField({ code, preserved: _, content }) => {
-			inner = content.fold({ open: state.open, done: state.done, begun: state.begun + 1 }, inline_fields)
-			field = { order: state.begun, code: code.to_utf8(), result: inline_text_bytes([], inline), in_result: Bool.True }
-			{ open: inner.open, done: List.append(inner.done, field), begun: inner.begun }
+		SimpleField({ code, content, .. }) => {
+			order = state.fields.len()
+			match content {
+				[Run(run)] if !run.content.any(has_mark) => {
+					result = run.content.fold(
+						[],
+						|bytes, item| match item {
+							FieldCode(raw) => run_content_text(bytes, Text(raw))
+							_ => run_content_text(bytes, item)
+						},
+					)
+					outer = to_results(state, result)
+					return { ..outer, fields: outer.fields.append({ code, result: Str.from_utf8(result) ?? "" }) }
+				}
+				_ => {}
+			}
+			field = { order, code: Simple(code), result: [], enclosing_result_start: state.result_start }
+			inner = content.fold({ ..state, open: state.open.append(field), fields: state.fields.append(empty_field) }, inline_fields)
+			close_simple(inner, order)
 		}
 
 		Container({ element: _, content }) => content.fold(state, inline_fields)
-		Revision({ kind: _, author: _, date: _, content, preserved: _ }) => content.fold(state, inline_fields)
+		Revision({ kind: Deletion, .. }) | Revision({ kind: MoveSource, .. }) => state
+		Revision({ content, .. }) => content.fold(state, inline_fields)
 		BookmarkStart(_) => state
 		BookmarkEnd(_) => state
 		CommentStart(_) => state
@@ -1442,44 +1570,107 @@ inline_fields = |state, inline|
 		Preserved(_) => state
 	}
 
+# A prefix of plain paragraphs cannot start a field. Begin the full walk
+# at the first paragraph or other block that might contain one.
+may_begin_fields : Document.Block -> Bool
+may_begin_fields = |block| match block {
+	Paragraph(paragraph) => paragraph.content.any(
+		|inline| match inline {
+			Run(run) => run.content.any(begins_field)
+			_ => Bool.True
+		},
+	)
+	_ => Bool.True
+}
+
+begins_field : Document.RunContent -> Bool
+begins_field = |item| match item {
+	FieldMark({ kind: Begin, .. }) => Bool.True
+	_ => Bool.False
+}
+
+has_mark : Document.RunContent -> Bool
+has_mark = |item| match item {
+	FieldMark(_) => Bool.True
+	_ => Bool.False
+}
+
+# A simple field closes at its wrapper. Any incomplete complex children
+# supply their collected text and cannot affect the fields after the wrapper.
+close_simple : FieldState, U64 -> FieldState
+close_simple = |state, order| {
+	var $state = { open: state.open, fields: state.fields, result_start: state.result_start }
+	while !$state.open.is_empty() {
+		field = $state.open.last() ?? break
+		if field.order < order {
+			break
+		}
+		$state = close_field($state, field)
+		if field.order == order {
+			break
+		}
+	}
+	$state
+}
+
+close_field : FieldState, OpenField -> FieldState
+close_field = |state, field|
+	{ ..state, open: state.open.drop_last(1), fields: store_field(state.fields, field), result_start: field.enclosing_result_start }
+
 run_content_fields : FieldState, Document.RunContent -> FieldState
 run_content_fields = |state, content|
 	match content {
 		FieldMark({ kind: Begin, element: _ }) => {
-			field = { order: state.begun, code: [], result: [], in_result: Bool.False }
-			{ open: List.append(state.open, field), done: state.done, begun: state.begun + 1 }
+			order = state.fields.len()
+			field = { order, code: Complex([]), result: [], enclosing_result_start: state.result_start }
+			{ ..state, open: state.open.append(field), fields: state.fields.append(empty_field), result_start: order + 1 }
 		}
 
 		FieldMark({ kind: Separate, element: _ }) =>
 			match state.open.last() {
-				Ok(field) => { open: List.append(List.drop_last(state.open, 1), { order: field.order, code: field.code, result: field.result, in_result: Bool.True }), done: state.done, begun: state.begun }
-				Err(_) => state
+				Ok({ code: Complex(_), enclosing_result_start, .. }) => { ..state, result_start: enclosing_result_start }
+				_ => state
 			}
 
 		FieldMark({ kind: End, element: _ }) =>
 			match state.open.last() {
-				Ok(field) => { open: List.drop_last(state.open, 1), done: List.append(state.done, field), begun: state.begun }
+				Ok(field) => match field.code {
+					Complex(_) => close_field(state, field)
+					Simple(_) => state
+				}
 				Err(_) => state
 			}
 
 		FieldCode(code) =>
 			match state.open.last() {
-				Ok(field) => { open: List.append(List.drop_last(state.open, 1), { order: field.order, code: List.concat(field.code, code.to_utf8()), result: field.result, in_result: field.in_result }), done: state.done, begun: state.begun }
+				Ok({ code: Complex(bytes), .. } as field) if field.order < state.result_start =>
+					{ ..state, open: state.open.drop_last(1).append({ ..field, code: Complex(bytes.concat(code.to_utf8())) }) }
+				Ok(_) => run_results(state, Text(code))
 				Err(_) => state
 			}
 
-		_ => to_results(state, run_content_text([], content))
+		_ => if (state.open.is_empty()) state else run_results(state, content)
 	}
 
-# Text added to the result of every open field that has reached its result.
+run_results : FieldState, Document.RunContent -> FieldState
+run_results = |state, item| match state.open {
+	[] => state
+	[{ code: Simple(_), .. } as field] =>
+		{ ..state, open: state.open.set(0, { ..field, result: run_content_text(field.result, item) }) ?? [] }
+	_ => to_results(state, run_content_text([], item))
+}
+
+# Text contributes to the results of open fields until it reaches an
+# enclosing field whose instruction is still open.
 to_results : FieldState, List(U8) -> FieldState
-to_results = |state, text|
+to_results = |state, text| {
+	first = state.result_start
 	if text.is_empty() or state.open.is_empty() {
-		state
-	} else {
-		open = state.open.map(|field| if (field.in_result) { order: field.order, code: field.code, result: List.concat(field.result, text), in_result: Bool.True } else field)
-		{ open, done: state.done, begun: state.begun }
+		return state
 	}
+	open = state.open.map(|field| if (field.order < first) field else { ..field, result: List.concat(field.result, text) })
+	{ ..state, open }
+}
 
 # Run content's text appended as UTF-8. Text is appended byte by byte: a
 # short string is held inline, so its bytes as a list would be allocated.
@@ -1741,7 +1932,7 @@ scan_kept = |state, event, scan|
 		Start(start) => {
 			depth = state.depth + 1
 			go_back_start = start.name.local == "bookmarkStart" and start.name.namespace == Uri(wordprocessingml) and value_in(start.attributes, "name") == Ok("_GoBack")
-			go_back = if (go_back_start) List.append(state.go_back, value_in(start.attributes, "id") ?? "") else state.go_back
+			go_back = if (go_back_start) List.append(state.go_back, bookmark_id(start.attributes)) else state.go_back
 			if state.skip > 0 {
 				{ ..state, depth, go_back }
 			} else if depth > 1 and (go_back_start or is_dropped_mark(start.name)) {
@@ -1812,7 +2003,7 @@ dropped_kind = |name, attributes, go_back|
 		ProofingMark
 	} else if name.local == "bookmarkStart" and value_in(attributes, "name") == Ok("_GoBack") {
 		GoBackStart
-	} else if name.local == "bookmarkEnd" and go_back.contains(value_in(attributes, "id") ?? "") {
+	} else if !go_back.is_empty() and name.local == "bookmarkEnd" and was_go_back(attributes, go_back) {
 		GoBackEnd
 	} else {
 		Kept
@@ -1828,7 +2019,7 @@ go_back_ids = |root| {
 			Ok(Element(element)) => {
 				$pending = List.concat(List.drop_last($pending, 1), element.children)
 				if element.name.namespace == Uri(wordprocessingml) and element.name.local == "bookmarkStart" and value_of(element, "name") == Ok("_GoBack") {
-					$ids = List.append($ids, value_of(element, "id") ?? "")
+					$ids = List.append($ids, bookmark_id(element.attributes))
 				}
 			}
 
@@ -1839,6 +2030,17 @@ go_back_ids = |root| {
 	}
 	$ids
 }
+
+# Check the end's spelling directly before comparing integer values.
+was_go_back : List(XmlTree.Attribute), List(Str) -> Bool
+was_go_back = |attributes, ids| {
+	id = value_in(attributes, "id") ?? ""
+	ids.contains(id) or ids.contains(Lenient.integer_key(id))
+}
+
+# Compare the identifier of a bookmark by its XML Schema integer value.
+bookmark_id : List(XmlTree.Attribute) -> Str
+bookmark_id = |attributes| Lenient.integer_key(value_in(attributes, "id") ?? "")
 
 # The value of a WordprocessingML attribute of an element.
 value_of : Element, Str -> Try(Str, [NotFound])

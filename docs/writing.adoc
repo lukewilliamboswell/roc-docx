@@ -47,10 +47,11 @@ A tree whose root is not a WordprocessingML document is not a main document
 part, and comes back as it is. `WmlWrite.notes` writes a footnotes or
 endnotes part from its tree as read and a list of notes, and
 `WmlWrite.header_footer` a header or footer part from its tree and its
-blocks, in the same way; `WmlWrite.note_ids` gives the identifiers the
-notes take, a note beyond the part's own taking the lowest number no note
-before it takes. A note reference names its note by its place
-among the document's footnotes or endnotes, and a comment's range or
+blocks, in the same way. `WmlWrite.note_ids` gives the identifiers the
+notes take. A note beyond the part's own takes the lowest nonnegative
+integer unused in that part. Existing identifiers are compared by numeric
+value and keep their original spelling. A note reference names its note
+by its place among the document's footnotes or endnotes, and a comment's range or
 reference its comment by its place among the comments; one whose place the
 context does not have cannot be written, and fails with
 `MissingNote({ kind, note })` or `MissingComment(id)`. Each writer gives
@@ -59,6 +60,10 @@ part written as one of a document's takes the context's `reserved`
 identifiers, those `WmlWrite.kept_ids` finds in every part, and the
 previous part's `next` as `from`, as <<identifiers>> describes. Both
 default to a part written on its own.
+
+When an edit adds settings or comment parts, it uses free names beside
+the main document part. The new relationships identify the parts when the
+document is reopened.
 
 == Choose how a document is written
 
@@ -82,9 +87,10 @@ include::../tests/manual.roc[tag=write-options,indent=0]
   dates of comments, and `People`, the identities of their authors. All
   four are listed by default, and each is written where the document has it
   or its comments need it, as <<read-a-documents-comments>> describes. A
-  part left out of the list is left out of the package with its
-  relationship, for a consumer that does not want it; what it held, such as
-  which comment replies to which, is then not in the written document.
+  part left out of the list is omitted with every internal relationship
+  that targets it, including targets spelled with different ASCII case.
+  The omitted part's information, such as which comment replies to which,
+  is absent from the written document.
 
 The same document and options always give the same bytes.
 
@@ -108,6 +114,12 @@ while its chunk is made, and the chunks concatenated are exactly the bytes
 `Docx.to_bytes_with` gives. The price of failing early is that each XML
 part is rendered twice, once to check it and once to emit it.
 
+When writing a part graph directly, `Opc.pending` gives the remaining parts
+in write order. `Opc.add` takes the content of the first pending part and
+returns the next writer and chunk. If an add fails, retry with the writer
+passed to that call. An early `Opc.finish` gives `NotWritten` with the first
+pending name. Once every part is supplied, `Opc.finish` gives the final chunk.
+
 == Set what a document says about itself
 
 `Docx.set_properties` gives a document the core properties
@@ -122,10 +134,11 @@ include::../tests/manual.roc[tag=set-properties,indent=0]
 The properties are the `title`, `subject`, `creator` (the author),
 `keywords`, `description`, who it was `last_modified_by`, its `revision`
 number, and when it was `created` and `modified`. The core properties part
-is written from them, keeping every other property it holds, and a document
-without the part is given one. A date is refused with `NotADate` and the
-date as given unless it reads back as written, in the W3C date and time
-format, such as `2026-11-10T09:00:00Z`. The package never reads the clock,
+is written from them at its existing relationship target, keeping every
+other property it holds. A document without the part gets one at a free
+name, usually `/docProps/core.xml`. A date is refused with `NotADate` and
+the date as given unless it reads back as written, in the W3C date and
+time format, such as `2026-11-10T09:00:00Z`. The package never reads the clock,
 so a document says when it was modified only when the caller gives the
 date. `Build.properties` is the same edit, for a document being generated.
 
@@ -182,8 +195,8 @@ relationships alone:
   no element kept as it was read uses as its `w:id`, in the order the
   bookmarks begin, so that bookmarks, comments and revisions share one space
   of identifiers without colliding. A bookmark's end takes its start's
-  identifier. The space is the document's: no bookmark takes a number an
-  element kept in any part uses, and the parts take theirs in turn, the
+  identifier. Kept identifiers reserve their integer values across the
+  document. The parts take their numbers in turn, the
   body first, then the footnotes, the endnotes and the headers and footers
   in the order the main document relates to them, each from the number
   after the last the part before it took, so that no two parts share one.

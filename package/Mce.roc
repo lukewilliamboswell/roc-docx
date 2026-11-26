@@ -79,6 +79,8 @@ Mce :: [].{
 	## * `mc:AlternateContent` is replaced by the content of its first
 	##   `mc:Choice` whose `Requires` prefixes all name understood
 	##   namespaces, or else of its `mc:Fallback`, or else by nothing.
+	##   Ignored non-branch children are allowed. Elements marked ignored
+	##   and unselected branches impose no `mc:MustUnderstand` requirements.
 	## * `mc:PreserveElements` and `mc:PreserveAttributes` ask an editor to
 	##   keep ignorable content when it saves; the preserved tree keeps all of
 	##   it, so they need nothing more.
@@ -111,7 +113,7 @@ Mce :: [].{
 				Visit(Element(element)) => {
 					$position = $position + 1
 					at = { element: written(element.name), position: $position }
-					declared = declare(element, $frames, at)
+					declared = declare(element, $frames, at, UnlessIgnored)
 					$diagnostics = List.concat($diagnostics, declared.diagnostics)
 					context = declared.context
 					disposition = if $frames.is_empty() {
@@ -178,7 +180,7 @@ Mce :: [].{
 					at = { element: written(branch.name), position: $position }
 					match role {
 						Taken => {
-							declared = declare(branch, $frames, at)
+							declared = declare(branch, $frames, at, ReadRequirements)
 							$diagnostics = List.concat($diagnostics, declared.diagnostics)
 							$frames = List.append($frames, { name: branch.name, bindings: branch.bindings, context: declared.context, output: Spliced })
 							$pending = push_children(List.append($pending, Close), branch.children)
@@ -191,8 +193,24 @@ Mce :: [].{
 							$position = $position + descendants(branch.children)
 						}
 
-						Misplaced => {
-							$diagnostics = List.append($diagnostics, InvalidCompatibilityMarkup({ at: at }))
+						Other => {
+							# Part 3 §9.4 permits non-branch children only if
+							# they are marked ignored, including declarations
+							# made on that child itself.
+							ignored = if is_understood(branch.name.namespace) {
+								Err(NotIgnored)
+							} else {
+								declared = declare(branch, $frames, at, SkipRequirements)
+								if dispose(branch.name, declared.context) == Drop {
+									Ok(declared.diagnostics)
+								} else {
+									Err(NotIgnored)
+								}
+							}
+							$diagnostics = match ignored {
+								Ok(diagnostics) => List.concat($diagnostics, diagnostics)
+								Err(NotIgnored) => List.append($diagnostics, InvalidCompatibilityMarkup({ at: at }))
+							}
 							$position = $position + descendants(branch.children)
 						}
 					}
@@ -345,13 +363,15 @@ Pending : [Visit(XmlTree.Node), Branch(XmlTree.Node, Role), Close]
 
 # What becomes of a child of an `mc:AlternateContent`: taken for
 # interpretation, passed over with the prefixes it requires that have no
-# declaration, or misplaced.
-Role : [Taken, Passed(List(Str)), Misplaced]
+# declaration, or checked as a non-branch child.
+Role : [Taken, Passed(List(Str)), Other]
+
+Requirements : [UnlessIgnored, ReadRequirements, SkipRequirements]
 
 # The context an element establishes for itself and its descendants, from the
 # context it inherits and its own compatibility attributes.
-declare : Element, List(Frame), Mce.Location -> { context : Context, diagnostics : List(Mce.Diagnostic) }
-declare = |element, frames, at| {
+declare : Element, List(Frame), Mce.Location, Requirements -> { context : Context, diagnostics : List(Mce.Diagnostic) }
+declare = |element, frames, at, requirements| {
 	inherited = match frames.last() {
 		Ok(frame) => frame.context
 		Err(_) => { ignorable: [], process_content: [] }
@@ -363,7 +383,8 @@ declare = |element, frames, at| {
 		if attribute.name.namespace == Uri(markup_compatibility) {
 			local = attribute.name.local
 			if local == "Ignorable" or local == "MustUnderstand" {
-				for prefix in words(attribute.value) {
+				prefixes = if (local == "Ignorable" or reads_requirements(element, frames, at, requirements)) words(attribute.value) else []
+				for prefix in prefixes {
 					match lookup(prefix, element.bindings, frames) {
 						Ok(namespace) => {
 							if local == "Ignorable" {
@@ -405,6 +426,17 @@ declare = |element, frames, at| {
 		}
 	}
 	{ context: { ignorable: $ignorable, process_content: $process_content }, diagnostics: $diagnostics }
+}
+
+# A root, selected branch or understood element always reads its
+# MustUnderstand attribute. For an unfamiliar ordinary element, determine
+# whether it is dropped before reading the requirement, using all its own
+# scope declarations, including ones written after MustUnderstand.
+reads_requirements : Element, List(Frame), Mce.Location, Requirements -> Bool
+reads_requirements = |element, frames, at, requirements| match requirements {
+	ReadRequirements => Bool.True
+	SkipRequirements => Bool.False
+	UnlessIgnored => frames.is_empty() or is_understood(element.name.namespace) or dispose(element.name, declare(element, frames, at, SkipRequirements).context) != Drop
 }
 
 # What becomes of an element below the root.
@@ -497,7 +529,7 @@ select = |alternate, frames| {
 						}
 					}
 					if required.is_empty() {
-						$roles = List.append($roles, Misplaced)
+						$roles = List.append($roles, Other)
 					} else if $acceptable and !$taken {
 						$taken = Bool.True
 						$roles = List.append($roles, Taken)
@@ -509,7 +541,7 @@ select = |alternate, frames| {
 					$fallback = $roles.len()
 					$roles = List.append($roles, Passed([]))
 				} else {
-					$roles = List.append($roles, Misplaced)
+					$roles = List.append($roles, Other)
 				}
 			}
 
@@ -593,25 +625,31 @@ written = |name|
 		Unprefixed => name.local
 	}
 
-# The items of a whitespace-separated list attribute.
+# The items of an XML whitespace-separated list attribute. Delimiters are
+# ASCII bytes and cannot split a UTF-8 character.
 words : Str -> List(Str)
 words = |value| {
-	var $words = List.with_capacity(4)
-	var $current = List.with_capacity(16)
-	for byte in value.to_utf8() {
+	bytes = value.to_utf8()
+	var $words = List.with_capacity(0)
+	var $start = 0.U64
+	var $index = 0.U64
+	for byte in bytes {
 		if byte == 32 or byte == 9 or byte == 10 or byte == 13 {
-			if !$current.is_empty() {
-				$words = List.append($words, Str.from_utf8($current) ?? "")
-				$current = List.with_capacity(16)
+			if $start < $index {
+				token = bytes.sublist({ start: $start, len: $index - $start })
+				$words = List.append($words, Str.from_utf8(token) ?? "")
 			}
-		} else {
-			$current = List.append($current, byte)
+			$start = $index + 1
 		}
+		$index = $index + 1
 	}
-	if $current.is_empty() {
+	if $index == $start {
 		$words
+	} else if $start == 0 {
+		[value]
 	} else {
-		List.append($words, Str.from_utf8($current) ?? "")
+		token = bytes.sublist({ start: $start, len: $index - $start })
+		List.append($words, Str.from_utf8(token) ?? "")
 	}
 }
 

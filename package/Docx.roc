@@ -378,9 +378,9 @@ Docx :: [].{
 	}
 
 	## The current text of a document's body, its tracked changes as they
-	## stand: every paragraph's text, as [Document.paragraph_text] gives it,
-	## followed by a line feed, in reading order, including the paragraphs in
-	## tables and content controls. A paragraph whose mark is deleted or moved
+	## stand. Paragraphs contribute their text and a line feed in reading
+	## order, including paragraphs in tables and content controls. Field
+	## boundaries carry through the story. A paragraph whose mark is deleted or moved
 	## away, as [Document.joins_next] says, runs on into the next paragraph
 	## without a line feed, unless a table, row or cell begins or ends between
 	## them. A deleted row or cell is still there, without the text deleted
@@ -690,7 +690,10 @@ Docx :: [].{
 		dated(merged.modified, read.modified)?
 		match Document.related(document, "/", core_properties_relationship) {
 			Ok(part) => Ok(Document.with_part(document, part.name, tree, part.relationships))
-			Err(NotFound) => Ok(Document.with_new_part(document, { source: "/", kind: core_properties_relationship, name: "/docProps/core.xml", content_type: "application/vnd.openxmlformats-package.core-properties+xml" }, tree))
+			Err(NotFound) => {
+				name = Document.free_xml_part_name(document, "/docProps/core.xml")
+				Ok(Document.with_new_part(document, { source: "/", kind: core_properties_relationship, name, content_type: "application/vnd.openxmlformats-package.core-properties+xml" }, tree))
+			}
 		}
 	}
 }
@@ -723,17 +726,20 @@ formatted_block = |found, block, formatting|
 		Preserved(_) => found
 	}
 
-# A paragraph with its effective properties, resolved once to find its
-# numbering reference and again with its list level's properties, and the
-# runs of its current text with theirs.
+# A paragraph with its effective properties and the runs of its current
+# text with theirs.
 formatted_paragraph : Document.Paragraph, Formatting -> Docx.FormattedParagraph
 formatted_paragraph = |paragraph, formatting| {
 	direct = paragraph.properties
-	stated = Styles.effective_paragraph(formatting.styles, direct, { table_paragraph: formatting.table.paragraph, table_run: formatting.table.run, numbering: Document.no_paragraph_properties })
-	properties = match Numbering.level(formatting.numbering, formatting.styles, stated.numbering) {
-		Ok(level) => Styles.effective_paragraph(formatting.styles, direct, { table_paragraph: formatting.table.paragraph, table_run: formatting.table.run, numbering: level.paragraph })
-		Err(_) => stated
-	}
+	resolved = Styles.resolve_numbered_paragraph(
+		formatting.styles,
+		direct,
+		formatting.table.paragraph,
+		Numbering.has_instances(formatting.numbering),
+		{},
+		|request| Numbering.paragraph_level(formatting.numbering, formatting.styles, request).map_ok(|level| { paragraph: level.paragraph, index: level.level, item: {} }),
+	)
+	properties = resolved.properties
 	runs = paragraph.content.fold(List.with_capacity(paragraph.content.len()), |found, inline| formatted_runs(found, inline, direct, formatting))
 	{ location: formatting.location, paragraph, properties, runs }
 }
@@ -1072,14 +1078,9 @@ new_part = |document, kind, tree| {
 		Ok({ before, after: _ }) => before
 		Err(_) => ""
 	}
-	var $name = "${directory}/${local}.xml"
-	var $number = 1.U64
-	while Document.xml_parts(document).any(|part| part.name == $name) {
-		$number = $number + 1
-		$name = "${directory}/${local}${$number.to_str()}.xml"
-	}
+	name = Document.free_xml_part_name(document, "${directory}/${local}.xml")
 	content_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.${local}+xml"
-	{ document: Document.with_new_part(document, { source: main, kind, name: $name, content_type }, tree), name: $name }
+	{ document: Document.with_new_part(document, { source: main, kind, name: name, content_type }, tree), name: name }
 }
 
 # The document with the part the main document's relationship of `kind`
@@ -1643,6 +1644,31 @@ expect {
 		and parsed.diagnostics.len() == 6
 		and Document.body(whole.document).is_err()
 		and Document.body(parsed.document) == Ok(read)
+}
+
+## The editor's bookmark and its end share an integer ID. Both reading
+## paths drop the pair once and preserve the neighboring named bookmark.
+expect {
+	first = "<w:p><w:bookmarkStart w:id='2' w:name='terms'/><w:bookmarkStart w:id='+00731' w:name='_GoBack'/><w:r><w:t>one</w:t></w:r></w:p>"
+	second = "<w:p><w:r><w:t>two</w:t></w:r><w:bookmarkEnd w:id=' 731 '/><w:bookmarkEnd w:id='02'/></w:p>"
+	bytes = package_of(first.concat(second))?
+	streamed = Docx.parse(bytes)?
+	tree = Document.from_package(Opc.open(bytes, {})?, {})?
+	written = Docx.to_bytes(streamed.document)?
+	main = "/word/document.xml"
+	xml = Str.from_utf8(Opc.part_bytes(Opc.open(written, {})?, main)?)?
+	diagnostics = [Dropped({ part: main, content: GoBackBookmark, count: 1 })]
+	body = Docx.body(streamed.document)
+	kept = match body {
+		[Paragraph({ properties: _, content: [BookmarkStart("terms"), Run(_)] }), Paragraph({ properties: _, content: [Run(_), BookmarkEnd("terms")] })] => Bool.True
+		_ => Bool.False
+	}
+	expected = "<w:body><w:p><w:bookmarkStart w:id=\"0\" w:name=\"terms\"/><w:r><w:t>one</w:t></w:r></w:p><w:p><w:r><w:t>two</w:t></w:r><w:bookmarkEnd w:id=\"0\"/></w:p></w:body>"
+	streamed.diagnostics == diagnostics
+		and tree.diagnostics == diagnostics
+		and Docx.body(tree.document) == body
+		and kept
+		and xml.contains(expected)
 }
 
 ## Notes, headers and footers are written from the model: they read back
@@ -2409,6 +2435,39 @@ expect {
 		and (paragraph(1)?.style, paragraph(1)?.keep_lines, paragraph(1)?.alignment) == (Style("Normal"), On, Unset)
 		and (paragraph(2)?.alignment, paragraph(2)?.keep_next, run(2, 0)?.italic, run(2, 0)?.bold, run(2, 0)?.caps) == (Aligned(Center), Unset, On, Off, Off)
 		and (paragraph(3)?.alignment, paragraph(3)?.keep_next, run(3, 0)?.italic, run(3, 0)?.caps) == (Unset, On, Off, On)
+}
+
+## A nested table replaces the enclosing table's style. A nested table
+## without a style uses the default table style, and reading resumes in
+## the enclosing style when the nested table ends.
+expect {
+	paragraph = |name| "<w:p><w:r><w:t>${name}</w:t></w:r></w:p>"
+	table = |style, content| "<w:tbl><w:tblPr>${style}</w:tblPr><w:tblGrid><w:gridCol w:w='4800'/></w:tblGrid><w:tr><w:tc>${content}</w:tc></w:tr></w:tbl>"
+	grid = "<w:tblStyle w:val='Grid'/>"
+	inner = table(grid, paragraph("inner"))
+	middle = table("", "${paragraph("middle before")}${inner}${paragraph("middle after")}")
+	outer = table(grid, "${paragraph("outer before")}${middle}${paragraph("outer after")}")
+	body = "${paragraph("body before")}${outer}${paragraph("body after")}"
+	parsed = Docx.parse(styled_package_of(body)?)?
+	reopened = Docx.parse(Docx.to_bytes(parsed.document)?)?
+	effective = |document| Docx.paragraphs(document).map(
+		|one| (
+			Document.paragraph_text(one.paragraph),
+			one.properties.alignment,
+			one.properties.keep_next,
+			one.runs.map(|run| (run.properties.italic, run.properties.caps)),
+		),
+	)
+	expected = [
+		("body before", Unset, Unset, [(Off, Off)]),
+		("outer before", Aligned(Center), Unset, [(On, Off)]),
+		("middle before", Unset, On, [(Off, On)]),
+		("inner", Aligned(Center), Unset, [(On, Off)]),
+		("middle after", Unset, On, [(Off, On)]),
+		("outer after", Aligned(Center), Unset, [(On, Off)]),
+		("body after", Unset, Unset, [(Off, Off)]),
+	]
+	effective(parsed.document) == expected and effective(reopened.document) == expected
 }
 
 ## The paragraphs of notes, headers and footers follow the body's, each

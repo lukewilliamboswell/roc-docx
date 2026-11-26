@@ -138,6 +138,11 @@ include::../tests/manual.roc[tag=query-diagnostics,indent=0]
 |`Mce.process` |Content in an extension's namespace that the producer did not mark as safe to ignore, an extension the producer says must be understood, a prefix without a declaration, and compatibility markup where the rules do not allow it, each with the element it is on
 |===
 
+When interpreting `mc:AlternateContent`, an extension child marked ignored
+contributes no markup. A non-branch child marked for `mc:ProcessContent`
+reports `InvalidCompatibilityMarkup` at that child. Ignored elements and
+unselected branches impose no `mc:MustUnderstand` requirements.
+
 What a model cannot hold is never a diagnostic, because nothing is lost: a
 construct the package does not model is kept as it was read, in its place,
 and written back. The chapters on
@@ -163,7 +168,13 @@ holds, and therefore what it writes, is valid, and says so with a
   row's height.
 * Only a plain decimal number is rounded. A percentage, such as `50%`, or a
   measure with a unit, such as `1.5in`, which the standard also allows
-  there, is kept as written.
+  there, is kept as written during the whole-number repair. When the body
+  reader interprets a table or cell width written as a percentage, it
+  converts the full decimal to fiftieths of a per cent. Halfway values
+  round away from zero, and an inexact conversion reports `Rounded`.
+  Table and cell widths cover the full signed range of `I64` in twips or
+  fiftieths of a per cent. Grid column widths cover the full unsigned range
+  of `U64` in twips. Widths outside these ranges are preserved in the XML.
 * A page's margins without a gutter are given a gutter of zero, as Word and
   LibreOffice assume.
 

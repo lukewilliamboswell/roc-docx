@@ -85,7 +85,7 @@ blueprint tasks          # each check on its own, and the fixture and release ta
 | Every example prints what `tests/spec.json` records
 
 | fuzz-smoke
-| Every fuzz target builds, its declared examples and ceilings pass, and a one-second exploration finds nothing; targets build concurrently and report in order
+| Every fuzz suite builds and its bounded specifications pass. Each member runs its declared examples, checks allocation ceilings, and explores for up to one second
 
 | fixtures-check
 | Committed pandoc fixtures match regeneration and every fixture has provenance
@@ -221,6 +221,75 @@ document's snapshot; the documents and snapshots go to `.roc-docx/redline/`,
 which `oracle-schema-written` and the LibreOffice lane read as they read the
 review cases'.
 
+== Design specifications for fuzz targets
+
+Start with the contract of the stage under test. For file-format behaviour,
+name the clause, table or schema type in the xref:architecture.adoc#standards-basis[pinned standards corpus].
+State which parts follow from the standard and which follow from roc-docx's
+public API. Use the facade when the contract depends on lowering or on
+information passed between stages.
+
+Derive the expected result independently. Keep list order, identifier
+identity, coordinates and diagnostics in the observation when callers rely
+on them. A projection can agree even when an edit changes the wrong
+position or produces a misleading diagnostic.
+
+When meaning depends on context, keep the construct fixed and vary its
+surroundings. For a nested field, put the same cached value inside the
+enclosing field's instruction and inside its result. When a tracked edit
+changes those surroundings, construct meaningful documents in both views.
+Check each view against its own expected text and the corresponding
+resolved document.
+
+When checking a writer, inspect the serialized facts that the contract
+names. A round trip or byte agreement between two writer entry points can
+miss a defect in code they share. For example, check that a removed part
+and its inbound relationships are absent from the archive as well as
+comparing buffered and streamed output. When an edit adds a part, check
+where its relationship points and compare the bytes of any existing part
+that occupies the usual name.
+
+* Use `Model` for sequences of actions. Bound the action alphabet and the
+  state or history size. Require an exhausted search and check that it
+  reaches interactions where the rules can fail. For a small search, keep
+  the full action trace as the key. To merge histories, keep every fact
+  that later actions and rules inspect. Include `Model.explain` in a failed
+  expectation to see the counterexample and unmet goals. Check live states
+  during the search. When serialization is a separate obligation, save
+  and reopen a witness that exercises it. Compare a retry with a clean
+  replay to isolate the effect of the failed step, and check the output
+  against the format or API contract.
+* Use `Solve` for fixed-width integer laws. State where the caller's bounds
+  come from and prove both arithmetic safety and the result where applicable.
+  Treat `GaveUp` as a failed proof. Take a boundary case or solver witness
+  through the real caller so the proof also has evidence for its premises.
+* Use a focused expectation when a rule depends on a single input and
+  its surrounding context. Check the result and the diagnostics at the
+  positions the rule distinguishes.
+* Use the fuzz campaign for larger generated inputs and longer histories.
+  Include declared examples for meaningful campaign goals and keep
+  allocation measurements around the operation under test. When a model
+  already exhausts a domain, add a campaign walk only if it exercises
+  additional states or histories.
+* In a scratch checkout, change a plausible production decision and run
+  the new and existing checks against it. Record which check catches the
+  difference, then discard the mutation. Keep a minimized regression for
+  a real bug the specification exposes.
+
+Name each property module for its target, such as
+`fuzz/MceProcessingTarget.roc`, and register it in the applicable
+`Fuzz.suite`. The `container`, `reading`,
+`writing`, and `review` suites compile their members together. A member
+keeps its own generator, declared examples, corpus, and allocation ceilings.
+Put deterministic checks in the matching specification module, such as
+`fuzz/MceProcessingSpec.roc`, and import it from the same suite. Name
+supporting models and proofs for the rules they check. Run the suite's
+expectations with `roc test fuzz/<name>_suite.roc`.
+
+Report the domain explored and the behaviours covered by existing tests
+or independent oracles. Stop adding model states when they exercise the
+same decisions and existing evidence covers the remaining contract.
+
 == Performance ratchets
 
 There are no speed targets. Each fuzz target wraps every public entry point it
@@ -257,8 +326,9 @@ from the parameter as it is. To set or revise a ceiling:
 
 [source,sh]
 ----
-roc build --fuzz fuzz/opc_open/main.roc --output=.roc-docx/fuzz/opc_open
-.roc-docx/fuzz/opc_open check --report-dir=.roc-docx/fuzz/reports/measure
+roc build --fuzz fuzz/container_suite.roc --output=.roc-docx/fuzz/container
+.roc-docx/fuzz/container --list-targets
+.roc-docx/fuzz/container --target=opc-open-never-crashes check --report-dir=.roc-docx/fuzz/reports/measure
 ----
 
 Read `report.json` in the report directory: each example lists its regions
@@ -266,6 +336,18 @@ with `allocs`, `reallocs`, `requested_bytes` and `peak_live_bytes`. Set an
 exact ceiling to the measured `allocs + reallocs`. A ceiling only moves down:
 lower it when a change allocates less, and when a change needs a higher
 ceiling, record the cause in the pull request beside the new value.
+
+When a refactor changes the work done per input, compare CPU time as well
+as allocation reports. Run the affected target's optimized `check` first
+so its declared examples exercise the existing allocation ceilings. Use
+the same compiler and optimization mode for both timing builds, interleave
+repeated measurements, and include ordinary inputs and the longest
+relevant boundary case. Verify equal output on the inputs used to measure
+regressions. Time corrected cases too, and record which output changed so
+that extra work to produce it is visible in the comparison. If timing
+varies enough to obscure a small difference, interleave runs of the same
+executable to estimate measurement noise. Retired instruction counts can
+also show whether a change adds work on the same input.
 
 == Fixtures and oracles
 
@@ -490,9 +572,8 @@ blueprint run playground-specs  # native specs, including real worker jobs
 blueprint run playground-test   # Roc expects
 ----
 
-The tasks use the published `signals.roc` entry point and apply any compiler
-workaround needed by the playground. The tests and a browser smoke build
-run in `check`. The `playground` task builds the deployment files.
+The tasks use the published `signals.roc` entry point. The tests and a browser
+smoke build run in `check`. The `playground` task builds the deployment files.
 The Signals tool supplies the runtime and worker matching its release,
 rewrites page URLs to hashed assets, and manages the compiler's supported
 optimization level. Serve `playground/dist/` at `/playground/` beside the

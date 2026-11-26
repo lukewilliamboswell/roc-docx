@@ -170,10 +170,10 @@
     {
       "id": "roc-fuzz",
       "role": "property, allocation and campaign harness",
-      "release": "0.5.0",
-      "bundle": "https://github.com/lukewilliamboswell/roc-fuzz/releases/download/0.5.0/9WT86CuwM7ZJBSs8iTd1jLyrUFTTiGp5hcJE63TwswGE.tar.zst",
-      "sha256": "aed4032105af1cc910604949f43636b7bff6aec4a82184631213153b8e2dd23f",
-      "bytes": 2242328
+      "release": "0.8.0",
+      "bundle": "https://github.com/lukewilliamboswell/roc-fuzz/releases/download/0.8.0/BUNcJDHxCd7xLVSe3WBioyXqR6tm1MqXwzwGgtnmqK43.tar.zst",
+      "sha256": "8d7a2df0c33658e33968e774f9b62669a290fbbf05d477982458a382b89fa664",
+      "bytes": 2370696
     }
   ]
 }

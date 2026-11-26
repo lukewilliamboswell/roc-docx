@@ -17,6 +17,7 @@
 ## relationship that leads to its target, found among the part's
 ## relationships or added to them.
 import Document
+import Lenient
 import Numbering
 import Opc
 import Styles
@@ -165,7 +166,7 @@ WmlWrite :: [].{
 							node = Element({ name: kept.name, bindings: kept.bindings, attributes, children: out.nodes })
 							$children = List.append($children, node)
 							$state = out.state
-							$used = $used.insert(value_of(kept.attributes, "id") ?? "")
+							$used = $used.insert(Lenient.integer_key(value_of(kept.attributes, "id") ?? ""))
 						}
 
 						Err(_) => {}
@@ -218,7 +219,7 @@ WmlWrite :: [].{
 				Element(kept) if is_w(kept.name, local) and $ids.len() < count => {
 					id = value_of(kept.attributes, "id") ?? ""
 					$ids = List.append($ids, id)
-					$used = $used.insert(id)
+					$used = $used.insert(Lenient.integer_key(id))
 				}
 
 				_ => {}
@@ -271,7 +272,8 @@ WmlWrite :: [].{
 	## document, the body, notes, headers, footers and comments, they are the
 	## identifiers no comment, bookmark, tracked change or move's range
 	## written anywhere in the document may take, as a [WmlWrite.Context]
-	## reserves them.
+	## reserves them. The set includes a kept integer's canonical spelling
+	## as well as its original one.
 	kept_ids : Set(Str), List(Document.Block) -> Set(Str)
 	kept_ids = |found, content| {
 		none : WmlWrite.Context
@@ -283,16 +285,20 @@ WmlWrite :: [].{
 	## The identifier each comment takes, in the order of the comments, from
 	## the space bookmarks share: the lowest number from 0 up that is not
 	## `kept`, the identifiers [WmlWrite.kept_ids] gives for every part of the
-	## document and every comment, and that no earlier comment takes. Parts
-	## written by [WmlWrite.document], [WmlWrite.notes] and
-	## [WmlWrite.header_footer] with these identifiers as their
-	## [WmlWrite.Context]'s comments give their bookmarks other numbers.
+	## document and every comment, comparing integer spellings by value, and
+	## that no earlier comment takes. Parts written by [WmlWrite.document],
+	## [WmlWrite.notes] and [WmlWrite.header_footer] use these identifiers as
+	## [WmlWrite.Context]'s comments and give their bookmarks other numbers.
 	comment_ids : Set(Str), List(Document.Comment) -> List(Str)
 	comment_ids = |kept, listed| {
+		if listed.is_empty() {
+			return []
+		}
+		reserved = reserve_integer_aliases(kept)
 		var $ids = List.with_capacity(listed.len())
 		var $next = 0.U64
 		for _ in listed {
-			id = free_id(kept, $next)
+			id = free_id(reserved, $next)
 			$ids = List.append($ids, id.to_str())
 			$next = id + 1
 		}
@@ -324,7 +330,7 @@ WmlWrite :: [].{
 			_ => { name: { namespace: Uri(wordprocessingml), local: "comments", prefix: Prefix("w") }, bindings: [], attributes: [], children: [] }
 		}
 		content = listed.fold(List.with_capacity(listed.fold(0, |total, comment| total + comment.content.len())), |all, comment| List.concat(all, comment.content))
-		var $state = initial_reserving(content, context, taken_ids.ids)?
+		var $state = initial_reserving(content, context, reserve_integer_aliases(taken_ids.ids))?
 		parents = listed.fold(
 			Set.with_capacity(listed.len()),
 			|found, comment|
@@ -538,6 +544,17 @@ initial_reserving = |content, context, reserved| {
 	Ok({ relationships: context.relationships, footnotes: context.footnotes, endnotes: context.endnotes, comments: context.comments, bookmarks: $bookmarks, kept_bookmarks: scan.named, started: Set.with_capacity(scan.starts.len()), used: scan.used, next: $next, move_sources: Dict.with_capacity(0), move_destinations: Dict.with_capacity(0), deleted: Bool.False })
 }
 
+# Fresh identifiers are canonical numbers. Reserve the integer value of
+# each retained spelling as well as its literal value.
+reserve_integer_aliases : Set(Str) -> Set(Str)
+reserve_integer_aliases = |kept| kept.fold(kept, reserve_integer_alias)
+
+reserve_integer_alias : Set(Str), Str -> Set(Str)
+reserve_integer_alias = |used, spelling| {
+	key = Lenient.integer_key(spelling)
+	if (spelling == key) used else used.insert(key)
+}
+
 # The lowest identifier from `from` up that no kept content uses.
 free_id : Set(Str), U64 -> U64
 free_id = |used, from| {
@@ -654,7 +671,7 @@ scan_node = |scan, node|
 		Element(kept) => {
 			id = kept.attributes.find_first(|attribute| attribute.name.local == "id" and attribute.name.namespace == Uri(wordprocessingml))
 			used = match id {
-				Ok(attribute) => { ..scan, used: scan.used.insert(attribute.value) }
+				Ok(attribute) => { ..scan, used: reserve_integer_alias(scan.used.insert(attribute.value), attribute.value) }
 				Err(_) => scan
 			}
 			named = match (id, kept.name.local == "bookmarkStart" and is_w(kept.name, "bookmarkStart")) {
@@ -2553,7 +2570,7 @@ expect {
 ## uses, a comment without a paragraph none; a reply without a paragraph
 ## cannot be written.
 expect {
-	kept = XmlTree.parse("<w:ins xmlns:w='${wordprocessingml}' w:id='0'/>".to_utf8(), {}) ?? Text("")
+	kept = XmlTree.parse("<w:ins xmlns:w='${wordprocessingml}' w:id='+000'/>".to_utf8(), {}) ?? Text("")
 	identified = XmlTree.parse("<w:p xmlns:w='${wordprocessingml}' xmlns:w14='${word_2010}' w14:paraId='00000001'/>".to_utf8(), {}) ?? Text("")
 	comment = |content| { author: "Ada Reviewer", initials: Initials("AR"), date: Unset, content, preserved: [], parent: Unset, resolved: Bool.False, durable_id: Unset, utc_date: Unset }
 	cell = Cell({ properties: { width: Unset, span: Unset, merge: Unset, borders: [], shading: Unset, alignment: Unset, preserved: [], revision: Unset, change: [] }, content: [paragraph([run([Text("in")])])] })
@@ -2575,7 +2592,7 @@ expect {
 	second = "${start("2")}<w:tbl><w:tblPr/><w:tblGrid/><w:tr><w:tc><w:p w14:paraId=\"00000003\"><w:r><w:t>in</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:comment>"
 	third = "<w:comment w:id=\"3\" w:author=\"Ada Reviewer\" w:initials=\"AR\"/>"
 	ids == ["1", "2", "3"]
-		and written(body, context) == "<w:body><w:p><w:ins w:id=\"0\"/><w:commentRangeStart w:id=\"1\"/><w:bookmarkStart w:id=\"4\" w:name=\"a\"/><w:bookmarkEnd w:id=\"4\"/><w:commentRangeEnd w:id=\"1\"/><w:r><w:commentReference w:id=\"1\"/></w:r></w:p></w:body></w:document>"
+		and written(body, context) == "<w:body><w:p><w:ins w:id=\"+000\"/><w:commentRangeStart w:id=\"1\"/><w:bookmarkStart w:id=\"4\" w:name=\"a\"/><w:bookmarkEnd w:id=\"4\"/><w:commentRangeEnd w:id=\"1\"/><w:r><w:commentReference w:id=\"1\"/></w:r></w:p></w:body></w:document>"
 		and part.paragraphs == ["00000002", "00000003", ""]
 		and comments == "${first}${second}${third}</w:comments>"
 		and WmlWrite.comments(Text(""), [comment([paragraph([])]), { ..comment([]), parent: Parent(0) }], { relationships: [], footnotes: [], endnotes: [], comments: ["0", "1"] }, WmlWrite.taken([])).map_ok(|_| {}) == Err(CommentWithoutParagraph(1))
@@ -2584,13 +2601,14 @@ expect {
 ## A part written as one of a document's takes its bookmarks' and tracked
 ## changes' identifiers from the context's `from` up, avoiding the
 ## comments' and those the context reserves, and gives the number after the
-## last it took as `next`; the identifiers kept content uses are reserved.
+## last it took as `next`; kept identifiers are reserved by integer value.
 expect {
-	kept = XmlTree.parse("<w:permStart xmlns:w='${wordprocessingml}' w:id='4'/>".to_utf8(), {}) ?? Text("")
+	kept = XmlTree.parse("<w:permStart xmlns:w='${wordprocessingml}' w:id='+004'/>".to_utf8(), {}) ?? Text("")
 	content = [paragraph([BookmarkStart("b"), BookmarkEnd("b"), Revision({ kind: Insertion, author: "Ada", date: Unset, content: [run([Text("x")])], preserved: [] })])]
 	context : WmlWrite.Context
 	context = { relationships: [], footnotes: [], endnotes: [], comments: ["3"], reserved: WmlWrite.kept_ids(Set.with_capacity(1), [paragraph([Preserved(kept)])]), from: 2 }
-	written(content, context) == "<w:body><w:p><w:bookmarkStart w:id=\"2\" w:name=\"b\"/><w:bookmarkEnd w:id=\"2\"/><w:ins w:id=\"5\" w:author=\"Ada\"><w:r><w:t>x</w:t></w:r></w:ins></w:p></w:body></w:document>"
+	context.reserved == Set.from_list(["+004", "4"])
+		and written(content, context) == "<w:body><w:p><w:bookmarkStart w:id=\"2\" w:name=\"b\"/><w:bookmarkEnd w:id=\"2\"/><w:ins w:id=\"5\" w:author=\"Ada\"><w:r><w:t>x</w:t></w:r></w:ins></w:p></w:body></w:document>"
 		and WmlWrite.document(shell, content, context).map_ok(|out| out.next) == Ok(6)
 		and WmlWrite.header_footer(XmlTree.parse("<w:hdr xmlns:w='${wordprocessingml}'/>".to_utf8(), {}) ?? Text(""), content, { ..context, from: 6 }).map_ok(|out| out.next) == Ok(8)
 }

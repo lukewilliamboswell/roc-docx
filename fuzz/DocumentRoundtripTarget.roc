@@ -1,8 +1,3 @@
-app [target] {
-	docx: "../../package/main.roc",
-	fuzz: platform "https://github.com/lukewilliamboswell/roc-fuzz/releases/download/0.7.0/HBigHQhVZWEF2EkLxpYK35u8P6UNsAmPYxpNFTxXK1Br.tar.zst",
-}
-
 import fuzz.Fuzz
 import docx.Docx
 import docx.Document
@@ -471,14 +466,16 @@ tracked_table = |variant| {
 	{ properties, grid: [Column(1000)], content: [Row({ properties: row_properties, content: [cell] })] }
 }
 
-target = Fuzz.target_with!({
-	name: "document-roundtrip",
-	examples: [
-		Fuzz.example({ name: "smallest-empty-body", revision: "1", make: || [2] }),
-		Fuzz.example({ name: "small-body", revision: "1", make: || small_program }),
-		Fuzz.example({ name: "large-body", revision: "1", make: || large_program }),
-	],
-	generator,
-	test!,
-	show: |program| Str.inspect(program),
-})
+DocumentRoundtripTarget := [].{
+	target = Fuzz.target_with!({
+		name: "document-roundtrip",
+		examples: [
+			Fuzz.example({ name: "smallest-empty-body", revision: "1", make: || [2] }),
+			Fuzz.example({ name: "small-body", revision: "1", make: || small_program }),
+			Fuzz.example({ name: "large-body", revision: "1", make: || large_program }),
+		],
+		generator,
+		test!,
+		show: |program| Str.inspect(program),
+	})
+}

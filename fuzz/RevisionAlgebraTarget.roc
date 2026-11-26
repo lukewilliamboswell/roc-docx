@@ -1,8 +1,3 @@
-app [target] {
-	docx: "../../package/main.roc",
-	fuzz: platform "https://github.com/lukewilliamboswell/roc-fuzz/releases/download/0.7.0/HBigHQhVZWEF2EkLxpYK35u8P6UNsAmPYxpNFTxXK1Br.tar.zst",
-}
-
 import fuzz.Fuzz
 import docx.Docx
 import docx.Document
@@ -688,15 +683,17 @@ tabled = |state, variant| {
 	{ ..state, tracked: List.append(state.tracked, tracked), final: List.append(state.final, final), original: List.append(state.original, original) }
 }
 
-target = Fuzz.target_with!({
-	name: "revision-algebra",
-	examples: [
-		Fuzz.example({ name: "small-program", revision: "2", make: || small_program }),
-		Fuzz.example({ name: "large-program", revision: "2", make: || large_program }),
-		Fuzz.example({ name: "few-changes", revision: "1", make: || few_changes }),
-		Fuzz.example({ name: "many-changes", revision: "1", make: || many_changes }),
-	],
-	generator,
-	test!,
-	show: |program| Str.inspect(program),
-})
+RevisionAlgebraTarget := [].{
+	target = Fuzz.target_with!({
+		name: "revision-algebra",
+		examples: [
+			Fuzz.example({ name: "small-program", revision: "2", make: || small_program }),
+			Fuzz.example({ name: "large-program", revision: "2", make: || large_program }),
+			Fuzz.example({ name: "few-changes", revision: "1", make: || few_changes }),
+			Fuzz.example({ name: "many-changes", revision: "1", make: || many_changes }),
+		],
+		generator,
+		test!,
+		show: |program| Str.inspect(program),
+	})
+}

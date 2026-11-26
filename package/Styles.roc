@@ -194,6 +194,62 @@ Styles :: {
 		}
 	}
 
+	## The reference established by the lower and upper paragraph layers,
+	## and the style whose abstract-list association can select its level.
+	NumberingRequest : { reference : Document.Numbering, linked : [Unset, Style(Str)] }
+
+	## What a resolved numbering level supplies to a paragraph and its caller.
+	NumberingContribution(item) : { paragraph : Document.ParagraphProperties, index : U8, item : item }
+
+	## Resolve the paragraph style once and merge its available layers. The
+	## supplier runs only when numbering exists and a nonzero instance is
+	## requested. It supplies the level's
+	## paragraph properties and any marker information the caller needs.
+	resolve_numbered_paragraph : Styles, Document.ParagraphProperties, Document.ParagraphProperties, Bool, item, (NumberingRequest -> Try(NumberingContribution(item), failure)) -> { properties : Document.ParagraphProperties, item : item }
+	resolve_numbered_paragraph = |styles, direct, table, can_number, unlisted, supply| {
+		applied = paragraph_style(styles, direct)
+		from_style = match applied {
+			Default(id) => (styles.inherited.get(id) ?? no_properties).paragraph
+			NoDefault => Document.no_paragraph_properties
+		}
+		base = merge_paragraph(styles.defaults.paragraph, table)
+		instance = if (can_number) prefer(prefer(base.numbering.instance, from_style.numbering.instance), direct.numbering.instance) else Unset
+		{ lower, selected, item } = match instance {
+			Instance(id) if id != 0 => {
+				linked = match (direct.numbering.instance, direct.numbering.level, from_style.numbering.instance, applied) {
+					(Unset, Unset, Instance(inherited_id), Default(name)) if inherited_id != 0 => Style(name)
+					_ => Unset
+				}
+				reference = merge_numbering(merge_numbering(base.numbering, from_style.numbering), direct.numbering)
+				match supply({ reference, linked }) {
+					Ok(level) => {
+						requested = match reference.level {
+							Level(index) => index
+							Unset => 0
+						}
+						{
+							lower: merge_paragraph(base, level.paragraph),
+							selected: if (level.index == requested) UseMerged else UseLevel(level.index),
+							item: level.item,
+						}
+					}
+					Err(_) => { lower: base, selected: UseMerged, item: unlisted }
+				}
+			}
+			_ => { lower: base, selected: UseMerged, item: unlisted }
+		}
+		merged = merge_paragraph(merge_paragraph(lower, from_style), direct)
+		style = match applied {
+			Default(id) => Style(id)
+			NoDefault => Unset
+		}
+		numbering = match selected {
+			UseLevel(index) => { ..merged.numbering, level: Level(index) }
+			UseMerged => merged.numbering
+		}
+		{ properties: { ..merged, style, numbering, preserved: [] }, item }
+	}
+
 	## A paragraph's effective properties from its direct properties: the
 	## document defaults, then the contributions of a table style and a
 	## numbering level, then its paragraph style with the styles it is based
@@ -205,10 +261,6 @@ Styles :: {
 	## paragraph cleared stays in `tabs` as cleared; and `preserved` is empty,
 	## since content the model does not hold is not resolved, and so are
 	## `mark` and `change`, since tracked changes are not either.
-	##
-	## A numbering level's properties come from the paragraph's numbering
-	## reference, which itself may come from its style; a caller resolves
-	## once to find the reference and again with the level's properties.
 	effective_paragraph : Styles, Document.ParagraphProperties, Contributions -> Document.ParagraphProperties
 	effective_paragraph = |styles, direct, contributions| {
 		applied = paragraph_style(styles, direct)
@@ -530,6 +582,9 @@ prefer = |base, over|
 		_ => over
 	}
 
+merge_numbering : Document.Numbering, Document.Numbering -> Document.Numbering
+merge_numbering = |base, over| { instance: prefer(base.instance, over.instance), level: prefer(base.level, over.level) }
+
 # Paragraph properties stated in `over` replace those in `base`; indents,
 # spacing and the numbering reference are replaced attribute by attribute,
 # borders edge by edge and tab stops position by position.
@@ -559,10 +614,7 @@ merge_paragraph = |base, over| {
 		(_, Unset) => base.tabs
 		_ => over.tabs
 	},
-	numbering: {
-		instance: prefer(base.numbering.instance, over.numbering.instance),
-		level: prefer(base.numbering.level, over.numbering.level),
-	},
+	numbering: merge_numbering(base.numbering, over.numbering),
 	preserved: [],
 	mark: [],
 	change: [],

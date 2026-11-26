@@ -1,25 +1,19 @@
-app [target] {
-	docx: "../../package/main.roc",
-	fuzz: platform "https://github.com/lukewilliamboswell/roc-fuzz/releases/download/0.7.0/HBigHQhVZWEF2EkLxpYK35u8P6UNsAmPYxpNFTxXK1Br.tar.zst",
-	zip: "https://github.com/lukewilliamboswell/roc-zip/releases/download/0.3.0-rc3/8Cpaf9qGq5aA38zeGsUG91Bmk8u5pbcV9jnYUZv7d4RD.tar.zst",
-}
-
 import fuzz.Fuzz
 import docx.Numbering
 import docx.Styles
 import docx.XmlTree
 import zip.Zip
-import "../../tests/fixtures/pandoc/basics.docx" as pandoc_basics : List(U8)
-import "../../tests/fixtures/pandoc/comments.docx" as pandoc_comments : List(U8)
-import "../../tests/fixtures/pandoc/lists.docx" as pandoc_lists : List(U8)
-import "../../tests/fixtures/pandoc/notes.docx" as pandoc_notes : List(U8)
-import "../../tests/fixtures/pandoc/review.docx" as pandoc_review : List(U8)
-import "../../tests/fixtures/pandoc/revisions.docx" as pandoc_revisions : List(U8)
-import "../../tests/fixtures/pandoc/tables.docx" as pandoc_tables : List(U8)
-import "../../tests/fixtures/libreoffice/lists.docx" as libreoffice_lists : List(U8)
-import "../../tests/fixtures/libreoffice/review.docx" as libreoffice_review : List(U8)
-import "../../tests/fixtures/word/report.docx" as word_report : List(U8)
-import "../../tests/fixtures/gdocs/resume.docx" as gdocs_resume : List(U8)
+import "../tests/fixtures/pandoc/basics.docx" as pandoc_basics : List(U8)
+import "../tests/fixtures/pandoc/comments.docx" as pandoc_comments : List(U8)
+import "../tests/fixtures/pandoc/lists.docx" as pandoc_lists : List(U8)
+import "../tests/fixtures/pandoc/notes.docx" as pandoc_notes : List(U8)
+import "../tests/fixtures/pandoc/review.docx" as pandoc_review : List(U8)
+import "../tests/fixtures/pandoc/revisions.docx" as pandoc_revisions : List(U8)
+import "../tests/fixtures/pandoc/tables.docx" as pandoc_tables : List(U8)
+import "../tests/fixtures/libreoffice/lists.docx" as libreoffice_lists : List(U8)
+import "../tests/fixtures/libreoffice/review.docx" as libreoffice_review : List(U8)
+import "../tests/fixtures/word/report.docx" as word_report : List(U8)
+import "../tests/fixtures/gdocs/resume.docx" as gdocs_resume : List(U8)
 
 ## List levels resolve as a direct evaluation of the numbering rules gives
 ## them. A program describes up to six numbering definitions, each with up
@@ -451,13 +445,15 @@ pandoc_instances = [1000]
 w : Str
 w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 
-target = Fuzz.target_with!({
-	name: "numbering-resolution",
-	examples: [
-		Fuzz.example({ name: "small-table", revision: "1", make: || Table(16) }),
-		Fuzz.example({ name: "large-table", revision: "1", make: || Table(256) }),
-	].concat(fixtures.map_with_index(|fixture, index| Fuzz.example({ name: fixture.name, revision: "1", make: || Fixture(index) }))),
-	generator,
-	test!,
-	show: |input| Str.inspect(input),
-})
+NumberingResolutionTarget := [].{
+	target = Fuzz.target_with!({
+		name: "numbering-resolution",
+		examples: [
+			Fuzz.example({ name: "small-table", revision: "1", make: || Table(16) }),
+			Fuzz.example({ name: "large-table", revision: "1", make: || Table(256) }),
+		].concat(fixtures.map_with_index(|fixture, index| Fuzz.example({ name: fixture.name, revision: "1", make: || Fixture(index) }))),
+		generator,
+		test!,
+		show: |input| Str.inspect(input),
+	})
+}

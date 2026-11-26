@@ -200,6 +200,10 @@ Numbering :: {
 	empty : Numbering
 	empty = { definitions: Dict.empty(), instances: Dict.empty(), style_links: Dict.empty() }
 
+	## Whether the numbering table contains any instances.
+	has_instances : Numbering -> Bool
+	has_instances = |numbering| !numbering.instances.is_empty()
+
 	## The definition with this identifier.
 	definition : Numbering, [Definition(U32)] -> Try(Definition, [NotFound])
 	definition = |numbering, Definition(id)| Ok(numbering.definitions.get(id) ? |_| NotFound)
@@ -223,37 +227,56 @@ Numbering :: {
 	## paragraph's effective properties, as the `numbering` field of
 	## [Styles.Contributions].
 	level : Numbering, Styles, Document.Numbering -> Try(Level, Unlisted)
-	level = |numbering, styles, reference| {
-		id = match reference.instance {
-			Instance(found) if found != 0 => found
-			_ => return Err(NotListed)
-		}
-		at = match reference.level {
-			Level(found) => found
-			Unset => 0
-		}
-		found = numbering.instances.get(id) ? |_| MissingInstance(id)
-		Definition(definition_id) = found.definition
-		named = numbering.definitions.get(definition_id) ? |_| MissingDefinition({ instance: id, definition: definition_id })
-		levels = match named.uses_style {
-			Unset => named.levels
-			Style(style) => (styled_definition(numbering, styles, style) ? |_| UnresolvedStyle(style)).levels
-		}
-		defined = levels.find_first(|candidate| candidate.level == at) ?? { ..unset_level, level: at }
-		match found.overrides.find_first(|candidate| candidate.level == at) {
-			Ok(override) => {
-				replaced = match override.replacement {
-					Replaced(replacement) => { ..replacement, level: at }
-					Unset => defined
-				}
-				match override.start {
-					Start(_) => Ok({ ..replaced, start: override.start })
-					Unset => Ok(replaced)
-				}
-			}
+	level = |numbering, styles, reference| resolve_level(numbering, styles, reference, Unset)
 
-			Err(NotFound) => Ok(defined)
+	## Resolve [Styles.resolve_numbered_paragraph]'s reference. With an applied
+	## style that supplies the instance, use the matching level of the
+	## abstract definition, then apply the instance's override of that level.
+	## With no matching style, resolve the original reference as [Numbering.level]
+	## does. Direct numbering always takes precedence.
+	paragraph_level : Numbering, Styles, Styles.NumberingRequest -> Try(Level, Unlisted)
+	paragraph_level = |numbering, styles, { reference, linked }| resolve_level(numbering, styles, reference, linked)
+
+}
+
+# An abstract numbering definition selects the level before any instance
+# override can replace its formatting and marker properties.
+resolve_level : Numbering, Styles, Document.Numbering, [Unset, Style(Str)] -> Try(Numbering.Level, Numbering.Unlisted)
+resolve_level = |numbering, styles, reference, linked| {
+	id = match reference.instance {
+		Instance(found) if found != 0 => found
+		_ => return Err(NotListed)
+	}
+	found = numbering.instances.get(id) ? |_| MissingInstance(id)
+	Definition(definition_id) = found.definition
+	named = numbering.definitions.get(definition_id) ? |_| MissingDefinition({ instance: id, definition: definition_id })
+	levels = match named.uses_style {
+		Unset => named.levels
+		Style(style) => (styled_definition(numbering, styles, style) ? |_| UnresolvedStyle(style)).levels
+	}
+	requested = match reference.level {
+		Level(index) => index
+		Unset => 0
+	}
+	associated = match linked {
+		Style(_) => levels.find_first(|candidate| candidate.paragraph_style == linked)
+		Unset => Err(NotFound)
+	}
+	defined = associated ?? (levels.find_first(|candidate| candidate.level == requested) ?? { ..unset_level, level: requested })
+	at = defined.level
+	match found.overrides.find_first(|candidate| candidate.level == at) {
+		Ok(override) => {
+			replaced = match override.replacement {
+				Replaced(replacement) => { ..replacement, level: at }
+				Unset => defined
+			}
+			match override.start {
+				Start(_) => Ok({ ..replaced, start: override.start })
+				Unset => Ok(replaced)
+			}
 		}
+
+		Err(NotFound) => Ok(defined)
 	}
 }
 

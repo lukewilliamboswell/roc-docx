@@ -234,21 +234,13 @@ Build :: [].{
 		} else {
 			options.widths
 		}
-		var $content = List.with_capacity(rows.len())
-		var $index = 0.U64
-		for row in rows {
-			var $cells = List.with_capacity(row.len())
-			var $column = 0.U64
-			for one in row {
-				width = widths.sublist({ start: $column, len: spans(one) }).fold(0.U64, |sum, each| sum + each)
-				$cells = List.append($cells, Cell({ properties: { ..one.properties, width: Twips(width.to_i64_wrap()) }, content: one.content }))
-				$column = $column + spans(one)
-			}
-			row_properties = { header: if ($index < options.header_rows) On else Unset, grid_before: Unset, grid_after: Unset, preserved: [], inserted: Unset, deleted: Unset, change: [] }
-			$content = List.append($content, Row({ properties: row_properties, content: $cells }))
-			$index = $index + 1
+		# Generated widths sum to at most 9026. When the entire supplied
+		# grid fits, its nonnegative spans fit as well.
+		if options.widths.is_empty() or widths.fold(0.U64, U64.plus_saturated) <= I64.highest.to_u64_wrap() {
+			table_content(rows, widths, options.header_rows, exact_width)
+		} else {
+			table_content(rows, widths, options.header_rows, preferred_width)
 		}
-		Table({ properties: { style: Style("TableGrid"), width: Auto, borders: [], shading: Unset, preserved: [], change: [] }, grid: widths.map(|width| Column(width)), content: $content })
 	}
 
 	## The document with `blocks` at the end of its body, before the end of
@@ -532,6 +524,48 @@ run_content = |value| {
 # A simple field of `code` whose result, until it is calculated, is 1.
 field : Str -> Document.Inline
 field = |code| SimpleField({ code, preserved: [], content: [Run({ properties: Document.no_run_properties, content: [Text("1")] })] })
+
+# Use one cell-writing loop for ordinary grids and grids exceeding I64.
+table_content : List(List(Document.Cell)), List(U64), U64, (List(U64), U64, U64 -> Document.Width) -> Document.Block
+table_content = |rows, widths, header_rows, width_for| {
+	var $content = List.with_capacity(rows.len())
+	var $index = 0.U64
+	for row in rows {
+		var $cells = List.with_capacity(row.len())
+		var $column = 0.U64
+		for one in row {
+			span = spans(one)
+			width = width_for(widths, $column, span)
+			$cells = List.append($cells, Cell({ properties: { ..one.properties, width }, content: one.content }))
+			$column = $column + span
+		}
+		row_properties = { header: if ($index < header_rows) On else Unset, grid_before: Unset, grid_after: Unset, preserved: [], inserted: Unset, deleted: Unset, change: [] }
+		$content = List.append($content, Row({ properties: row_properties, content: $cells }))
+		$index = $index + 1
+	}
+	Table({ properties: { style: Style("TableGrid"), width: Auto, borders: [], shading: Unset, preserved: [], change: [] }, grid: widths.map(|width| Column(width)), content: $content })
+}
+
+# Every span has an exact sum when the entire nonnegative grid fits.
+exact_width : List(U64), U64, U64 -> Document.Width
+exact_width = |widths, start, span| {
+	sum = if (span == 1) (widths.get(start) ?? 0) else widths.sublist({ start, len: span }).fold(0.U64, |prior, each| prior + each)
+	Twips(sum.to_i64_wrap())
+}
+
+# Keep a cell's preference only when its grid widths have an exact I64 sum.
+preferred_width : List(U64), U64, U64 -> Document.Width
+preferred_width = |widths, start, span| {
+	sum = if span == 1 {
+		widths.get(start) ?? 0
+	} else {
+		widths.sublist({ start, len: span }).fold(0.U64, U64.plus_saturated)
+	}
+	match sum.to_i64_try() {
+		Ok(value) => Twips(value)
+		Err(OutOfRange) => Unset
+	}
+}
 
 # A cell's span in grid columns.
 spans : Document.Cell -> U64
